@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import ErrorPanel from "./ErrorPanel.vue";
 
 // TODO: in the future this list should come from the backend
@@ -102,22 +103,47 @@ function handleCancel() {
   closeModal();
 }
 
-function onDragOver() {
-  isDragOver.value = true;
+const editorBodyRef = ref<HTMLDivElement | null>(null);
+let unlistenDragDrop: (() => void) | null = null;
+
+function isPointInEditorBody(physicalX: number, physicalY: number): boolean {
+  if (!editorBodyRef.value) return false;
+  const scale = window.devicePixelRatio || 1;
+  const x = physicalX / scale;
+  const y = physicalY / scale;
+  const rect = editorBodyRef.value.getBoundingClientRect();
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
 
-function onDragLeave() {
-  isDragOver.value = false;
-}
-
-async function onDrop(event: DragEvent) {
-  isDragOver.value = false;
-  const file = event.dataTransfer?.files?.[0];
-  if (!file) return;
-
-  const text = await file.text();
+async function handleDroppedPath(path: string) {
+  const text = await readTextFile(path);
   requestLoad({ kind: "drop", text });
 }
+
+onMounted(async () => {
+  // Tauri intercepts OS-level file drag & drop before it reaches the DOM
+  // (dataTransfer.files stays empty for files dragged from a file manager),
+  // so this uses Tauri's own drag & drop event instead of native HTML5 drop events.
+  unlistenDragDrop = await getCurrentWebview().onDragDropEvent((event) => {
+    if (event.payload.type === "drop") {
+      isDragOver.value = false;
+      const { x, y } = event.payload.position;
+      const [firstPath] = event.payload.paths;
+      if (firstPath && isPointInEditorBody(x, y)) {
+        handleDroppedPath(firstPath);
+      }
+    } else if (event.payload.type === "enter" || event.payload.type === "over") {
+      const { x, y } = event.payload.position;
+      isDragOver.value = isPointInEditorBody(x, y);
+    } else {
+      isDragOver.value = false;
+    }
+  });
+});
+
+onBeforeUnmount(() => {
+  unlistenDragDrop?.();
+});
 </script>
 
 <template>
@@ -143,11 +169,9 @@ async function onDrop(event: DragEvent) {
     </div>
 
     <div
+      ref="editorBodyRef"
       class="editor-body"
       :class="{ 'editor-body-drag-over': isDragOver }"
-      @dragover.prevent="onDragOver"
-      @dragleave.prevent="onDragLeave"
-      @drop.prevent="onDrop"
     >
       <div class="editor-gutter" ref="gutterRef">
         <div
@@ -203,6 +227,7 @@ async function onDrop(event: DragEvent) {
   border-radius: 12px;
   border: 1px solid var(--secondary);
   background: var(--background);
+  box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
   overflow: hidden;

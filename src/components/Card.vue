@@ -17,5 +17,6 @@
   border-radius: 12px;
   border: 1px solid var(--secondary);
   background: var(--background);
+  box-shadow: var(--shadow);
 }
 </style>
