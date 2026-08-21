@@ -153,4 +153,47 @@ mod tests {
         assert_eq!(semantic_errors.len(), 1);
         assert_eq!(semantic_errors[0].message, "undefined label 'missing'");
     }
+
+    #[test]
+    fn full_pipeline_accepts_a_representative_program() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.s");
+        let preprocessed = dir.path().join("preprocessed.s");
+        let tokens_path = dir.path().join("tokens.jsonl");
+        let ast_path = dir.path().join("ast.json");
+        std::fs::write(
+            &source,
+            "\
+.data
+values:
+.word 1, 2, 3
+label: .string \"hi\"
+.text
+start:
+  addi x1, x0, 0x10
+  addi x2, x0, 0b101
+  addi x3, x0, -5
+  lw x4, 0(x1)
+loop:
+  addi x1, x1, -1
+  bne x1, x0, loop
+",
+        )
+        .unwrap();
+
+        let lang = RiscV;
+        let config = RiscvConfig { base: Base::Rv32i, extensions: HashSet::new() };
+
+        let pre_errors = lang.preprocess(&source, &preprocessed).unwrap();
+        assert!(pre_errors.is_empty());
+
+        let tok_errors = lang.tokenize(&preprocessed, &tokens_path).unwrap();
+        assert!(tok_errors.is_empty());
+
+        let parse_errors = lang.parse(&tokens_path, &ast_path).unwrap();
+        assert!(parse_errors.is_empty());
+
+        let semantic_errors = lang.analyze(&ast_path, &config).unwrap();
+        assert!(semantic_errors.is_empty());
+    }
 }
