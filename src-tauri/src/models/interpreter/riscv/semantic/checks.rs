@@ -75,6 +75,191 @@ fn shape_of(kind: InstructionKind) -> OperandShape {
     }
 }
 
+fn mnemonic(kind: InstructionKind) -> &'static str {
+    use InstructionKind::*;
+
+    match kind {
+        // RV32I base
+        Lui => "lui",
+        Auipc => "auipc",
+        Jal => "jal",
+        Jalr => "jalr",
+        Beq => "beq",
+        Bne => "bne",
+        Blt => "blt",
+        Bge => "bge",
+        Bltu => "bltu",
+        Bgeu => "bgeu",
+        Lb => "lb",
+        Lh => "lh",
+        Lw => "lw",
+        Lbu => "lbu",
+        Lhu => "lhu",
+        Sb => "sb",
+        Sh => "sh",
+        Sw => "sw",
+        Addi => "addi",
+        Slti => "slti",
+        Sltiu => "sltiu",
+        Xori => "xori",
+        Ori => "ori",
+        Andi => "andi",
+        Slli => "slli",
+        Srli => "srli",
+        Srai => "srai",
+        Add => "add",
+        Sub => "sub",
+        Sll => "sll",
+        Slt => "slt",
+        Sltu => "sltu",
+        Xor => "xor",
+        Srl => "srl",
+        Sra => "sra",
+        Or => "or",
+        And => "and",
+        Fence => "fence",
+        Ecall => "ecall",
+        Ebreak => "ebreak",
+
+        // RV64I additions
+        Lwu => "lwu",
+        Ld => "ld",
+        Sd => "sd",
+        Addiw => "addiw",
+        Slliw => "slliw",
+        Srliw => "srliw",
+        Sraiw => "sraiw",
+        Addw => "addw",
+        Subw => "subw",
+        Sllw => "sllw",
+        Srlw => "srlw",
+        Sraw => "sraw",
+
+        // M extension
+        Mul => "mul",
+        Mulh => "mulh",
+        Mulhsu => "mulhsu",
+        Mulhu => "mulhu",
+        Div => "div",
+        Divu => "divu",
+        Rem => "rem",
+        Remu => "remu",
+
+        // F extension
+        Flw => "flw",
+        Fsw => "fsw",
+        FmaddS => "fmadd.s",
+        FmsubS => "fmsub.s",
+        FnmsubS => "fnmsub.s",
+        FnmaddS => "fnmadd.s",
+        FaddS => "fadd.s",
+        FsubS => "fsub.s",
+        FmulS => "fmul.s",
+        FdivS => "fdiv.s",
+        FsqrtS => "fsqrt.s",
+        FsgnjS => "fsgnj.s",
+        FsgnjnS => "fsgnjn.s",
+        FsgnjxS => "fsgnjx.s",
+        FminS => "fmin.s",
+        FmaxS => "fmax.s",
+        FcvtWS => "fcvt.w.s",
+        FcvtWuS => "fcvt.wu.s",
+        FmvXW => "fmv.x.w",
+        FeqS => "feq.s",
+        FltS => "flt.s",
+        FleS => "fle.s",
+        FclassS => "fclass.s",
+        FcvtSW => "fcvt.s.w",
+        FcvtSWu => "fcvt.s.wu",
+        FmvWX => "fmv.w.x",
+
+        // D extension
+        Fld => "fld",
+        Fsd => "fsd",
+        FmaddD => "fmadd.d",
+        FmsubD => "fmsub.d",
+        FnmsubD => "fnmsub.d",
+        FnmaddD => "fnmadd.d",
+        FaddD => "fadd.d",
+        FsubD => "fsub.d",
+        FmulD => "fmul.d",
+        FdivD => "fdiv.d",
+        FsqrtD => "fsqrt.d",
+        FsgnjD => "fsgnj.d",
+        FsgnjnD => "fsgnjn.d",
+        FsgnjxD => "fsgnjx.d",
+        FminD => "fmin.d",
+        FmaxD => "fmax.d",
+        FcvtSD => "fcvt.s.d",
+        FcvtDS => "fcvt.d.s",
+        FeqD => "feq.d",
+        FltD => "flt.d",
+        FleD => "fle.d",
+        FclassD => "fclass.d",
+        FcvtWD => "fcvt.w.d",
+        FcvtWuD => "fcvt.wu.d",
+        FcvtDW => "fcvt.d.w",
+        FcvtDWu => "fcvt.d.wu",
+
+        // Q extension
+        Flq => "flq",
+        Fsq => "fsq",
+        FmaddQ => "fmadd.q",
+        FmsubQ => "fmsub.q",
+        FnmsubQ => "fnmsub.q",
+        FnmaddQ => "fnmadd.q",
+        FaddQ => "fadd.q",
+        FsubQ => "fsub.q",
+        FmulQ => "fmul.q",
+        FdivQ => "fdiv.q",
+        FsqrtQ => "fsqrt.q",
+        FsgnjQ => "fsgnj.q",
+        FsgnjnQ => "fsgnjn.q",
+        FsgnjxQ => "fsgnjx.q",
+        FminQ => "fmin.q",
+        FmaxQ => "fmax.q",
+        FcvtSQ => "fcvt.s.q",
+        FcvtQS => "fcvt.q.s",
+        FcvtDQ => "fcvt.d.q",
+        FcvtQD => "fcvt.q.d",
+        FeqQ => "feq.q",
+        FltQ => "flt.q",
+        FleQ => "fle.q",
+        FclassQ => "fclass.q",
+        FcvtWQ => "fcvt.w.q",
+        FcvtWuQ => "fcvt.wu.q",
+        FcvtQW => "fcvt.q.w",
+        FcvtQWu => "fcvt.q.wu",
+
+        // Pseudo-instructions
+        Nop => "nop",
+        Li => "li",
+        Mv => "mv",
+        Not => "not",
+        Neg => "neg",
+        Seqz => "seqz",
+        Snez => "snez",
+        Sltz => "sltz",
+        Sgtz => "sgtz",
+        Beqz => "beqz",
+        Bnez => "bnez",
+        Blez => "blez",
+        Bgez => "bgez",
+        Bltz => "bltz",
+        Bgtz => "bgtz",
+        Bgt => "bgt",
+        Ble => "ble",
+        Bgtu => "bgtu",
+        Bleu => "bleu",
+        J => "j",
+        Jr => "jr",
+        Ret => "ret",
+        Call => "call",
+        Tail => "tail",
+        La => "la",
+    }
+}
+
 fn required_extension(kind: InstructionKind) -> Option<Extension> {
     use InstructionKind::*;
 
@@ -146,14 +331,14 @@ pub(super) fn check_config(
     column: usize,
 ) -> Result<(), SemanticError> {
     if requires_rv64(kind) && config.base != Base::Rv64i {
-        return Err(SemanticError::new(line, column, format!("'{:?}' requires RV64I base", kind)));
+        return Err(SemanticError::new(line, column, format!("'{}' requires RV64I base", mnemonic(kind))));
     }
     if let Some(ext) = required_extension(kind) {
         if !config.extensions.contains(&ext) {
             return Err(SemanticError::new(
                 line,
                 column,
-                format!("'{:?}' requires the {:?} extension", kind, ext),
+                format!("'{}' requires the {:?} extension", mnemonic(kind), ext),
             ));
         }
     }
@@ -168,7 +353,7 @@ pub(super) fn validate_operands(
     column: usize,
 ) -> Result<(), SemanticError> {
     let shape = shape_of(kind);
-    let mnemonic = format!("{:?}", kind);
+    let mnemonic = mnemonic(kind);
 
     let expect_count = |n: usize| -> Result<(), SemanticError> {
         if operands.len() != n {
