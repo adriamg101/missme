@@ -7,6 +7,7 @@ use std::path::Path;
 
 use crate::models::interpreter::error::SemanticError;
 
+use crate::models::interpreter::riscv::lexer::token::InstructionKind;
 use super::parser::ast::{Node, Operand, Program};
 use super::RiscvConfig;
 use checks::{check_config, validate_directive, validate_operands};
@@ -34,9 +35,11 @@ pub fn analyze(ast_path: &Path, config: &RiscvConfig) -> io::Result<Vec<Semantic
                 if let Err(err) = validate_operands(*kind, operands, config, *line, *column) {
                     errors.push(err);
                 }
-                for operand in operands {
-                    if let Operand::LabelRef(label) = operand {
-                        pending.push((label.clone(), *line, *column));
+                if *kind != InstructionKind::Fence {
+                    for operand in operands {
+                        if let Operand::LabelRef(label) = operand {
+                            pending.push((label.clone(), *line, *column));
+                        }
                     }
                 }
             }
@@ -135,6 +138,24 @@ mod tests {
         let errors = analyze(&ast_path, &base_config()).unwrap();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].line, 3);
+    }
+
+    #[test]
+    fn fence_identifier_operands_are_not_treated_as_label_references() {
+        let dir = tempdir().unwrap();
+        let ast_path = dir.path().join("ast.json");
+        write_program(
+            &ast_path,
+            vec![Node::Instruction {
+                kind: InstructionKind::Fence,
+                operands: vec![Operand::LabelRef("rw".into()), Operand::LabelRef("rw".into())],
+                line: 1,
+                column: 1,
+            }],
+        );
+
+        let errors = analyze(&ast_path, &base_config()).unwrap();
+        assert!(errors.is_empty());
     }
 
     #[test]
