@@ -1,5 +1,6 @@
 mod lexer;
 mod parser;
+mod semantic;
 
 use std::collections::HashSet;
 use std::io;
