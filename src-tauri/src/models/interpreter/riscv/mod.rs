@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::error::{LexError, ParseError};
+use super::error::{LexError, ParseError, SemanticError};
 use super::language::Language;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +46,10 @@ impl Language for RiscV {
 
     fn parse(&self, tokens_path: &Path, out_path: &Path) -> io::Result<Vec<ParseError>> {
         parser::parse(tokens_path, out_path)
+    }
+
+    fn analyze(&self, ast_path: &Path, config: &RiscvConfig) -> io::Result<Vec<SemanticError>> {
+        semantic::analyze(ast_path, config)
     }
 }
 
@@ -107,5 +111,46 @@ mod tests {
         assert_eq!(json["base"], "RV32I");
         let exts = json["extensions"].as_array().unwrap();
         assert_eq!(exts.len(), 2);
+    }
+
+    #[test]
+    fn language_analyze_resolves_forward_label_reference() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.s");
+        let preprocessed = dir.path().join("preprocessed.s");
+        let tokens_path = dir.path().join("tokens.jsonl");
+        let ast_path = dir.path().join("ast.json");
+        std::fs::write(&source, "start:\n  jal x1, end\n  add x1, x2, x3\nend:\n").unwrap();
+
+        let lang = RiscV;
+        let config = RiscvConfig { base: Base::Rv32i, extensions: HashSet::new() };
+
+        lang.preprocess(&source, &preprocessed).unwrap();
+        lang.tokenize(&preprocessed, &tokens_path).unwrap();
+        lang.parse(&tokens_path, &ast_path).unwrap();
+        let semantic_errors = lang.analyze(&ast_path, &config).unwrap();
+
+        assert!(semantic_errors.is_empty());
+    }
+
+    #[test]
+    fn language_analyze_reports_undefined_label() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.s");
+        let preprocessed = dir.path().join("preprocessed.s");
+        let tokens_path = dir.path().join("tokens.jsonl");
+        let ast_path = dir.path().join("ast.json");
+        std::fs::write(&source, "jal x1, missing\n").unwrap();
+
+        let lang = RiscV;
+        let config = RiscvConfig { base: Base::Rv32i, extensions: HashSet::new() };
+
+        lang.preprocess(&source, &preprocessed).unwrap();
+        lang.tokenize(&preprocessed, &tokens_path).unwrap();
+        lang.parse(&tokens_path, &ast_path).unwrap();
+        let semantic_errors = lang.analyze(&ast_path, &config).unwrap();
+
+        assert_eq!(semantic_errors.len(), 1);
+        assert_eq!(semantic_errors[0].message, "undefined label 'missing'");
     }
 }
