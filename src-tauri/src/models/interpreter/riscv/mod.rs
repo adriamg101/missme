@@ -7,7 +7,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::error::LexError;
+use super::error::{LexError, ParseError};
 use super::language::Language;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +42,10 @@ impl Language for RiscV {
     fn tokenize(&self, preprocessed_path: &Path, out_path: &Path) -> io::Result<Vec<LexError>> {
         lexer::tokenizer::tokenize(preprocessed_path, out_path)
     }
+
+    fn parse(&self, tokens_path: &Path, out_path: &Path) -> io::Result<Vec<ParseError>> {
+        parser::parse(tokens_path, out_path)
+    }
 }
 
 #[cfg(test)]
@@ -72,6 +76,24 @@ mod tests {
             .read_to_string(&mut contents)
             .unwrap();
         assert_eq!(contents.lines().count(), 7);
+    }
+
+    #[test]
+    fn language_parse_produces_ast_file() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.s");
+        let preprocessed = dir.path().join("preprocessed.s");
+        let tokens_path = dir.path().join("tokens.jsonl");
+        let ast_path = dir.path().join("ast.json");
+        std::fs::write(&source, "add x1, x2, x3\n").unwrap();
+
+        let lang = RiscV;
+        lang.preprocess(&source, &preprocessed).unwrap();
+        lang.tokenize(&preprocessed, &tokens_path).unwrap();
+        let parse_errors = lang.parse(&tokens_path, &ast_path).unwrap();
+
+        assert!(parse_errors.is_empty());
+        assert!(ast_path.exists());
     }
 
     #[test]
