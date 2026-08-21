@@ -3,9 +3,9 @@ use crate::models::interpreter::riscv::lexer::token::{Token, TokenKind};
 
 use super::ast::{Node, Operand};
 
-pub(super) fn parse_statement(tokens: &[Token]) -> Result<Vec<Node>, ParseError> {
+pub(super) fn parse_statement(tokens: &[Token]) -> (Vec<Node>, Option<ParseError>) {
     if tokens.is_empty() {
-        return Ok(Vec::new());
+        return (Vec::new(), None);
     }
 
     let mut nodes = Vec::new();
@@ -19,36 +19,43 @@ pub(super) fn parse_statement(tokens: &[Token]) -> Result<Vec<Node>, ParseError>
     }
 
     if pos >= tokens.len() {
-        return Ok(nodes);
+        return (nodes, None);
     }
 
     let head = &tokens[pos];
     match &head.kind {
-        TokenKind::Instruction(kind) => {
-            let operands = parse_operand_list(&tokens[pos + 1..])?;
-            nodes.push(Node::Instruction {
-                kind: *kind,
-                operands,
-                line: head.line,
-                column: head.column,
-            });
-            Ok(nodes)
-        }
-        TokenKind::Directive => {
-            let operands = parse_operand_list(&tokens[pos + 1..])?;
-            nodes.push(Node::Directive {
-                name: head.lexeme.clone(),
-                args: operands,
-                line: head.line,
-                column: head.column,
-            });
-            Ok(nodes)
-        }
-        _ => Err(ParseError::new(
-            head.line,
-            head.column,
-            format!("expected instruction or directive, found '{}'", head.lexeme),
-        )),
+        TokenKind::Instruction(kind) => match parse_operand_list(&tokens[pos + 1..]) {
+            Ok(operands) => {
+                nodes.push(Node::Instruction {
+                    kind: *kind,
+                    operands,
+                    line: head.line,
+                    column: head.column,
+                });
+                (nodes, None)
+            }
+            Err(err) => (nodes, Some(err)),
+        },
+        TokenKind::Directive => match parse_operand_list(&tokens[pos + 1..]) {
+            Ok(operands) => {
+                nodes.push(Node::Directive {
+                    name: head.lexeme.clone(),
+                    args: operands,
+                    line: head.line,
+                    column: head.column,
+                });
+                (nodes, None)
+            }
+            Err(err) => (nodes, Some(err)),
+        },
+        _ => (
+            nodes,
+            Some(ParseError::new(
+                head.line,
+                head.column,
+                format!("expected instruction or directive, found '{}'", head.lexeme),
+            )),
+        ),
     }
 }
 
@@ -190,7 +197,9 @@ mod tests {
 
     #[test]
     fn empty_statement_produces_no_nodes() {
-        assert_eq!(parse_statement(&[]).unwrap(), vec![]);
+        let (nodes, err) = parse_statement(&[]);
+        assert!(err.is_none());
+        assert_eq!(nodes, vec![]);
     }
 
     #[test]
@@ -204,7 +213,8 @@ mod tests {
             tok(TokenKind::Register(RegisterKind::X(3)), "x3", 1, 13),
         ];
 
-        let nodes = parse_statement(&tokens).unwrap();
+        let (nodes, err) = parse_statement(&tokens);
+        assert!(err.is_none());
 
         assert_eq!(
             nodes,
@@ -232,7 +242,8 @@ mod tests {
             tok(TokenKind::Identifier, "loop", 3, 15),
         ];
 
-        let nodes = parse_statement(&tokens).unwrap();
+        let (nodes, err) = parse_statement(&tokens);
+        assert!(err.is_none());
 
         assert_eq!(
             nodes,
@@ -258,7 +269,8 @@ mod tests {
             tok(TokenKind::Colon, ":", 9, 5),
         ];
 
-        let nodes = parse_statement(&tokens).unwrap();
+        let (nodes, err) = parse_statement(&tokens);
+        assert!(err.is_none());
 
         assert_eq!(nodes, vec![Node::Label { name: "done".into(), line: 9, column: 1 }]);
     }
@@ -275,7 +287,8 @@ mod tests {
             tok(TokenKind::RParen, ")", 2, 12),
         ];
 
-        let nodes = parse_statement(&tokens).unwrap();
+        let (nodes, err) = parse_statement(&tokens);
+        assert!(err.is_none());
 
         assert_eq!(
             nodes,
@@ -303,7 +316,8 @@ mod tests {
             tok(TokenKind::Number, "1", 1, 15),
         ];
 
-        let nodes = parse_statement(&tokens).unwrap();
+        let (nodes, err) = parse_statement(&tokens);
+        assert!(err.is_none());
 
         assert_eq!(
             nodes,
@@ -331,7 +345,8 @@ mod tests {
             tok(TokenKind::Number, "0x1F", 1, 14),
         ];
 
-        let nodes = parse_statement(&tokens).unwrap();
+        let (nodes, err) = parse_statement(&tokens);
+        assert!(err.is_none());
 
         assert_eq!(
             nodes,
@@ -359,7 +374,8 @@ mod tests {
             tok(TokenKind::Number, "0b101010", 1, 14),
         ];
 
-        let nodes = parse_statement(&tokens).unwrap();
+        let (nodes, err) = parse_statement(&tokens);
+        assert!(err.is_none());
 
         assert_eq!(
             nodes,
@@ -383,7 +399,8 @@ mod tests {
             tok(TokenKind::StringLiteral, "hello", 5, 9),
         ];
 
-        let nodes = parse_statement(&tokens).unwrap();
+        let (nodes, err) = parse_statement(&tokens);
+        assert!(err.is_none());
 
         assert_eq!(
             nodes,
@@ -400,7 +417,8 @@ mod tests {
     fn unexpected_token_at_start_of_statement_is_an_error() {
         let tokens = vec![tok(TokenKind::Comma, ",", 4, 1)];
 
-        let err = parse_statement(&tokens).unwrap_err();
+        let (_, err) = parse_statement(&tokens);
+        let err = err.unwrap();
 
         assert_eq!(err.line, 4);
         assert_eq!(err.column, 1);
@@ -414,8 +432,25 @@ mod tests {
             tok(TokenKind::Comma, ",", 1, 7),
         ];
 
-        let err = parse_statement(&tokens).unwrap_err();
+        let (_, err) = parse_statement(&tokens);
+        let err = err.unwrap();
 
         assert_eq!(err.message, "expected operand after ','");
+    }
+
+    #[test]
+    fn label_is_preserved_when_instruction_on_same_line_fails_to_parse() {
+        let tokens = vec![
+            tok(TokenKind::Identifier, "loop", 3, 1),
+            tok(TokenKind::Colon, ":", 3, 5),
+            tok(TokenKind::Comma, ",", 3, 7),
+        ];
+
+        let (nodes, err) = parse_statement(&tokens);
+
+        assert_eq!(nodes, vec![Node::Label { name: "loop".into(), line: 3, column: 1 }]);
+        let err = err.unwrap();
+        assert_eq!(err.line, 3);
+        assert_eq!(err.column, 7);
     }
 }

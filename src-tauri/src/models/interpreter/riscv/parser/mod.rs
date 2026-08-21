@@ -20,9 +20,10 @@ pub fn parse(tokens_path: &Path, out_path: &Path) -> io::Result<Vec<ParseError>>
     for line in reader.lines() {
         let token: Token = serde_json::from_str(&line?)?;
         if token.kind == TokenKind::Newline {
-            match parse_statement(&current) {
-                Ok(mut stmt_nodes) => nodes.append(&mut stmt_nodes),
-                Err(err) => errors.push(err),
+            let (mut stmt_nodes, err) = parse_statement(&current);
+            nodes.append(&mut stmt_nodes);
+            if let Some(err) = err {
+                errors.push(err);
             }
             current.clear();
         } else {
@@ -31,9 +32,10 @@ pub fn parse(tokens_path: &Path, out_path: &Path) -> io::Result<Vec<ParseError>>
     }
 
     if !current.is_empty() {
-        match parse_statement(&current) {
-            Ok(mut stmt_nodes) => nodes.append(&mut stmt_nodes),
-            Err(err) => errors.push(err),
+        let (mut stmt_nodes, err) = parse_statement(&current);
+        nodes.append(&mut stmt_nodes);
+        if let Some(err) = err {
+            errors.push(err);
         }
     }
 
