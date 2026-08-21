@@ -170,6 +170,8 @@ fn parse_immediate_or_offset(tokens: &[Token]) -> Result<(Operand, usize), Parse
 fn parse_number_literal(lexeme: &str) -> Result<i64, String> {
     if let Some(hex) = lexeme.strip_prefix("0x").or_else(|| lexeme.strip_prefix("0X")) {
         i64::from_str_radix(hex, 16).map_err(|_| format!("malformed hex literal '{}'", lexeme))
+    } else if let Some(bin) = lexeme.strip_prefix("0b").or_else(|| lexeme.strip_prefix("0B")) {
+        i64::from_str_radix(bin, 2).map_err(|_| format!("malformed binary literal '{}'", lexeme))
     } else {
         lexeme
             .parse::<i64>()
@@ -339,6 +341,34 @@ mod tests {
                     Operand::Register(RegisterKind::X(1)),
                     Operand::Register(RegisterKind::X(0)),
                     Operand::Immediate(31),
+                ],
+                line: 1,
+                column: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_binary_immediate() {
+        let tokens = vec![
+            tok(TokenKind::Instruction(InstructionKind::Addi), "addi", 1, 1),
+            tok(TokenKind::Register(RegisterKind::X(1)), "x1", 1, 6),
+            tok(TokenKind::Comma, ",", 1, 8),
+            tok(TokenKind::Register(RegisterKind::X(0)), "x0", 1, 10),
+            tok(TokenKind::Comma, ",", 1, 12),
+            tok(TokenKind::Number, "0b101010", 1, 14),
+        ];
+
+        let nodes = parse_statement(&tokens).unwrap();
+
+        assert_eq!(
+            nodes,
+            vec![Node::Instruction {
+                kind: InstructionKind::Addi,
+                operands: vec![
+                    Operand::Register(RegisterKind::X(1)),
+                    Operand::Register(RegisterKind::X(0)),
+                    Operand::Immediate(42),
                 ],
                 line: 1,
                 column: 1,
