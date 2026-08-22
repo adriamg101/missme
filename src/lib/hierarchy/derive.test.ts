@@ -14,6 +14,7 @@ import {
   insertionIndex,
   visibleTabs,
   pageWalkTargets,
+  maxCacheSize,
 } from "./derive";
 
 function unifiedLevel(id: string, exp: number): Level {
@@ -32,18 +33,18 @@ function harvardLevel(id: string, iExp: number, dExp: number): Level {
 }
 
 describe("sizeLabel", () => {
-  it("formats byte-scale sizes", () => {
-    expect(sizeLabel(0)).toBe("1 B");
-    expect(sizeLabel(4)).toBe("16 B");
+  it("formats base-scale counts with no unit suffix", () => {
+    expect(sizeLabel(0)).toBe("1");
+    expect(sizeLabel(4)).toBe("16");
   });
-  it("formats KB/MB/GB exactly on unit boundaries", () => {
-    expect(sizeLabel(10)).toBe("1 KB");
-    expect(sizeLabel(20)).toBe("1 MB");
-    expect(sizeLabel(30)).toBe("1 GB");
+  it("formats K/M/G exactly on unit boundaries", () => {
+    expect(sizeLabel(10)).toBe("1 K");
+    expect(sizeLabel(20)).toBe("1 M");
+    expect(sizeLabel(30)).toBe("1 G");
   });
   it("formats non-boundary exponents within a unit", () => {
-    expect(sizeLabel(13)).toBe("8 KB");
-    expect(sizeLabel(25)).toBe("32 MB");
+    expect(sizeLabel(13)).toBe("8 K");
+    expect(sizeLabel(25)).toBe("32 M");
   });
 });
 
@@ -111,10 +112,10 @@ describe("occupied spans and insertability", () => {
 });
 
 describe("visibleTabs", () => {
-  it("omits TLB/RAM/DISK when VM is disabled", () => {
+  it("always includes RAM but omits TLB/DISK when VM is disabled", () => {
     const h: Hierarchy = [unifiedLevel("a", 5)];
     const tabs = visibleTabs(h, false);
-    expect(tabs.map((t) => t.kind)).toEqual(["cache"]);
+    expect(tabs.map((t) => t.kind)).toEqual(["cache", "ram"]);
   });
 
   it("includes TLB/RAM/DISK in the right order when VM is enabled", () => {
@@ -132,5 +133,21 @@ describe("pageWalkTargets", () => {
       { id: "c", label: "L3" },
       { id: "RAM", label: "RAM" },
     ]);
+  });
+});
+
+describe("maxCacheSize", () => {
+  it("returns 1 for an empty hierarchy", () => {
+    expect(maxCacheSize([])).toBe(1);
+  });
+
+  it("returns the largest unified level's size", () => {
+    const h: Hierarchy = [unifiedLevel("a", 5), unifiedLevel("b", 15)];
+    expect(maxCacheSize(h)).toBe(2 ** 15);
+  });
+
+  it("considers both i and d sides of a harvard level", () => {
+    const h: Hierarchy = [unifiedLevel("a", 5), harvardLevel("b", 10, 20)];
+    expect(maxCacheSize(h)).toBe(2 ** 20);
   });
 });

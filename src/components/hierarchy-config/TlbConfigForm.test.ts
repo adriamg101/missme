@@ -18,24 +18,36 @@ const targets = [
 ];
 
 describe("TlbConfigForm", () => {
-  it("offers every non-L1 level plus RAM as page-walk-start options, defaulting to RAM", () => {
+  it("offers every non-L1 level plus RAM as page-walk-start options, defaulting to RAM", async () => {
     render(TlbConfigForm, { props: { tlb, pageWalkTargets: targets } });
-    const select = screen.getByLabelText("Page walk start") as HTMLSelectElement;
-    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["L2", "L3", "RAM"]);
-    expect(select.value).toBe("RAM");
+    await fireEvent.click(screen.getByLabelText("Page walk start"));
+    const options = screen.getAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["L2", "L3", "RAM"]);
+    const selected = options.find((o) => o.getAttribute("aria-selected") === "true");
+    expect(selected?.textContent).toBe("RAM");
+  });
+
+  it("choosing a page-walk-start option emits the update and closes the dropdown", async () => {
+    const { emitted } = render(TlbConfigForm, { props: { tlb, pageWalkTargets: targets } });
+    await fireEvent.click(screen.getByLabelText("Page walk start"));
+    await fireEvent.click(screen.getByText("L2"));
+    expect(emitted().update.at(-1)).toEqual([{ pageWalkStart: "l2" }]);
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
   });
 
   it("emits an update patch when page size changes via the stepper", async () => {
     const { emitted } = render(TlbConfigForm, { props: { tlb, pageWalkTargets: targets } });
-    await fireEvent.click(screen.getByLabelText("Incrementar"));
+    await fireEvent.click(screen.getAllByLabelText("Incrementar")[0]);
     expect(emitted().update[0]).toEqual([{ pageSize: 8192 }]);
   });
 
   it("rejects a page-table-levels value below 1", async () => {
-    const { emitted } = render(TlbConfigForm, { props: { tlb, pageWalkTargets: targets } });
+    const { emitted } = render(TlbConfigForm, {
+      props: { tlb: { ...tlb, pageTableLevels: 2 }, pageWalkTargets: targets },
+    });
     const input = screen.getByLabelText("Page table levels") as HTMLInputElement;
     await fireEvent.update(input, "0");
-    await fireEvent.change(input);
+    await fireEvent.blur(input);
     expect(emitted().update.at(-1)).toEqual([{ pageTableLevels: 1 }]);
   });
 });

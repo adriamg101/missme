@@ -21,29 +21,35 @@ const harvard: Hierarchy = [
 ];
 
 describe("HierarchySlider rendering", () => {
-  it("renders 32 positions for RV32I and 64 for RV64I", () => {
+  it("renders positions 1..31 for RV32I and 1..63 for RV64I (position 0 is never reachable)", () => {
     const { container: c32 } = render(HierarchySlider, { props: { hierarchy: [], isa: "RV32I" } });
-    expect(c32.querySelectorAll("[data-slider-position]")).toHaveLength(32);
+    expect(c32.querySelectorAll("[data-slider-position]")).toHaveLength(31);
 
     const { container: c64 } = render(HierarchySlider, { props: { hierarchy: [], isa: "RV64I" } });
-    expect(c64.querySelectorAll("[data-slider-position]")).toHaveLength(64);
+    expect(c64.querySelectorAll("[data-slider-position]")).toHaveLength(63);
   });
 
   it("renders a unified level as one marker with a label above the line", () => {
     render(HierarchySlider, { props: { hierarchy: unified, isa: "RV32I" } });
-    expect(screen.getByText("1 KB")).toBeTruthy(); // 2^10
-    expect(screen.getByLabelText("L1, 1 KB")).toBeTruthy();
+    expect(screen.getByText("1 K")).toBeTruthy(); // 2^10
+    expect(screen.getByLabelText("L1, 1 K")).toBeTruthy();
   });
 
   it("renders a harvard level as two markers with i above and d below", () => {
     render(HierarchySlider, { props: { hierarchy: harvard, isa: "RV32I" } });
-    expect(screen.getByLabelText("L1 instrucciones, 4 KB")).toBeTruthy();
-    expect(screen.getByLabelText("L1 datos, 1 MB")).toBeTruthy();
+    expect(screen.getByLabelText("L1 instrucciones, 4 K")).toBeTruthy();
+    expect(screen.getByLabelText("L1 datos, 1 M")).toBeTruthy();
   });
 
-  it("shades the occupied span of a harvard level", () => {
-    const { container } = render(HierarchySlider, { props: { hierarchy: harvard, isa: "RV32I" } });
-    const shaded = container.querySelectorAll("[data-occupied-span]");
-    expect(shaded).toHaveLength(1);
+  it("shows the level index inside each marker, with an i/d suffix for harvard levels", () => {
+    render(HierarchySlider, { props: { hierarchy: harvard, isa: "RV32I" } });
+    expect(screen.getByLabelText("L1 instrucciones, 4 K").textContent).toContain("1i");
+    expect(screen.getByLabelText("L1 datos, 1 M").textContent).toContain("1d");
+  });
+
+  it("labels power-of-two ruler positions plus the maximum, never position 0", () => {
+    const { container } = render(HierarchySlider, { props: { hierarchy: [], isa: "RV32I" } });
+    const labeled = Array.from(container.querySelectorAll(".hierarchy-slider-tick-label")).map((el) => el.textContent);
+    expect(labeled.sort((a, b) => Number(a) - Number(b))).toEqual(["1", "2", "4", "8", "16", "31"]);
   });
 });

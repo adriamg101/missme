@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
-import type { CacheConfig, Hierarchy, ISA, TlbConfig } from "../lib/hierarchy/model";
+import type { CacheConfig, DiskConfig, Hierarchy, ISA, RamConfig, TlbConfig } from "../lib/hierarchy/model";
+import { defaultDiskConfig, defaultRamConfig } from "../lib/hierarchy/model";
 import {
   createLevel,
   removeLevel as removeLevelOp,
@@ -20,8 +21,8 @@ interface HierarchyConfigState {
   seed: number | null;
   hierarchy: Hierarchy;
   tlb: TlbConfig;
-  ram: Record<string, never>;
-  disk: Record<string, never>;
+  ram: RamConfig;
+  disk: DiskConfig;
 }
 
 export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
@@ -38,8 +39,8 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
       associativity: 4,
       replacement: "LRU",
     },
-    ram: {},
-    disk: {},
+    ram: defaultRamConfig(),
+    disk: defaultDiskConfig(),
   }),
   actions: {
     setIsa(isa: ISA, confirmFn: (message: string) => boolean = (msg) => confirm(msg)) {
@@ -102,6 +103,15 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
     },
     updateTlbConfig(patch: Partial<TlbConfig>) {
       this.tlb = { ...this.tlb, ...patch };
+    },
+    updateRamConfig(patch: Partial<RamConfig>) {
+      this.ram = { ...this.ram, ...patch };
+    },
+    updateDiskConfig(patch: Partial<DiskConfig>) {
+      this.disk = { ...this.disk, ...patch };
+    },
+    resetToDefaults() {
+      this.$reset();
     },
   },
 });

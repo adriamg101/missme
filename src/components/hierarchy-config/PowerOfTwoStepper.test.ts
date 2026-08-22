@@ -27,11 +27,10 @@ describe("PowerOfTwoStepper", () => {
     expect(emitted()["update:modelValue"]).toBeUndefined();
   });
 
-  it("typing a non-power-of-two rounds to the nearest power of two on blur", async () => {
-    const { emitted } = render(PowerOfTwoStepper, { props: { modelValue: 64 } });
+  it("renders the input readonly so the value can only change via the buttons", () => {
+    render(PowerOfTwoStepper, { props: { modelValue: 64 } });
     const input = screen.getByRole("spinbutton") as HTMLInputElement;
-    await fireEvent.update(input, "100");
-    await fireEvent.blur(input);
-    expect(emitted()["update:modelValue"].at(-1)).toEqual([128]);
+    expect(input.readOnly).toBe(true);
+    expect(input.value).toBe("64");
   });
 });

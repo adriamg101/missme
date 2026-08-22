@@ -163,4 +163,5 @@ describe("useHierarchyConfigStore", () => {
     expect(store.isa).toBe("RV64I");
     expect(store.hierarchy).toBe(before);
   });
+
 });

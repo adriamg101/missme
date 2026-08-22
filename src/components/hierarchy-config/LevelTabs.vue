@@ -62,10 +62,68 @@ function onCacheUpdate(patch: Partial<CacheConfig>) {
         :config="activeCacheConfig.entry.config"
         :cache-size-exp="activeCacheConfig.entry.exp"
         :is-instruction-cache="activeCacheConfig.chain === 'i'"
+        :isa="store.isa"
         @update="onCacheUpdate"
       />
-      <RamConfigForm v-else-if="activeTab?.kind === 'ram'" />
-      <DiskConfigForm v-else-if="activeTab?.kind === 'disk'" />
+      <RamConfigForm
+        v-else-if="activeTab?.kind === 'ram'"
+        :config="store.ram"
+        :hierarchy="store.hierarchy"
+        :vm-enabled="store.vmEnabled"
+        :isa="store.isa"
+        @update="store.updateRamConfig"
+      />
+      <DiskConfigForm v-else-if="activeTab?.kind === 'disk'" :config="store.disk" @update="store.updateDiskConfig" />
     </div>
   </div>
 </template>
+
+<style scoped>
+.level-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.level-tabs-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0 0.875rem;
+}
+
+.level-tabs-strip button {
+  min-height: 1.5rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--secondary);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.level-tabs-strip button[aria-selected="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--background);
+}
+
+.level-tabs-strip button:hover {
+  border-color: var(--accent);
+}
+
+.level-tabs-strip button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.level-tabs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0 0.875rem 0.875rem;
+}
+
+</style>

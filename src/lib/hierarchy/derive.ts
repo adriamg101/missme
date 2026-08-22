@@ -33,12 +33,15 @@ export function chainLabel(hierarchy: Hierarchy, index: number, chain: "i" | "d"
   return chain === "i" ? `${base}i` : `${base}d`;
 }
 
-const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
+// The slider counts entries (tags), not bytes — no "B" suffix. K/M/G/... only
+// kick in once the raw count would otherwise be unreadably large.
+const SIZE_UNITS = ["", "K", "M", "G", "T", "P", "E"];
 
 export function sizeLabel(exp: number): string {
   const unitIndex = Math.min(Math.floor(exp / 10), SIZE_UNITS.length - 1);
   const value = 2 ** (exp - unitIndex * 10);
-  return `${value} ${SIZE_UNITS[unitIndex]}`;
+  const unit = SIZE_UNITS[unitIndex];
+  return unit ? `${value} ${unit}` : `${value}`;
 }
 
 export interface OccupiedSpan {
@@ -90,8 +93,8 @@ export function visibleTabs(hierarchy: Hierarchy, vmEnabled: boolean): TabDescri
       tabs.push({ kind: "cache", id: level.id, label: levelName(hierarchy, index), levelIndex: index, chain: "unified" });
     }
   });
+  tabs.push({ kind: "ram", id: "ram", label: "RAM" });
   if (vmEnabled) {
-    tabs.push({ kind: "ram", id: "ram", label: "RAM" });
     tabs.push({ kind: "disk", id: "disk", label: "DISK" });
   }
   return tabs;
@@ -109,4 +112,20 @@ export function pageWalkTargets(hierarchy: Hierarchy): PageWalkTarget[] {
   }));
   targets.push({ id: "RAM", label: "RAM" });
   return targets;
+}
+
+// The largest cache size (in bytes/entries, not the exponent) currently
+// configured anywhere in the hierarchy, across both chains. 1 (2^0) if the
+// hierarchy is empty, so a caller computing "the next power of two above
+// this" never divides by zero or works from a negative exponent.
+export function maxCacheSize(hierarchy: Hierarchy): number {
+  let maxExp = 0;
+  hierarchy.forEach((level) => {
+    if (level.harvard) {
+      maxExp = Math.max(maxExp, level.i!.exp, level.d!.exp);
+    } else {
+      maxExp = Math.max(maxExp, level.unified!.exp);
+    }
+  });
+  return 2 ** maxExp;
 }

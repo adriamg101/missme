@@ -7,18 +7,18 @@ import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 beforeEach(() => setActivePinia(createPinia()));
 
 describe("LevelTabs", () => {
-  it("shows no tabs when the hierarchy is empty and VM is off", () => {
+  it("shows only the RAM tab when the hierarchy is empty and VM is off", () => {
     render(LevelTabs);
-    expect(screen.queryByRole("tab")).toBeNull();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["RAM"]);
   });
 
-  it("shows a tab per cache level, split into i/d for harvard levels", () => {
+  it("shows a tab per cache level plus RAM, split into i/d for harvard levels", () => {
     const store = useHierarchyConfigStore();
     store.createLevelAt(5);
     store.createLevelAt(15);
     store.convertToHarvard(store.hierarchy[1].id);
     render(LevelTabs);
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["L1", "L2i", "L2d"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["L1", "L2i", "L2d", "RAM"]);
   });
 
   it("shows TLB and DISK tabs only when VM is enabled, and RAM alongside them", () => {

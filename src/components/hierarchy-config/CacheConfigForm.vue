@@ -2,93 +2,129 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import PowerOfTwoStepper from "./PowerOfTwoStepper.vue";
-import type { CacheConfig, ReplacementPolicy, WritePolicy } from "../../lib/hierarchy/model";
+import NumberStepper from "../ui/NumberStepper.vue";
+import SelectField from "../ui/SelectField.vue";
+import ConfigGrid from "./ConfigGrid.vue";
+import type { CacheConfig, ISA, ReplacementPolicy, WritePolicy } from "../../lib/hierarchy/model";
+import { defaultCacheConfig } from "../../lib/hierarchy/model";
 
-const props = defineProps<{ config: CacheConfig; cacheSizeExp: number; isInstructionCache: boolean }>();
+const props = defineProps<{ config: CacheConfig; cacheSizeExp: number; isInstructionCache: boolean; isa: ISA }>();
 const emit = defineEmits<{ update: [patch: Partial<CacheConfig>] }>();
 
-const maxAssociativity = computed(() => Math.max(1, Math.floor(2 ** props.cacheSizeExp / props.config.blockSize)));
+// cacheSizeExp is the slider's position — the number of entries (tags) in
+// this cache, not a byte count — so associativity (ways) can't exceed that
+// entry count regardless of block size (sets = entries / associativity >= 1).
+const maxAssociativity = computed(() => 2 ** props.cacheSizeExp);
+
+// A block must be able to hold at least one word — 4 bytes on RV32I, 8 on RV64I.
+const minBlockSize = computed(() => (props.isa === "RV32I" ? 4 : 8));
+
+// Defends against a config persisted before CacheConfig gained `dirtyPercent`
+// (e.g. localStorage saved by an older version of this app) — without this,
+// an undefined value here turns every +/- click into a NaN that never visibly
+// changes (NaN === NaN is false, so the stepper never sees "no change").
+const safeDirtyPercent = computed(() =>
+  Number.isFinite(props.config.dirtyPercent) ? props.config.dirtyPercent : defaultCacheConfig().dirtyPercent,
+);
+
+const replacementOptions = ["LRU", "FIFO", "Random", "LFU", "PLRU"].map((value) => ({ value, label: value }));
+const writePolicyOptions = [
+  { value: "write-through", label: "write-through" },
+  { value: "write-back", label: "write-back" },
+];
 
 function onBlockSizeChange(value: number) {
-  const patch: Partial<CacheConfig> = { blockSize: value };
-  const newMax = Math.max(1, Math.floor(2 ** props.cacheSizeExp / value));
-  if (props.config.associativity > newMax) patch.associativity = newMax;
-  emit("update", patch);
+  emit("update", { blockSize: value });
 }
 
-function onAssociativityChange(event: Event) {
-  const value = Number((event.target as HTMLInputElement).value);
-  emit("update", { associativity: Math.min(Math.max(1, value), maxAssociativity.value) });
+function onDirtyPercentChange(value: number) {
+  emit("update", { dirtyPercent: Math.min(100, Math.max(0, value)) });
 }
 </script>
 
 <template>
-  <form class="cache-config-form">
-    <label>
-      Block size
-      <PowerOfTwoStepper :model-value="config.blockSize" @update:model-value="onBlockSizeChange" />
-    </label>
+  <form class="cache-config-form" @submit.prevent>
+    <ConfigGrid>
+      <PowerOfTwoStepper
+        label="Block size"
+        aria-label="Block size"
+        :model-value="config.blockSize"
+        :min="minBlockSize"
+        @update:model-value="onBlockSizeChange"
+      />
 
-    <label>
-      Associativity
-      <input
-        type="number"
-        aria-label="Associativity"
-        :value="config.associativity"
-        min="1"
+      <PowerOfTwoStepper
+        label="Associativity"
+        :model-value="config.associativity"
+        :min="1"
         :max="maxAssociativity"
-        @change="onAssociativityChange"
+        aria-label="Associativity"
+        @update:model-value="emit('update', { associativity: $event })"
       />
-    </label>
 
-    <label>
-      Replacement policy
-      <select
+      <SelectField
+        label="Replacement policy"
+        :model-value="config.replacement"
+        :options="replacementOptions"
         aria-label="Replacement policy"
-        :value="config.replacement"
-        @change="emit('update', { replacement: ($event.target as HTMLSelectElement).value as ReplacementPolicy })"
-      >
-        <option>LRU</option>
-        <option>FIFO</option>
-        <option>Random</option>
-        <option>LFU</option>
-        <option>PLRU</option>
-      </select>
-    </label>
-
-    <template v-if="!isInstructionCache">
-      <label>
-        Write policy
-        <select
-          aria-label="Write policy"
-          :value="config.writePolicy"
-          @change="emit('update', { writePolicy: ($event.target as HTMLSelectElement).value as WritePolicy })"
-        >
-          <option value="write-through">write-through</option>
-          <option value="write-back">write-back</option>
-        </select>
-      </label>
-
-      <label>
-        Write allocate
-        <input
-          type="checkbox"
-          aria-label="Write allocate"
-          :checked="config.writeAllocate"
-          @change="emit('update', { writeAllocate: ($event.target as HTMLInputElement).checked })"
-        />
-      </label>
-    </template>
-
-    <label>
-      Hit time (cycles)
-      <input
-        type="number"
-        aria-label="Hit time"
-        :value="config.hitTime"
-        min="1"
-        @change="emit('update', { hitTime: Number(($event.target as HTMLInputElement).value) })"
+        @update:model-value="emit('update', { replacement: $event as ReplacementPolicy })"
       />
-    </label>
+
+      <template v-if="!isInstructionCache">
+        <SelectField
+          label="Write policy"
+          :model-value="config.writePolicy"
+          :options="writePolicyOptions"
+          aria-label="Write policy"
+          @update:model-value="emit('update', { writePolicy: $event as WritePolicy })"
+        />
+
+        <label class="cache-config-form-checkbox">
+          Write allocate
+          <input
+            type="checkbox"
+            aria-label="Write allocate"
+            :checked="config.writeAllocate"
+            @change="emit('update', { writeAllocate: ($event.target as HTMLInputElement).checked })"
+          />
+        </label>
+
+        <NumberStepper
+          v-if="config.writePolicy === 'write-back'"
+          label="Dirty at start (%)"
+          :model-value="safeDirtyPercent"
+          :min="0"
+          :max="100"
+          :step="5"
+          aria-label="Dirty at start"
+          @update:model-value="onDirtyPercentChange"
+        />
+      </template>
+
+      <NumberStepper
+        label="Hit time (cycles)"
+        :model-value="config.hitTime"
+        :min="1"
+        aria-label="Hit time"
+        @update:model-value="emit('update', { hitTime: $event })"
+      />
+    </ConfigGrid>
   </form>
 </template>
+
+<style scoped>
+.cache-config-form-checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.cache-config-form input[type="checkbox"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--accent);
+}
+</style>

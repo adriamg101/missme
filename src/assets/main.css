@@ -1,5 +1,4 @@
 @import url('https://fonts.googleapis.com/css?family=IBM%20Plex%20Mono:700|IBM%20Plex%20Mono:400');
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
 
 :root[data-theme="light"] {
   --text: #22170c;
@@ -19,6 +18,24 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(233, 148, 68, 0.08);
 }
 
+:root {
+  /* Shared control-size scale, used by src/components/ui/* so every input,
+     select, stepper and icon button comes from the same set of sizes. */
+  --control-height-sm: 1.25rem;
+  --control-height-md: 1.5rem;
+  --control-height-lg: 2rem;
+  --control-font-sm: 0.75rem;
+  --control-font-md: 0.875rem;
+  --control-font-lg: 1rem;
+  --control-padding-sm: 0.25rem 0.4rem;
+  --control-padding-md: 0.4rem 0.6rem;
+  --control-padding-lg: 0.6rem 0.9rem;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 html, body, #app {
   margin: 0;
   padding: 0;
@@ -28,7 +45,7 @@ html, body, #app {
 }
 
 body {
-  font-family: 'Inter', sans-serif;
+  font-family: 'IBM Plex Mono', monospace;
   font-weight: 400;
 }
 
@@ -37,7 +54,7 @@ body {
 }
 
 h1, h2, h3, h4, h5 {
-  font-family: 'Inter', sans-serif;
+  font-family: 'IBM Plex Mono', monospace;
   font-weight: 700;
 }
 
@@ -54,3 +71,13 @@ h4 {font-size: 1.777rem; /* 28.48px */}
 h5 {font-size: 1.333rem; /* 21.28px */}
 
 small {font-size: 0.750rem; /* 12px */}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

@@ -12,14 +12,14 @@ const oneLevel: Hierarchy = [
 describe("HierarchySlider interactions", () => {
   it("emits create with the clicked position on an empty slot", async () => {
     const { container, emitted } = render(HierarchySlider, { props: { hierarchy: [], isa: "RV32I" } });
-    const slot = container.querySelector('[data-slider-position="5"]') ?? container.querySelectorAll("[data-slider-position]")[5];
+    const slot = container.querySelectorAll("[data-slider-position]")[5];
     await fireEvent.click(slot!);
-    expect(emitted().create[0]).toEqual([5]);
+    expect(emitted().create[0]).toEqual([6]);
   });
 
   it("emits rejected-insert instead of create when clicking on an occupied position", async () => {
     const { container, emitted } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
-    const slot = container.querySelectorAll("[data-slider-position]")[10];
+    const slot = container.querySelectorAll("[data-slider-position]")[9];
     await fireEvent.click(slot!);
     expect(emitted().create).toBeUndefined();
     expect(emitted()["rejected-insert"][0]).toEqual([["a"]]);
@@ -27,7 +27,7 @@ describe("HierarchySlider interactions", () => {
 
   it("a plain click on an existing marker (below the drag threshold) does not emit move", async () => {
     const { getByLabelText, emitted } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
-    const marker = getByLabelText("L1, 1 KB");
+    const marker = getByLabelText("L1, 1 K");
     await fireEvent.mouseDown(marker, { clientX: 100 });
     await fireEvent.mouseUp(marker, { clientX: 101 }); // 1px, below the 4px threshold
     expect(emitted().move).toBeUndefined();
@@ -35,7 +35,7 @@ describe("HierarchySlider interactions", () => {
 
   it("dragging a marker past the threshold emits move with the target position", async () => {
     const { getByLabelText, emitted } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
-    const marker = getByLabelText("L1, 1 KB");
+    const marker = getByLabelText("L1, 1 K");
     await fireEvent.mouseDown(marker, { clientX: 100 });
     await fireEvent.mouseMove(document, { clientX: 130 }); // past the 4px threshold
     await fireEvent.mouseUp(document, { clientX: 130 });
