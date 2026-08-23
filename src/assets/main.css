@@ -1,5 +1,4 @@
 @import url('https://fonts.googleapis.com/css?family=IBM%20Plex%20Mono:700|IBM%20Plex%20Mono:400');
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
 
 :root[data-theme="light"] {
   --text: #22170c;
@@ -8,6 +7,19 @@
   --secondary: #c98a4f;
   --accent: #bb6616;
   --shadow: 0 1px 2px rgba(34, 23, 12, 0.06), 0 4px 12px rgba(34, 23, 12, 0.10);
+  /* Hierarchy diagram box colors (OKLCH): each box supplies its own --box-hue
+     and --box-chroma inline; these tokens are the shared, theme-aware
+     lightness values every box's border/fill/text is built from. */
+  --diagram-lightness-border: 0.5;
+  --diagram-lightness-fill: 0.95;
+  --diagram-lightness-text: 0.32;
+  /* Access-state overlays: hit/miss replace the border+glow temporarily;
+     read/write show as a small corner dot. Neither touches the box's own
+     type color, so they combine freely (e.g. hit + write). */
+  --diagram-hit-color: oklch(0.5 0.17 145);
+  --diagram-miss-color: oklch(0.52 0.19 25);
+  --diagram-read-color: oklch(0.5 0.15 250);
+  --diagram-write-color: oklch(0.55 0.15 75);
 }
 
 :root[data-theme="dark"] {
@@ -17,6 +29,34 @@
   --secondary: #b8763a;
   --accent: #e99444;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(233, 148, 68, 0.08);
+  --diagram-lightness-border: 0.72;
+  --diagram-lightness-fill: 0.22;
+  --diagram-lightness-text: 0.85;
+  --diagram-hit-color: oklch(0.78 0.17 145);
+  --diagram-miss-color: oklch(0.75 0.19 25);
+  --diagram-read-color: oklch(0.72 0.15 250);
+  --diagram-write-color: oklch(0.75 0.15 75);
+}
+
+:root {
+  /* Shared control-size scale, used by src/components/ui/* so every input,
+     select, stepper and icon button comes from the same set of sizes. */
+  --control-height-sm: 1.25rem;
+  --control-height-md: 1.5rem;
+  --control-height-lg: 2rem;
+  --control-font-sm: 0.75rem;
+  --control-font-md: 0.875rem;
+  --control-font-lg: 1rem;
+  --control-padding-sm: 0.25rem 0.4rem;
+  --control-padding-md: 0.4rem 0.6rem;
+  --control-padding-lg: 0.6rem 0.9rem;
+  /* Same in both themes — only the lightness tokens above differ. */
+  --diagram-fill-chroma-mult: 0.28;
+  --diagram-text-chroma-mult: 0.9;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
 }
 
 html, body, #app {
@@ -28,7 +68,7 @@ html, body, #app {
 }
 
 body {
-  font-family: 'Inter', sans-serif;
+  font-family: 'IBM Plex Mono', monospace;
   font-weight: 400;
 }
 
@@ -37,7 +77,7 @@ body {
 }
 
 h1, h2, h3, h4, h5 {
-  font-family: 'Inter', sans-serif;
+  font-family: 'IBM Plex Mono', monospace;
   font-weight: 700;
 }
 
@@ -54,3 +94,13 @@ h4 {font-size: 1.777rem; /* 28.48px */}
 h5 {font-size: 1.333rem; /* 21.28px */}
 
 small {font-size: 0.750rem; /* 12px */}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
