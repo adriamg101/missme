@@ -1,3 +1,5 @@
+import "@testing-library/jest-dom";
+
 // Node >= 24 ships its own experimental global `localStorage` (backed by a
 // SQLite file). Because that property already exists on `globalThis` before
 // Vitest's jsdom environment runs, Vitest's global-populating logic treats it

@@ -9,6 +9,8 @@ import SelectField from "./ui/SelectField.vue";
 import IconButton from "./ui/IconButton.vue";
 import ConfirmModal from "./ui/ConfirmModal.vue";
 import { useHierarchyConfigStore } from "../stores/hierarchyConfig";
+import CompileConfigForm from "./compile-config/CompileConfigForm.vue";
+import { useCompileConfigStore } from "../stores/compileConfig";
 
 // TODO: in the future this list should come from the backend
 const languages = ["RISC-V"];
@@ -17,9 +19,17 @@ const languageOptions = languages.map((lang) => ({ value: lang, label: lang }));
 const selectedLanguage = ref(languages[0]);
 const code = ref("");
 
+// Keep in sync with the languages CompileConfigForm actually knows how to
+// render a form for (currently only RISC-V). Prevents an empty bordered
+// strip from showing up once a second language is added without a
+// compile-config form of its own yet.
+const languagesWithCompileConfig = new Set(["RISC-V"]);
+const languageHasCompileConfig = computed(() => languagesWithCompileConfig.has(selectedLanguage.value));
+
 type RiscvExtension = "M" | "F" | "D" | "Q";
 
 const hierarchyConfigStore = useHierarchyConfigStore();
+const compileConfigStore = useCompileConfigStore();
 const riscvBase = computed({
   get: () => hierarchyConfigStore.isa,
   set: (value) => hierarchyConfigStore.setIsa(value),
@@ -145,6 +155,10 @@ async function handleStartClick() {
         base: riscvBase.value,
         extensions: Array.from(riscvExtensions.value),
       },
+      codegenConfig: {
+        text_base: compileConfigStore.textBase,
+        data_base: compileConfigStore.dataBase,
+      },
     });
 
     errorCount.value = result.error_count;
@@ -219,6 +233,11 @@ onBeforeUnmount(() => {
   document.removeEventListener("click", handleDocumentClick);
   unlistenDragDrop?.();
 });
+
+// Exposed for tests only: `languages` currently has a single entry, so
+// there's no UI path to select an "unsupported" language yet — this lets
+// tests exercise the languageHasCompileConfig gating (finding #5) directly.
+defineExpose({ selectedLanguage });
 </script>
 
 <template>
@@ -341,6 +360,10 @@ onBeforeUnmount(() => {
     </div>
 
     <ErrorPanel :count="errorCount" :output="errorOutput" />
+
+    <div v-if="languageHasCompileConfig" class="editor-compile-config">
+      <CompileConfigForm :language="selectedLanguage" />
+    </div>
 
     <ConfirmModal
       v-if="showConfirmModal"
@@ -476,6 +499,12 @@ onBeforeUnmount(() => {
   height: 6px;
   border-radius: 50%;
   background: #e5484d;
+}
+
+.editor-compile-config {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.6rem;
+  border-top: 1px solid var(--secondary);
 }
 
 .editor-textarea {
