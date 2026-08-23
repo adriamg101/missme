@@ -1,11 +1,22 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
+import { computed, ref } from "vue";
 import { computeLayout } from "../../lib/hierarchy/diagram";
+import type { DiagramBox } from "../../lib/hierarchy/diagram";
+import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 
 const store = useHierarchyConfigStore();
 
 const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.disk, store.tlb, store.vmEnabled));
+
+const pressedBoxId = ref<string | null>(null);
+
+function onBoxClick(box: DiagramBox) {
+  if (!box.clickable) return;
+  pressedBoxId.value = box.id;
+  setTimeout(() => {
+    if (pressedBoxId.value === box.id) pressedBoxId.value = null;
+  }, 150);
+}
 </script>
 
 <template>
@@ -18,7 +29,13 @@ const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.di
     >
       <path v-for="connector in layout.connectors" :key="connector.id" :d="connector.path" class="hierarchy-diagram-connector" />
 
-      <g v-for="box in layout.boxes" :key="box.id" :data-box-id="box.id" class="hierarchy-diagram-box">
+      <g
+        v-for="box in layout.boxes"
+        :key="box.id"
+        :data-box-id="box.id"
+        :class="['hierarchy-diagram-box', { clickable: box.clickable, pressed: pressedBoxId === box.id }]"
+        @click="onBoxClick(box)"
+      >
         <rect :x="box.x" :y="box.y" :width="box.width" :height="box.height" :rx="6" :fill="box.fill" class="hierarchy-diagram-box-rect" />
         <text :x="box.x + box.width / 2" :y="box.y + 18" class="hierarchy-diagram-box-label">{{ box.label }}</text>
         <text
@@ -78,5 +95,13 @@ const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.di
   fill: var(--text);
   opacity: 0.65;
   pointer-events: none;
+}
+
+.hierarchy-diagram-box.clickable {
+  cursor: pointer;
+}
+
+.hierarchy-diagram-box.pressed .hierarchy-diagram-box-rect {
+  opacity: 0.7;
 }
 </style>
