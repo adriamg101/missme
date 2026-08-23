@@ -13,11 +13,13 @@ struct PendingMemoryOp {
     #[allow(dead_code)] // constructed for symmetry with the access request; not yet consulted after completion, kept for a near-future consumer (e.g. event payloads)
     size: u8,
     sign_extend: bool,
+    is_fp: bool,
 }
 
 pub struct RiscvCpuSimulator {
     base: Base,
     registers: [u64; 32],
+    f_registers: [f64; 32],
     pc: u64,
     instructions: InstructionStore,
     memory: MemoryHierarchySimulator,
@@ -32,6 +34,7 @@ impl RiscvCpuSimulator {
         Self {
             base,
             registers: [0; 32],
+            f_registers: [0.0; 32],
             pc: text_base,
             instructions: InstructionStore::new(text_base, codegen.entries),
             memory,
@@ -75,6 +78,21 @@ impl RiscvCpuSimulator {
         }
     }
 
+    fn read_fp_register(&self, id: RegisterId) -> f64 {
+        self.f_registers[id.0 as usize]
+    }
+
+    fn write_fp_register(&mut self, id: RegisterId, value: f64) {
+        self.f_registers[id.0 as usize] = value;
+    }
+
+    fn fp_register_id(operand: &Operand) -> RegisterId {
+        match operand {
+            Operand::Register(RegisterKind::F(n)) => RegisterId(*n),
+            _ => unreachable!("operand shape already validated by semantic analysis"),
+        }
+    }
+
     fn bytes_to_value(bytes: &[u8], sign_extend: bool) -> u64 {
         let mut value: u64 = 0;
         for (i, &b) in bytes.iter().enumerate() {
@@ -93,6 +111,40 @@ impl RiscvCpuSimulator {
             }
         }
         value
+    }
+
+    fn fclass_bits_f32(v: f32) -> u64 {
+        if v.is_nan() {
+            let mantissa = v.to_bits() & 0x007F_FFFF;
+            return if mantissa & 0x0040_0000 != 0 { 1 << 9 } else { 1 << 8 };
+        }
+        if v.is_infinite() {
+            return if v.is_sign_negative() { 1 << 0 } else { 1 << 7 };
+        }
+        if v == 0.0 {
+            return if v.is_sign_negative() { 1 << 3 } else { 1 << 4 };
+        }
+        if v.is_normal() {
+            return if v.is_sign_negative() { 1 << 1 } else { 1 << 6 };
+        }
+        if v.is_sign_negative() { 1 << 2 } else { 1 << 5 }
+    }
+
+    fn fclass_bits_f64(v: f64) -> u64 {
+        if v.is_nan() {
+            let mantissa = v.to_bits() & 0x000F_FFFF_FFFF_FFFF;
+            return if mantissa & 0x0008_0000_0000_0000 != 0 { 1 << 9 } else { 1 << 8 };
+        }
+        if v.is_infinite() {
+            return if v.is_sign_negative() { 1 << 0 } else { 1 << 7 };
+        }
+        if v == 0.0 {
+            return if v.is_sign_negative() { 1 << 3 } else { 1 << 4 };
+        }
+        if v.is_normal() {
+            return if v.is_sign_negative() { 1 << 1 } else { 1 << 6 };
+        }
+        if v.is_sign_negative() { 1 << 2 } else { 1 << 5 }
     }
 
     fn execute_current_instruction(&mut self) -> Action {
@@ -316,7 +368,25 @@ impl RiscvCpuSimulator {
                     store_bytes: None,
                 };
                 let level_result = self.memory.begin_access(access);
-                self.pending = Some(PendingMemoryOp { source_line: entry.source_line, register: rd, size, sign_extend });
+                self.pending = Some(PendingMemoryOp { source_line: entry.source_line, register: rd, size, sign_extend, is_fp: false });
+                return Action { kind: ActionKind::MemoryLevel(level_result), source_line: entry.source_line, instruction_complete: false };
+            }
+            InstructionKind::Flw | InstructionKind::Fld => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let (imm, base) = match &entry.operands[1] {
+                    Operand::Offset { imm, base } => (*imm, Self::register_id(&Operand::Register(*base))),
+                    _ => unreachable!("operand shape already validated by semantic analysis"),
+                };
+                let address = (self.read_register(base) as i64 + imm) as u64;
+                let size: u8 = if entry.kind == InstructionKind::Flw { 4 } else { 8 };
+                let access = super::memory::hierarchy::MemoryAccess {
+                    kind: super::memory::hierarchy::AccessKind::Load,
+                    address,
+                    size,
+                    store_bytes: None,
+                };
+                let level_result = self.memory.begin_access(access);
+                self.pending = Some(PendingMemoryOp { source_line: entry.source_line, register: rd, size, sign_extend: false, is_fp: true });
                 return Action { kind: ActionKind::MemoryLevel(level_result), source_line: entry.source_line, instruction_complete: false };
             }
             InstructionKind::Sb | InstructionKind::Sh | InstructionKind::Sw | InstructionKind::Sd => {
@@ -342,7 +412,31 @@ impl RiscvCpuSimulator {
                     store_bytes: Some(bytes),
                 };
                 let level_result = self.memory.begin_access(access);
-                self.pending = Some(PendingMemoryOp { source_line: entry.source_line, register: RegisterId(0), size, sign_extend: false });
+                self.pending = Some(PendingMemoryOp { source_line: entry.source_line, register: RegisterId(0), size, sign_extend: false, is_fp: false });
+                return Action { kind: ActionKind::MemoryLevel(level_result), source_line: entry.source_line, instruction_complete: false };
+            }
+            InstructionKind::Fsw | InstructionKind::Fsd => {
+                let rs2 = Self::fp_register_id(&entry.operands[0]);
+                let (imm, base) = match &entry.operands[1] {
+                    Operand::Offset { imm, base } => (*imm, Self::register_id(&Operand::Register(*base))),
+                    _ => unreachable!("operand shape already validated by semantic analysis"),
+                };
+                let address = (self.read_register(base) as i64 + imm) as u64;
+                let value = self.read_fp_register(rs2);
+                let bytes: Vec<u8> = if entry.kind == InstructionKind::Fsw {
+                    (value as f32).to_bits().to_le_bytes().to_vec()
+                } else {
+                    value.to_bits().to_le_bytes().to_vec()
+                };
+                let size = bytes.len() as u8;
+                let access = super::memory::hierarchy::MemoryAccess {
+                    kind: super::memory::hierarchy::AccessKind::Store,
+                    address,
+                    size,
+                    store_bytes: Some(bytes),
+                };
+                let level_result = self.memory.begin_access(access);
+                self.pending = Some(PendingMemoryOp { source_line: entry.source_line, register: RegisterId(0), size, sign_extend: false, is_fp: false });
                 return Action { kind: ActionKind::MemoryLevel(level_result), source_line: entry.source_line, instruction_complete: false };
             }
             InstructionKind::Addiw => {
@@ -457,6 +551,371 @@ impl RiscvCpuSimulator {
                     instruction_complete: true,
                 }
             }
+            InstructionKind::FaddS | InstructionKind::FsubS | InstructionKind::FmulS | InstructionKind::FdivS => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let a = self.read_fp_register(rs1) as f32;
+                let b = self.read_fp_register(rs2) as f32;
+                let result = match entry.kind {
+                    InstructionKind::FaddS => a + b,
+                    InstructionKind::FsubS => a - b,
+                    InstructionKind::FmulS => a * b,
+                    InstructionKind::FdivS => a / b,
+                    _ => unreachable!(),
+                };
+                self.write_fp_register(rd, result as f64);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FaddD | InstructionKind::FsubD | InstructionKind::FmulD | InstructionKind::FdivD => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let a = self.read_fp_register(rs1);
+                let b = self.read_fp_register(rs2);
+                let result = match entry.kind {
+                    InstructionKind::FaddD => a + b,
+                    InstructionKind::FsubD => a - b,
+                    InstructionKind::FmulD => a * b,
+                    InstructionKind::FdivD => a / b,
+                    _ => unreachable!(),
+                };
+                self.write_fp_register(rd, result);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FsqrtS => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let a = self.read_fp_register(rs1) as f32;
+                self.write_fp_register(rd, a.sqrt() as f64);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FsqrtD => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let a = self.read_fp_register(rs1);
+                self.write_fp_register(rd, a.sqrt());
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FsgnjS | InstructionKind::FsgnjnS | InstructionKind::FsgnjxS => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let a = self.read_fp_register(rs1) as f32;
+                let b = self.read_fp_register(rs2) as f32;
+                let result = match entry.kind {
+                    InstructionKind::FsgnjS => a.copysign(b),
+                    InstructionKind::FsgnjnS => a.copysign(-b),
+                    InstructionKind::FsgnjxS => {
+                        let sign: f32 = if a.is_sign_negative() ^ b.is_sign_negative() { -1.0 } else { 1.0 };
+                        a.abs().copysign(sign)
+                    }
+                    _ => unreachable!(),
+                };
+                self.write_fp_register(rd, result as f64);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FsgnjD | InstructionKind::FsgnjnD | InstructionKind::FsgnjxD => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let a = self.read_fp_register(rs1);
+                let b = self.read_fp_register(rs2);
+                let result = match entry.kind {
+                    InstructionKind::FsgnjD => a.copysign(b),
+                    InstructionKind::FsgnjnD => a.copysign(-b),
+                    InstructionKind::FsgnjxD => {
+                        let sign: f64 = if a.is_sign_negative() ^ b.is_sign_negative() { -1.0 } else { 1.0 };
+                        a.abs().copysign(sign)
+                    }
+                    _ => unreachable!(),
+                };
+                self.write_fp_register(rd, result);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            // NOTE: RISC-V requires fmin(+0.0, -0.0) == -0.0 and
+            // fmax(-0.0, +0.0) == +0.0. Rust's f32::min/max documentation
+            // explicitly states signed-zero ordering is unspecified; the
+            // current toolchain happens to produce the RISC-V-correct
+            // answer, but this isn't a guaranteed contract and should be
+            // re-verified after any toolchain upgrade.
+            InstructionKind::FminS | InstructionKind::FmaxS => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let a = self.read_fp_register(rs1) as f32;
+                let b = self.read_fp_register(rs2) as f32;
+                let result = if entry.kind == InstructionKind::FminS { a.min(b) } else { a.max(b) };
+                self.write_fp_register(rd, result as f64);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            // NOTE: same reliance on f64::min/max's unspecified signed-zero
+            // ordering as FminS/FmaxS above — see comment there.
+            InstructionKind::FminD | InstructionKind::FmaxD => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let a = self.read_fp_register(rs1);
+                let b = self.read_fp_register(rs2);
+                let result = if entry.kind == InstructionKind::FminD { a.min(b) } else { a.max(b) };
+                self.write_fp_register(rd, result);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FmaddS | InstructionKind::FmsubS | InstructionKind::FnmsubS | InstructionKind::FnmaddS => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let rs3 = Self::fp_register_id(&entry.operands[3]);
+                let a = self.read_fp_register(rs1) as f32;
+                let b = self.read_fp_register(rs2) as f32;
+                let c = self.read_fp_register(rs3) as f32;
+                let result = match entry.kind {
+                    InstructionKind::FmaddS => a.mul_add(b, c),
+                    InstructionKind::FmsubS => a.mul_add(b, -c),
+                    InstructionKind::FnmsubS => (-a).mul_add(b, c),
+                    InstructionKind::FnmaddS => (-a).mul_add(b, -c),
+                    _ => unreachable!(),
+                };
+                self.write_fp_register(rd, result as f64);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FmaddD | InstructionKind::FmsubD | InstructionKind::FnmsubD | InstructionKind::FnmaddD => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let rs3 = Self::fp_register_id(&entry.operands[3]);
+                let a = self.read_fp_register(rs1);
+                let b = self.read_fp_register(rs2);
+                let c = self.read_fp_register(rs3);
+                let result = match entry.kind {
+                    InstructionKind::FmaddD => a.mul_add(b, c),
+                    InstructionKind::FmsubD => a.mul_add(b, -c),
+                    InstructionKind::FnmsubD => (-a).mul_add(b, c),
+                    InstructionKind::FnmaddD => (-a).mul_add(b, -c),
+                    _ => unreachable!(),
+                };
+                self.write_fp_register(rd, result);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FeqS | InstructionKind::FltS | InstructionKind::FleS => {
+                let rd = Self::register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let a = self.read_fp_register(rs1) as f32;
+                let b = self.read_fp_register(rs2) as f32;
+                let result = match entry.kind {
+                    InstructionKind::FeqS => a == b,
+                    InstructionKind::FltS => a < b,
+                    InstructionKind::FleS => a <= b,
+                    _ => unreachable!(),
+                };
+                self.write_register(rd, result as u64);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::RegisterWrite { register: rd, value: self.read_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FeqD | InstructionKind::FltD | InstructionKind::FleD => {
+                let rd = Self::register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let rs2 = Self::fp_register_id(&entry.operands[2]);
+                let a = self.read_fp_register(rs1);
+                let b = self.read_fp_register(rs2);
+                let result = match entry.kind {
+                    InstructionKind::FeqD => a == b,
+                    InstructionKind::FltD => a < b,
+                    InstructionKind::FleD => a <= b,
+                    _ => unreachable!(),
+                };
+                self.write_register(rd, result as u64);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::RegisterWrite { register: rd, value: self.read_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FclassS | InstructionKind::FclassD => {
+                let rd = Self::register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let value = self.read_fp_register(rs1);
+                let bits = if entry.kind == InstructionKind::FclassS {
+                    Self::fclass_bits_f32(value as f32)
+                } else {
+                    Self::fclass_bits_f64(value)
+                };
+                self.write_register(rd, bits);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::RegisterWrite { register: rd, value: self.read_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FcvtWS | InstructionKind::FcvtWuS | InstructionKind::FcvtWD | InstructionKind::FcvtWuD => {
+                let rd = Self::register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let value = self.read_fp_register(rs1);
+                let is_single = matches!(entry.kind, InstructionKind::FcvtWS | InstructionKind::FcvtWuS);
+                let is_unsigned = matches!(entry.kind, InstructionKind::FcvtWuS | InstructionKind::FcvtWuD);
+                // NaN guard: Rust's `as` cast saturates out-of-range finite
+                // values to the target type's min/max (matching RISC-V's
+                // invalid-operation behavior), but it maps NaN to 0 — RISC-V
+                // instead requires NaN to convert to the signed/unsigned
+                // saturated maximum (2^31-1 / 2^32-1).
+                let is_nan = if is_single { (value as f32).is_nan() } else { value.is_nan() };
+                let result: u64 = if is_unsigned {
+                    let v: u32 = if is_nan {
+                        u32::MAX
+                    } else if is_single {
+                        (value as f32) as u32
+                    } else {
+                        value as u32
+                    };
+                    // FCVT.WU.* sign-extends its 32-bit unsigned result to XLEN
+                    // on Rv64i (same as the signed variant) rather than
+                    // zero-extending — this is explicit, if counter-intuitive,
+                    // in the RISC-V F/D spec. On Rv32i the masking below hides
+                    // the distinction.
+                    self.mask(v as i32 as i64 as u64)
+                } else {
+                    let v: i32 = if is_nan {
+                        i32::MAX
+                    } else if is_single {
+                        (value as f32) as i32
+                    } else {
+                        value as i32
+                    };
+                    self.mask(v as i64 as u64)
+                };
+                self.write_register(rd, result);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::RegisterWrite { register: rd, value: self.read_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FcvtSW | InstructionKind::FcvtSWu | InstructionKind::FcvtDW | InstructionKind::FcvtDWu => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::register_id(&entry.operands[1]);
+                let is_single = matches!(entry.kind, InstructionKind::FcvtSW | InstructionKind::FcvtSWu);
+                let is_unsigned = matches!(entry.kind, InstructionKind::FcvtSWu | InstructionKind::FcvtDWu);
+                let raw = self.read_register(rs1);
+                // *W/*Wu convert a 32-bit integer: always truncate to rs1[31:0]
+                // first and sign/zero-extend from that 32-bit value, regardless
+                // of XLEN — on Rv64i the full 64-bit register value must NOT be
+                // used directly (it may carry a pointer or other data above bit 31).
+                let as_f64 = if is_unsigned {
+                    (raw as u32) as f64
+                } else {
+                    (raw as u32 as i32) as f64
+                };
+                let result = if is_single { as_f64 as f32 as f64 } else { as_f64 };
+                self.write_fp_register(rd, result);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            // NOTE: the register file stores f64 (no NaN-boxed f32-in-f64,
+            // per this branch's documented simplification), so an
+            // f32->f64->f32 round-trip through FmvWX then FmvXW quiets a
+            // signaling NaN and does not preserve its exact payload/
+            // signaling bit. This is an inherent consequence of that
+            // design, not a bug.
+            InstructionKind::FmvXW => {
+                let rd = Self::register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let bits = (self.read_fp_register(rs1) as f32).to_bits();
+                let value = self.mask(bits as i32 as i64 as u64);
+                self.write_register(rd, value);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::RegisterWrite { register: rd, value: self.read_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FmvWX => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::register_id(&entry.operands[1]);
+                let bits = self.read_register(rs1) as u32;
+                self.write_fp_register(rd, f32::from_bits(bits) as f64);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
+            InstructionKind::FcvtSD | InstructionKind::FcvtDS => {
+                let rd = Self::fp_register_id(&entry.operands[0]);
+                let rs1 = Self::fp_register_id(&entry.operands[1]);
+                let a = self.read_fp_register(rs1);
+                let result = (a as f32) as f64;
+                self.write_fp_register(rd, result);
+                self.pc += 4;
+                Action {
+                    kind: ActionKind::FpRegisterWrite { register: rd, value: self.read_fp_register(rd) },
+                    source_line: entry.source_line,
+                    instruction_complete: true,
+                }
+            }
             InstructionKind::Fence | InstructionKind::Ecall | InstructionKind::Ebreak => {
                 self.pc += 4;
                 Action {
@@ -465,7 +924,7 @@ impl RiscvCpuSimulator {
                     instruction_complete: true,
                 }
             }
-            other => panic!("RiscvCpuSimulator does not yet implement {:?} (base/M ISA coverage lands across Tasks 6-11 of TT4.2)", other),
+            other => panic!("RiscvCpuSimulator does not implement {:?} (the Q extension is out of scope for this branch's floating-point simulation work)", other),
         }
     }
 }
@@ -484,10 +943,24 @@ impl CpuSimulator for RiscvCpuSimulator {
             if self.memory.is_access_finished() {
                 let register = pending.register;
                 let sign_extend = pending.sign_extend;
+                let is_fp = pending.is_fp;
                 self.pending = None;
                 let result = self.memory.take_result();
                 self.pc += 4;
                 if let Some(bytes) = result.load_bytes {
+                    if is_fp {
+                        let value = if bytes.len() == 4 {
+                            f32::from_bits(u32::from_le_bytes(bytes.try_into().unwrap())) as f64
+                        } else {
+                            f64::from_bits(u64::from_le_bytes(bytes.try_into().unwrap()))
+                        };
+                        self.write_fp_register(register, value);
+                        return Action {
+                            kind: ActionKind::FpRegisterWrite { register, value: self.read_fp_register(register) },
+                            source_line,
+                            instruction_complete: true,
+                        };
+                    }
                     let value = self.mask(Self::bytes_to_value(&bytes, sign_extend));
                     self.write_register(register, value);
                     return Action {
@@ -524,6 +997,10 @@ impl CpuSimulator for RiscvCpuSimulator {
 
     fn register(&self, id: RegisterId) -> u64 {
         self.read_register(id)
+    }
+
+    fn fp_register(&self, id: RegisterId) -> f64 {
+        self.read_fp_register(id)
     }
 }
 
@@ -1257,6 +1734,250 @@ mod tests {
         assert_eq!(sim.register(RegisterId(1)), 0);
     }
 
+    fn fp_load_entry(kind: InstructionKind, address: u32, rd: u8, base: u8, imm: i64) -> IrEntry {
+        IrEntry {
+            address,
+            kind,
+            operands: vec![
+                Operand::Register(RegisterKind::F(rd)),
+                Operand::Offset { imm, base: RegisterKind::X(base) },
+            ],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        }
+    }
+
+    fn fp_store_entry(kind: InstructionKind, address: u32, rs2: u8, base: u8, imm: i64) -> IrEntry {
+        IrEntry {
+            address,
+            kind,
+            operands: vec![
+                Operand::Register(RegisterKind::F(rs2)),
+                Operand::Offset { imm, base: RegisterKind::X(base) },
+            ],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        }
+    }
+
+    fn fp_r3_entry(kind: InstructionKind, address: u32, rd: u8, rs1: u8, rs2: u8) -> IrEntry {
+        IrEntry {
+            address,
+            kind,
+            operands: vec![
+                Operand::Register(RegisterKind::F(rd)),
+                Operand::Register(RegisterKind::F(rs1)),
+                Operand::Register(RegisterKind::F(rs2)),
+            ],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        }
+    }
+
+    #[test]
+    fn flw_reads_a_previously_stored_f32_bit_pattern() {
+        let mut mem = mem();
+        let bits: u32 = 1.5f32.to_bits();
+        mem.preload_ram(0x10000000, &bits.to_le_bytes());
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_load_entry(InstructionKind::Flw, 0x1000, 1, 2, 0)]), mem);
+        sim.registers[2] = 0x10000000;
+
+        let action = run_to_finished_action(&mut sim);
+
+        assert_eq!(action.kind, ActionKind::FpRegisterWrite { register: RegisterId(1), value: 1.5 });
+        assert_eq!(sim.fp_register(RegisterId(1)), 1.5);
+    }
+
+    #[test]
+    fn fld_reads_a_previously_stored_f64_bit_pattern() {
+        let mut mem = mem();
+        let bits: u64 = 2.5f64.to_bits();
+        mem.preload_ram(0x10000000, &bits.to_le_bytes());
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_load_entry(InstructionKind::Fld, 0x1000, 1, 2, 0)]), mem);
+        sim.registers[2] = 0x10000000;
+
+        run_to_finished_action(&mut sim);
+
+        assert_eq!(sim.fp_register(RegisterId(1)), 2.5);
+    }
+
+    #[test]
+    fn fsw_then_flw_round_trips_an_f32_value() {
+        let mut sim = RiscvCpuSimulator::new(
+            Base::Rv32i,
+            codegen(vec![fp_store_entry(InstructionKind::Fsw, 0x1000, 1, 2, 0), fp_load_entry(InstructionKind::Flw, 0x1004, 3, 2, 0)]),
+            mem(),
+        );
+        sim.f_registers[1] = 3.25;
+        sim.registers[2] = 0x10000000;
+
+        run_to_finished_action(&mut sim); // fsw
+        run_to_finished_action(&mut sim); // flw
+
+        assert_eq!(sim.fp_register(RegisterId(3)), 3.25);
+    }
+
+    #[test]
+    fn fsd_then_fld_round_trips_an_f64_value() {
+        let mut sim = RiscvCpuSimulator::new(
+            Base::Rv32i,
+            codegen(vec![fp_store_entry(InstructionKind::Fsd, 0x1000, 1, 2, 0), fp_load_entry(InstructionKind::Fld, 0x1004, 3, 2, 0)]),
+            mem(),
+        );
+        sim.f_registers[1] = 6.75;
+        sim.registers[2] = 0x10000000;
+
+        run_to_finished_action(&mut sim);
+        run_to_finished_action(&mut sim);
+
+        assert_eq!(sim.fp_register(RegisterId(3)), 6.75);
+    }
+
+    #[test]
+    fn f0_is_not_hardwired_to_zero() {
+        let mut sim = RiscvCpuSimulator::new(
+            Base::Rv32i,
+            codegen(vec![fp_store_entry(InstructionKind::Fsw, 0x1000, 0, 2, 0), fp_load_entry(InstructionKind::Flw, 0x1004, 3, 2, 0)]),
+            mem(),
+        );
+        sim.f_registers[0] = 9.0;
+        sim.registers[2] = 0x10000000;
+
+        // if f0 were wrongly hardwired to zero, the store would write 0.0's
+        // bits instead of 9.0's; reload the STORED bytes into a different
+        // register via flw to actually prove what landed in memory, rather
+        // than re-reading f0 (which the test itself wrote directly and
+        // would still pass even if the store path silently zeroed f0).
+        run_to_finished_action(&mut sim); // fsw
+        run_to_finished_action(&mut sim); // flw
+
+        assert_eq!(sim.fp_register(RegisterId(3)), 9.0);
+    }
+
+    #[test]
+    fn fadd_s_computes_in_single_precision() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FaddS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 1.1;
+        sim.f_registers[3] = 2.2;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), (1.1f32 + 2.2f32) as f64);
+    }
+
+    #[test]
+    fn fadd_d_computes_in_double_precision() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FaddD, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 1.1;
+        sim.f_registers[3] = 2.2;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 1.1f64 + 2.2f64);
+    }
+
+    #[test]
+    fn fsub_s_subtracts() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsubS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 5.0;
+        sim.f_registers[3] = 2.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 3.0);
+    }
+
+    #[test]
+    fn fmul_d_multiplies() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FmulD, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 3.0;
+        sim.f_registers[3] = 4.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 12.0);
+    }
+
+    #[test]
+    fn fdiv_s_divides() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FdivS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 10.0;
+        sim.f_registers[3] = 4.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 2.5);
+    }
+
+    fn fp_r2_entry(kind: InstructionKind, address: u32, rd: u8, rs1: u8) -> IrEntry {
+        IrEntry {
+            address,
+            kind,
+            operands: vec![Operand::Register(RegisterKind::F(rd)), Operand::Register(RegisterKind::F(rs1))],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        }
+    }
+
+    #[test]
+    fn fsqrt_d_computes_the_square_root() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r2_entry(InstructionKind::FsqrtD, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 16.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 4.0);
+    }
+
+    #[test]
+    fn fsgnj_s_takes_the_sign_of_rs2() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 5.0;
+        sim.f_registers[3] = -1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), -5.0);
+    }
+
+    #[test]
+    fn fsgnjn_s_negates_the_sign_of_rs2() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjnS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 5.0;
+        sim.f_registers[3] = -1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 5.0);
+    }
+
+    #[test]
+    fn fsgnjx_s_xors_the_signs() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjxS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = -5.0;
+        sim.f_registers[3] = -1.0;
+        sim.step_action();
+        // both negative -> XOR is false (positive) -> +5.0
+        assert_eq!(sim.fp_register(RegisterId(1)), 5.0);
+    }
+
+    #[test]
+    fn fsgnjx_s_xors_the_signs_discriminating_test() {
+        // Discriminating test to verify genuine XOR semantics: rs1 positive, rs2 negative.
+        // Under correct XOR: sign(5.0)=false, sign(-1.0)=true, XOR=true -> result should be -5.0.
+        // A buggy Fsgnjn-copy implementation would give +5.0 instead.
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjxS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 5.0;
+        sim.f_registers[3] = -1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), -5.0);
+    }
+
+    #[test]
+    fn fsqrt_s_computes_the_square_root() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r2_entry(InstructionKind::FsqrtS, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 9.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 3.0);
+    }
+
+    #[test]
+    fn fsgnj_d_takes_the_sign_of_rs2() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjD, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 5.0;
+        sim.f_registers[3] = -1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), -5.0);
+    }
+
     #[test]
     fn bytes_to_value_does_not_panic_on_a_full_8_byte_sign_extending_read() {
         // Regression test for finding #6: an 8-byte read is already the
@@ -1267,5 +1988,389 @@ mod tests {
         let bytes = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x80];
         let value = RiscvCpuSimulator::bytes_to_value(&bytes, true);
         assert_eq!(value, 0x80FF_FFFF_FFFF_FFFF);
+    }
+
+    #[test]
+    fn fmin_s_returns_the_smaller_value() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FminS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 5.0;
+        sim.f_registers[3] = 2.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 2.0);
+    }
+
+    #[test]
+    fn fmax_d_returns_the_larger_value() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FmaxD, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 5.0;
+        sim.f_registers[3] = 2.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 5.0);
+    }
+
+    #[test]
+    fn fmin_s_propagates_the_non_nan_operand() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FminS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = f64::NAN;
+        sim.f_registers[3] = 2.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 2.0);
+    }
+
+    fn fp_r4_entry(kind: InstructionKind, address: u32, rd: u8, rs1: u8, rs2: u8, rs3: u8) -> IrEntry {
+        IrEntry {
+            address,
+            kind,
+            operands: vec![
+                Operand::Register(RegisterKind::F(rd)),
+                Operand::Register(RegisterKind::F(rs1)),
+                Operand::Register(RegisterKind::F(rs2)),
+                Operand::Register(RegisterKind::F(rs3)),
+            ],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        }
+    }
+
+    #[test]
+    fn fmadd_d_computes_rs1_times_rs2_plus_rs3() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r4_entry(InstructionKind::FmaddD, 0x1000, 1, 2, 3, 4)]), mem());
+        sim.f_registers[2] = 2.0;
+        sim.f_registers[3] = 3.0;
+        sim.f_registers[4] = 1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 7.0); // 2*3+1
+    }
+
+    #[test]
+    fn fnmadd_d_computes_negative_rs1_times_rs2_minus_rs3() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r4_entry(InstructionKind::FnmaddD, 0x1000, 1, 2, 3, 4)]), mem());
+        sim.f_registers[2] = 2.0;
+        sim.f_registers[3] = 3.0;
+        sim.f_registers[4] = 1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), -7.0); // -(2*3)-1
+    }
+
+    #[test]
+    fn fmsub_s_computes_rs1_times_rs2_minus_rs3() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r4_entry(InstructionKind::FmsubS, 0x1000, 1, 2, 3, 4)]), mem());
+        sim.f_registers[2] = 2.0;
+        sim.f_registers[3] = 3.0;
+        sim.f_registers[4] = 1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 5.0); // 2*3-1
+    }
+
+    #[test]
+    fn fmadd_s_computes_rs1_times_rs2_plus_rs3() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r4_entry(InstructionKind::FmaddS, 0x1000, 1, 2, 3, 4)]), mem());
+        sim.f_registers[2] = 2.0;
+        sim.f_registers[3] = 3.0;
+        sim.f_registers[4] = 1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 7.0); // 2*3+1
+    }
+
+    #[test]
+    fn fnmsub_s_computes_negative_rs1_times_rs2_plus_rs3() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r4_entry(InstructionKind::FnmsubS, 0x1000, 1, 2, 3, 4)]), mem());
+        sim.f_registers[2] = 2.0;
+        sim.f_registers[3] = 3.0;
+        sim.f_registers[4] = 1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), -5.0); // -(2*3)+1
+    }
+
+    #[test]
+    fn fnmadd_s_computes_negative_rs1_times_rs2_minus_rs3() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r4_entry(InstructionKind::FnmaddS, 0x1000, 1, 2, 3, 4)]), mem());
+        sim.f_registers[2] = 2.0;
+        sim.f_registers[3] = 3.0;
+        sim.f_registers[4] = 1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), -7.0); // -(2*3)-1
+    }
+
+    #[test]
+    fn fmsub_d_computes_rs1_times_rs2_minus_rs3() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r4_entry(InstructionKind::FmsubD, 0x1000, 1, 2, 3, 4)]), mem());
+        sim.f_registers[2] = 2.0;
+        sim.f_registers[3] = 3.0;
+        sim.f_registers[4] = 1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 5.0); // 2*3-1
+    }
+
+    #[test]
+    fn fnmsub_d_computes_negative_rs1_times_rs2_plus_rs3() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r4_entry(InstructionKind::FnmsubD, 0x1000, 1, 2, 3, 4)]), mem());
+        sim.f_registers[2] = 2.0;
+        sim.f_registers[3] = 3.0;
+        sim.f_registers[4] = 1.0;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), -5.0); // -(2*3)+1
+    }
+
+    fn fp_cmp_entry(kind: InstructionKind, address: u32, rd: u8, rs1: u8, rs2: u8) -> IrEntry {
+        IrEntry {
+            address,
+            kind,
+            operands: vec![
+                Operand::Register(RegisterKind::X(rd)),
+                Operand::Register(RegisterKind::F(rs1)),
+                Operand::Register(RegisterKind::F(rs2)),
+            ],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        }
+    }
+
+    #[test]
+    fn feq_s_writes_1_to_an_integer_register_when_equal() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_cmp_entry(InstructionKind::FeqS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 3.0;
+        sim.f_registers[3] = 3.0;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 1);
+    }
+
+    #[test]
+    fn flt_d_writes_0_when_not_less_than() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_cmp_entry(InstructionKind::FltD, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 5.0;
+        sim.f_registers[3] = 3.0;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 0);
+    }
+
+    #[test]
+    fn feq_s_is_false_when_either_operand_is_nan() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_cmp_entry(InstructionKind::FeqS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = f64::NAN;
+        sim.f_registers[3] = f64::NAN;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 0);
+    }
+
+    #[test]
+    fn fle_s_writes_1_when_less_or_equal() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_cmp_entry(InstructionKind::FleS, 0x1000, 1, 2, 3)]), mem());
+        sim.f_registers[2] = 3.0;
+        sim.f_registers[3] = 3.0;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 1);
+    }
+
+    fn fclass_entry(kind: InstructionKind, address: u32, rd: u8, rs1: u8) -> IrEntry {
+        IrEntry {
+            address,
+            kind,
+            operands: vec![Operand::Register(RegisterKind::X(rd)), Operand::Register(RegisterKind::F(rs1))],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        }
+    }
+
+    #[test]
+    fn fclass_s_identifies_positive_normal() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassS, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 3.0;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 1 << 6);
+    }
+
+    #[test]
+    fn fclass_s_identifies_negative_infinity() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassS, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = f64::NEG_INFINITY;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 1 << 0);
+    }
+
+    #[test]
+    fn fclass_d_identifies_positive_zero() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassD, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 0.0;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 1 << 4);
+    }
+
+    #[test]
+    fn fclass_d_identifies_negative_zero() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassD, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = -0.0;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 1 << 3);
+    }
+
+    #[test]
+    fn fclass_d_identifies_a_quiet_nan() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassD, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = f64::NAN; // Rust's f64::NAN is a quiet NaN
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 1 << 9);
+    }
+
+    #[test]
+    fn fcvt_w_s_truncates_toward_zero() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FcvtWS, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 3.9;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 3);
+    }
+
+    #[test]
+    fn fcvt_w_d_converts_a_negative_value() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FcvtWD, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = -3.9;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFD); // -3 sign-extended within 32 bits, masked
+    }
+
+    #[test]
+    fn fcvt_s_w_converts_a_signed_integer_to_float() {
+        let entry = IrEntry {
+            address: 0x1000,
+            kind: InstructionKind::FcvtSW,
+            operands: vec![Operand::Register(RegisterKind::F(1)), Operand::Register(RegisterKind::X(2))],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        };
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
+        sim.registers[2] = 0xFFFF_FFFF; // -1 under Rv32i
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), -1.0);
+    }
+
+    #[test]
+    fn fcvt_d_wu_converts_an_unsigned_integer_to_float() {
+        let entry = IrEntry {
+            address: 0x1000,
+            kind: InstructionKind::FcvtDWu,
+            operands: vec![Operand::Register(RegisterKind::F(1)), Operand::Register(RegisterKind::X(2))],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        };
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
+        sim.registers[2] = 0xFFFF_FFFF; // 4294967295 unsigned under Rv32i
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 4294967295.0);
+    }
+
+    #[test]
+    fn fcvt_s_w_on_rv64_truncates_to_the_low_32_bits_before_sign_extending() {
+        // Regression test for finding #1: on Rv64i, FCVT.S.W must convert
+        // rs1[31:0], not the full 64-bit register value. A register whose
+        // upper 32 bits are nonzero (here bit 32 set) must not leak into
+        // the converted value.
+        let entry = IrEntry {
+            address: 0x1000,
+            kind: InstructionKind::FcvtSW,
+            operands: vec![Operand::Register(RegisterKind::F(1)), Operand::Register(RegisterKind::X(2))],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        };
+        let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![entry]), mem());
+        sim.registers[2] = 0x0000_0001_0000_0000;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 0.0);
+    }
+
+    #[test]
+    fn fcvt_s_wu_on_rv64_truncates_to_the_low_32_bits_before_zero_extending() {
+        // Regression test for finding #1, unsigned variant: on Rv64i,
+        // FCVT.S.WU must zero-extend rs1[31:0], not the full 64-bit value.
+        let entry = IrEntry {
+            address: 0x1000,
+            kind: InstructionKind::FcvtSWu,
+            operands: vec![Operand::Register(RegisterKind::F(1)), Operand::Register(RegisterKind::X(2))],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        };
+        let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![entry]), mem());
+        sim.registers[2] = 0xFFFF_FFFF_0000_0005;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 5.0);
+    }
+
+    #[test]
+    fn fcvt_wu_s_on_rv64_sign_extends_the_32_bit_result() {
+        // Regression test for finding #2: on Rv64i, FCVT.WU.S sign-extends
+        // its 32-bit unsigned result to XLEN (same as the signed variant)
+        // rather than zero-extending, so a result with bit 31 set comes
+        // back as all-ones in the upper 32 bits.
+        let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWuS, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 4294967295.0; // 2^32 - 1: bit 31 of the 32-bit result is set
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF_FFFF_FFFF);
+    }
+
+    #[test]
+    fn fcvt_w_s_maps_nan_to_the_signed_saturated_maximum() {
+        // Regression test for finding #3: RISC-V requires NaN inputs to
+        // convert to the saturated maximum (2^31 - 1 for signed), not to 0
+        // as Rust's `as` cast would otherwise produce.
+        let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWS, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = f64::NAN;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 0x7FFF_FFFF);
+    }
+
+    #[test]
+    fn fcvt_wu_s_maps_nan_to_the_unsigned_saturated_maximum() {
+        // Regression test for finding #3, unsigned variant: NaN must
+        // convert to 2^32 - 1, sign-extended per finding #2's fix on Rv64i.
+        let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWuS, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 0.0 / 0.0; // NaN
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF_FFFF_FFFF);
+    }
+
+    #[test]
+    fn fmv_x_w_reinterprets_bits_not_the_numeric_value() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FmvXW, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 1.5;
+        sim.step_action();
+        assert_eq!(sim.register(RegisterId(1)), 1.5f32.to_bits() as u64);
+    }
+
+    #[test]
+    fn fmv_w_x_reinterprets_bits_not_the_numeric_value() {
+        let entry = IrEntry {
+            address: 0x1000,
+            kind: InstructionKind::FmvWX,
+            operands: vec![Operand::Register(RegisterKind::F(1)), Operand::Register(RegisterKind::X(2))],
+            bytecode: 0,
+            source_line: 1,
+            source_column: 1,
+        };
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
+        sim.registers[2] = 1.5f32.to_bits() as u64;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 1.5);
+    }
+
+    #[test]
+    fn fcvt_s_d_narrows_to_single_precision() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r2_entry(InstructionKind::FcvtSD, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 1.0 / 3.0; // a value that differs between f32 and f64 precision
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), (1.0f64 / 3.0) as f32 as f64);
+    }
+
+    #[test]
+    fn fcvt_d_s_widens_from_single_precision() {
+        let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r2_entry(InstructionKind::FcvtDS, 0x1000, 1, 2)]), mem());
+        sim.f_registers[2] = 2.5;
+        sim.step_action();
+        assert_eq!(sim.fp_register(RegisterId(1)), 2.5);
     }
 }

@@ -7,6 +7,7 @@ pub struct RegisterId(pub u8);
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActionKind {
     RegisterWrite { register: RegisterId, value: u64 },
+    FpRegisterWrite { register: RegisterId, value: f64 },
     MemoryLevel(memory::hierarchy::LevelResult),
     NoOp,
 }
@@ -27,4 +28,5 @@ pub trait CpuSimulator {
     fn is_finished(&self) -> bool;
     fn pc(&self) -> u64;
     fn register(&self, id: RegisterId) -> u64;
+    fn fp_register(&self, id: RegisterId) -> f64;
 }
