@@ -1,6 +1,6 @@
-mod codegen;
-mod lexer;
-mod parser;
+pub mod codegen;
+pub mod lexer;
+pub mod parser;
 mod semantic;
 
 use std::collections::HashSet;
