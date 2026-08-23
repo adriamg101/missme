@@ -1,3 +1,4 @@
+mod codegen;
 mod lexer;
 mod parser;
 mod semantic;
@@ -8,7 +9,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::error::{LexError, ParseError, SemanticError};
+use super::error::{CodegenError, LexError, ParseError, SemanticError};
 use super::language::Language;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +34,21 @@ pub struct RiscvConfig {
     pub extensions: HashSet<Extension>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct CodegenConfig {
+    pub text_base: u32,
+    pub data_base: u32,
+}
+
+impl Default for CodegenConfig {
+    fn default() -> Self {
+        Self {
+            text_base: 0x00400000,
+            data_base: 0x10000000,
+        }
+    }
+}
+
 pub struct RiscV;
 
 impl Language for RiscV {
@@ -50,6 +66,16 @@ impl Language for RiscV {
 
     fn analyze(&self, ast_path: &Path, config: &RiscvConfig) -> io::Result<Vec<SemanticError>> {
         semantic::analyze(ast_path, config)
+    }
+
+    fn generate(
+        &self,
+        ast_path: &Path,
+        riscv_config: &RiscvConfig,
+        codegen_config: &CodegenConfig,
+        out_path: &Path,
+    ) -> io::Result<Vec<CodegenError>> {
+        codegen::generate(ast_path, riscv_config, codegen_config, out_path)
     }
 }
 
@@ -99,6 +125,13 @@ mod tests {
 
         assert!(parse_errors.is_empty());
         assert!(ast_path.exists());
+    }
+
+    #[test]
+    fn codegen_config_default_uses_conventional_addresses() {
+        let config = CodegenConfig::default();
+        assert_eq!(config.text_base, 0x00400000);
+        assert_eq!(config.data_base, 0x10000000);
     }
 
     #[test]
@@ -195,5 +228,47 @@ loop:
 
         let semantic_errors = lang.analyze(&ast_path, &config).unwrap();
         assert!(semantic_errors.is_empty());
+    }
+
+    #[test]
+    fn language_generate_produces_codegen_file_for_the_full_pipeline() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.s");
+        let preprocessed = dir.path().join("preprocessed.s");
+        let tokens_path = dir.path().join("tokens.jsonl");
+        let ast_path = dir.path().join("ast.json");
+        let codegen_path = dir.path().join("codegen.json");
+        std::fs::write(
+            &source,
+            "\
+.data
+values:
+.word 1, 2, 3
+label: .string \"hi\"
+.text
+start:
+  addi x1, x0, 0x10
+  addi x2, x0, 0b101
+  addi x3, x0, -5
+  lw x4, 0(x1)
+loop:
+  addi x1, x1, -1
+  bne x1, x0, loop
+",
+        )
+        .unwrap();
+
+        let lang = RiscV;
+        let config = RiscvConfig { base: Base::Rv32i, extensions: HashSet::new() };
+        let codegen_config = CodegenConfig::default();
+
+        lang.preprocess(&source, &preprocessed).unwrap();
+        lang.tokenize(&preprocessed, &tokens_path).unwrap();
+        lang.parse(&tokens_path, &ast_path).unwrap();
+        assert!(lang.analyze(&ast_path, &config).unwrap().is_empty());
+        let codegen_errors = lang.generate(&ast_path, &config, &codegen_config, &codegen_path).unwrap();
+
+        assert!(codegen_errors.is_empty());
+        assert!(codegen_path.exists());
     }
 }

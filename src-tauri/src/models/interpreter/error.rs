@@ -71,9 +71,36 @@ impl SemanticError {
     }
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct CodegenError {
+    pub line: usize,
+    pub column: usize,
+    pub message: String,
+}
+
+impl CodegenError {
+    pub fn new(line: usize, column: usize, message: impl Into<String>) -> Self {
+        Self {
+            line,
+            column,
+            message: message.into(),
+        }
+    }
+
+    pub fn format(&self) -> String {
+        format!("{}:{}: error: {}", self.line, self.column, self.message)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codegen_error_formats_as_gcc_style_message() {
+        let err = CodegenError::new(5, 3, "instruction found in .data section");
+        assert_eq!(err.format(), "5:3: error: instruction found in .data section");
+    }
 
     #[test]
     fn formats_as_gcc_style_message() {
