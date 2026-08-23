@@ -1,5 +1,5 @@
 import type { DiskConfig, Hierarchy, RamConfig, TlbConfig } from "./model";
-import { levelName } from "./derive";
+import { chainLabel, levelName } from "./derive";
 
 const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
 
@@ -80,18 +80,43 @@ export function computeLayout(
   ]);
 
   hierarchy.forEach((level, index) => {
-    const bytes = 2 ** level.unified!.exp * level.unified!.config.blockSize;
-    slots.push([
-      {
-        id: level.id,
-        kind: "cache",
-        label: levelName(hierarchy, index),
-        subLabels: [`Size: ${byteSizeLabel(bytes)}`, `Latency: ${level.unified!.config.hitTime} cycles`],
-        fill: "var(--accent)",
-        clickable: true,
-        targetTabId: level.id,
-      },
-    ]);
+    if (level.harvard) {
+      const iBytes = 2 ** level.i!.exp * level.i!.config.blockSize;
+      const dBytes = 2 ** level.d!.exp * level.d!.config.blockSize;
+      slots.push([
+        {
+          id: `${level.id}-i`,
+          kind: "cache",
+          label: chainLabel(hierarchy, index, "i"),
+          subLabels: [`Size: ${byteSizeLabel(iBytes)}`, `Latency: ${level.i!.config.hitTime} cycles`],
+          fill: "var(--accent)",
+          clickable: true,
+          targetTabId: `${level.id}-i`,
+        },
+        {
+          id: `${level.id}-d`,
+          kind: "cache",
+          label: chainLabel(hierarchy, index, "d"),
+          subLabels: [`Size: ${byteSizeLabel(dBytes)}`, `Latency: ${level.d!.config.hitTime} cycles`],
+          fill: "var(--accent)",
+          clickable: true,
+          targetTabId: `${level.id}-d`,
+        },
+      ]);
+    } else {
+      const bytes = 2 ** level.unified!.exp * level.unified!.config.blockSize;
+      slots.push([
+        {
+          id: level.id,
+          kind: "cache",
+          label: levelName(hierarchy, index),
+          subLabels: [`Size: ${byteSizeLabel(bytes)}`, `Latency: ${level.unified!.config.hitTime} cycles`],
+          fill: "var(--accent)",
+          clickable: true,
+          targetTabId: level.id,
+        },
+      ]);
+    }
   });
 
   const ramSubLabels = vmEnabled

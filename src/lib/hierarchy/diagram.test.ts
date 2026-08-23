@@ -124,3 +124,44 @@ describe("computeLayout — unified cache levels", () => {
     expect(l2.x).toBeLessThan(ram.x);
   });
 });
+
+function harvardLevel(id: string, iExp: number, dExp: number, blockSize: number): Hierarchy[number] {
+  const config = { blockSize, associativity: 1, replacement: "LRU" as const, writePolicy: "write-back" as const, writeAllocate: true, hitTime: 1, dirtyPercent: 0 };
+  return {
+    id,
+    harvard: true,
+    i: { exp: iExp, config },
+    d: { exp: dExp, config },
+    inclusion: "inclusive",
+    busWidth: 32,
+  };
+}
+
+describe("computeLayout — Harvard-split cache levels", () => {
+  it("produces two stacked boxes (i above, d below) instead of one, both clickable", () => {
+    const hierarchy = [harvardLevel("l1", 10, 11, 64)];
+    const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), tlb, false);
+
+    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "reg", "l1-i", "l1-d", "ram"]);
+
+    const li = layout.boxes.find((b) => b.id === "l1-i")!;
+    const ld = layout.boxes.find((b) => b.id === "l1-d")!;
+    expect(li.label).toBe("L1i");
+    expect(ld.label).toBe("L1d");
+    expect(li.clickable).toBe(true);
+    expect(ld.clickable).toBe(true);
+    expect(li.targetTabId).toBe("l1-i");
+    expect(ld.targetTabId).toBe("l1-d");
+
+    // Stacked: same x, i above d.
+    expect(li.x).toBe(ld.x);
+    expect(li.y).toBeLessThan(ld.y);
+
+    // The connector arriving from REG forks into two paths (one per box);
+    // the connector leaving toward RAM merges back into two paths as well.
+    const forkPaths = layout.connectors.filter((c) => c.id.startsWith("link-1-"));
+    const mergePaths = layout.connectors.filter((c) => c.id.startsWith("link-2-"));
+    expect(forkPaths).toHaveLength(2);
+    expect(mergePaths).toHaveLength(2);
+  });
+});
