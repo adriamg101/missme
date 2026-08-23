@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { byteSizeLabel, computeLayout } from "./diagram";
 import { defaultRamConfig, defaultDiskConfig } from "./model";
-import type { TlbConfig } from "./model";
+import type { TlbConfig, Hierarchy } from "./model";
 
 describe("byteSizeLabel", () => {
   it("labels bytes below 1024 with no unit scaling", () => {
@@ -83,5 +83,44 @@ describe("computeLayout — base chain", () => {
     // (cpu-reg, reg-ram, ram-disk) = 4 total.
     expect(layout.connectors).toHaveLength(4);
     expect(layout.connectors.some((c) => c.id === "cpu-tlb")).toBe(true);
+  });
+});
+
+function unifiedLevel(id: string, exp: number, blockSize: number, hitTime: number): Hierarchy[number] {
+  return {
+    id,
+    harvard: false,
+    unified: {
+      exp,
+      config: { blockSize, associativity: 1, replacement: "LRU", writePolicy: "write-back", writeAllocate: true, hitTime, dirtyPercent: 0 },
+    },
+    inclusion: "inclusive",
+    busWidth: 32,
+  };
+}
+
+describe("computeLayout — unified cache levels", () => {
+  it("inserts one box per unified level, in order, between REG and RAM", () => {
+    const hierarchy = [unifiedLevel("l1", 10, 64, 1), unifiedLevel("l2", 13, 64, 10)];
+    const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), tlb, false);
+
+    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "reg", "l1", "l2", "ram"]);
+
+    const l1 = layout.boxes.find((b) => b.id === "l1")!;
+    expect(l1.label).toBe("L1");
+    // 2^10 entries * 64 bytes/entry = 65536 bytes = 64 KB
+    expect(l1.subLabels).toEqual(["Size: 64 KB", "Latency: 1 cycles"]);
+    expect(l1.clickable).toBe(true);
+    expect(l1.targetTabId).toBe("l1");
+
+    const l2 = layout.boxes.find((b) => b.id === "l2")!;
+    expect(l2.label).toBe("L2");
+    // 2^13 entries * 64 bytes/entry = 524288 bytes = 512 KB
+    expect(l2.subLabels).toEqual(["Size: 512 KB", "Latency: 10 cycles"]);
+
+    // Boxes are laid out left-to-right in slot order.
+    expect(l1.x).toBeLessThan(l2.x);
+    const ram = layout.boxes.find((b) => b.id === "ram")!;
+    expect(l2.x).toBeLessThan(ram.x);
   });
 });
