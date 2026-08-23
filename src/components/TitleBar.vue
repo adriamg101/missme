@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 const appWindow = getCurrentWindow();
 
 const theme = ref<"light" | "dark">(
-  (document.documentElement.getAttribute("data-theme") as "light" | "dark") ?? "light"
+  (document.documentElement.getAttribute("data-theme") as "light" | "dark") ?? "dark"
 );
 
 function toggleTheme() {

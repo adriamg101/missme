@@ -3,13 +3,53 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { invoke } from "@tauri-apps/api/core";
 import ErrorPanel from "./ErrorPanel.vue";
+import SelectField from "./ui/SelectField.vue";
+import IconButton from "./ui/IconButton.vue";
+import ConfirmModal from "./ui/ConfirmModal.vue";
+import { useHierarchyConfigStore } from "../stores/hierarchyConfig";
 
 // TODO: in the future this list should come from the backend
-const languages = ["RISC-V", "C"];
+const languages = ["RISC-V"];
+const languageOptions = languages.map((lang) => ({ value: lang, label: lang }));
 
 const selectedLanguage = ref(languages[0]);
 const code = ref("");
+
+type RiscvExtension = "M" | "F" | "D" | "Q";
+
+const hierarchyConfigStore = useHierarchyConfigStore();
+const riscvBase = computed({
+  get: () => hierarchyConfigStore.isa,
+  set: (value) => hierarchyConfigStore.setIsa(value),
+});
+const riscvExtensions = ref<Set<RiscvExtension>>(new Set());
+const isOptionsMenuOpen = ref(false);
+const optionsMenuRef = ref<HTMLDivElement | null>(null);
+
+function toggleOptionsMenu() {
+  isOptionsMenuOpen.value = !isOptionsMenuOpen.value;
+}
+
+function selectBase(base: "RV32I" | "RV64I") {
+  riscvBase.value = base;
+}
+
+function toggleExtension(extension: RiscvExtension) {
+  if (riscvExtensions.value.has(extension)) {
+    riscvExtensions.value.delete(extension);
+  } else {
+    riscvExtensions.value.add(extension);
+  }
+}
+
+function handleDocumentClick(event: MouseEvent) {
+  if (!optionsMenuRef.value) return;
+  if (!optionsMenuRef.value.contains(event.target as Node)) {
+    isOptionsMenuOpen.value = false;
+  }
+}
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 const gutterRef = ref<HTMLDivElement | null>(null);
@@ -32,13 +72,12 @@ function toggleBreakpoint(line: number) {
   }
 }
 
-// TODO: wire to real compiler output once the backend is connected
 const errorCount = ref(0);
 const errorOutput = ref("");
 
 const isDragOver = ref(false);
 
-type PendingSource = { kind: "open" } | { kind: "drop"; text: string };
+type PendingSource = { kind: "open" } | { kind: "drop"; text: string } | { kind: "new" };
 
 const showConfirmModal = ref(false);
 const pendingSource = ref<PendingSource | null>(null);
@@ -51,6 +90,11 @@ function loadFileContent(text: string) {
 }
 
 async function performLoad(source: PendingSource) {
+  if (source.kind === "new") {
+    loadFileContent("");
+    return;
+  }
+
   if (source.kind === "drop") {
     loadFileContent(source.text);
     return;
@@ -80,6 +124,35 @@ function closeModal() {
 
 async function handleOpenFileClick() {
   requestLoad({ kind: "open" });
+}
+
+function handleNewFileClick() {
+  requestLoad({ kind: "new" });
+}
+
+async function handleStartClick() {
+  errorCount.value = 0;
+  errorOutput.value = "";
+
+  try {
+    const result = await invoke<{
+      error_count: number;
+      error_output: string;
+      config: unknown;
+    }>("compile", {
+      source: code.value,
+      config: {
+        base: riscvBase.value,
+        extensions: Array.from(riscvExtensions.value),
+      },
+    });
+
+    errorCount.value = result.error_count;
+    errorOutput.value = result.error_output;
+  } catch (err) {
+    errorCount.value = 1;
+    errorOutput.value = typeof err === "string" ? err : String(err);
+  }
 }
 
 async function handleOverwrite() {
@@ -121,6 +194,7 @@ async function handleDroppedPath(path: string) {
 }
 
 onMounted(async () => {
+  document.addEventListener("click", handleDocumentClick);
   // Tauri intercepts OS-level file drag & drop before it reaches the DOM
   // (dataTransfer.files stays empty for files dragged from a file manager),
   // so this uses Tauri's own drag & drop event instead of native HTML5 drop events.
@@ -142,6 +216,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener("click", handleDocumentClick);
   unlistenDragDrop?.();
 });
 </script>
@@ -149,23 +224,92 @@ onBeforeUnmount(() => {
 <template>
   <div class="editor">
     <div class="editor-header">
-      <button
-        type="button"
-        class="editor-icon-button"
-        aria-label="Abrir fichero"
+      <IconButton
+        size="sm"
+        ariaLabel="Nuevo fichero"
+        @click="handleNewFileClick"
+      >
+        <svg viewBox="0 0 16 16" width="16" height="16">
+          <path
+            fill="currentColor"
+            d="M4 1.5A1.5 1.5 0 0 0 2.5 3v10A1.5 1.5 0 0 0 4 14.5h8a1.5 1.5 0 0 0 1.5-1.5V6a1 1 0 0 0-.3-.7l-3.5-3.5A1 1 0 0 0 9 1.5H4Zm0 1.5h4.5v2.25A1.25 1.25 0 0 0 9.75 6.5H12V13H4V3Z"
+          />
+          <path
+            fill="currentColor"
+            d="M7.4 8.4a.6.6 0 1 1 1.2 0v1h1a.6.6 0 1 1 0 1.2h-1v1a.6.6 0 1 1-1.2 0v-1h-1a.6.6 0 1 1 0-1.2h1v-1Z"
+          />
+        </svg>
+      </IconButton>
+
+      <IconButton
+        class="editor-open-file-button"
+        size="sm"
+        ariaLabel="Abrir fichero"
         @click="handleOpenFileClick"
       >
-        <svg viewBox="0 0 16 16" width="14" height="14">
+        <svg viewBox="0 0 16 16" width="16" height="16">
           <path
             fill="currentColor"
             d="M1.5 3A1.5 1.5 0 0 1 3 1.5h3.379a1.5 1.5 0 0 1 1.06.44l1.122 1.12A1.5 1.5 0 0 0 9.62 3.5H13A1.5 1.5 0 0 1 14.5 5v7A1.5 1.5 0 0 1 13 13.5H3A1.5 1.5 0 0 1 1.5 12V3Z"
           />
         </svg>
-      </button>
+      </IconButton>
 
-      <select v-model="selectedLanguage" class="editor-language-select">
-        <option v-for="lang in languages" :key="lang" :value="lang">{{ lang }}</option>
-      </select>
+      <IconButton
+        size="sm"
+        ariaLabel="Compilar"
+        @click="handleStartClick"
+      >
+        <svg viewBox="0 0 16 16" width="16" height="16">
+          <path fill="currentColor" d="M4 2.5v11l10-5.5-10-5.5Z" />
+        </svg>
+      </IconButton>
+
+      <div class="editor-language-group" ref="optionsMenuRef">
+        <SelectField v-model="selectedLanguage" :options="languageOptions" size="sm" aria-label="Language" />
+
+        <IconButton
+          size="sm"
+          ariaLabel="Opciones de compilación"
+          @click.stop="toggleOptionsMenu"
+        >
+          <svg viewBox="0 0 16 16" width="16" height="16">
+            <path fill="currentColor" d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
+            <path
+              fill="currentColor"
+              d="M8 1a1 1 0 0 1 1 1v.6a5.98 5.98 0 0 1 1.7.7l.42-.43a1 1 0 0 1 1.42 1.42l-.43.42c.32.5.56 1.08.7 1.7H13a1 1 0 1 1 0 2h-.19a5.98 5.98 0 0 1-.7 1.7l.43.42a1 1 0 1 1-1.42 1.42l-.42-.43a5.98 5.98 0 0 1-1.7.7V13a1 1 0 1 1-2 0v-.19a5.98 5.98 0 0 1-1.7-.7l-.42.43a1 1 0 1 1-1.42-1.42l.43-.42a5.98 5.98 0 0 1-.7-1.7H3a1 1 0 1 1 0-2h.19c.14-.62.38-1.2.7-1.7l-.43-.42A1 1 0 1 1 4.88 3.3l.42.43a5.98 5.98 0 0 1 1.7-.7V2a1 1 0 0 1 1-1Z"
+            />
+          </svg>
+        </IconButton>
+
+        <div v-if="isOptionsMenuOpen" class="editor-options-menu">
+          <button
+            v-for="base in (['RV32I', 'RV64I'] as const)"
+            :key="base"
+            type="button"
+            class="editor-options-radio"
+            :class="{ 'editor-options-radio-active': riscvBase === base }"
+            @click="selectBase(base)"
+          >
+            {{ base }}
+          </button>
+
+          <div class="editor-options-divider"></div>
+
+          <label
+            v-for="extension in (['M', 'F', 'D', 'Q'] as const)"
+            :key="extension"
+            class="editor-options-checkbox"
+          >
+            <input
+              type="checkbox"
+              :checked="riscvExtensions.has(extension)"
+              @change="toggleExtension(extension)"
+            />
+            {{ extension }}
+          </label>
+        </div>
+      </div>
     </div>
 
     <div
@@ -198,22 +342,13 @@ onBeforeUnmount(() => {
 
     <ErrorPanel :count="errorCount" :output="errorOutput" />
 
-    <div v-if="showConfirmModal" class="editor-modal-overlay">
-      <div class="editor-modal">
-        <p class="editor-modal-text">Hay código sin guardar en el editor. ¿Qué quieres hacer?</p>
-        <div class="editor-modal-actions">
-          <button type="button" class="editor-modal-button" @click="handleSaveThenLoad">
-            Guardar
-          </button>
-          <button type="button" class="editor-modal-button" @click="handleOverwrite">
-            Sobrescribir sin guardar
-          </button>
-          <button type="button" class="editor-modal-button editor-modal-button-cancel" @click="handleCancel">
-            Cancelar
-          </button>
-        </div>
-      </div>
-    </div>
+    <ConfirmModal
+      v-if="showConfirmModal"
+      message="Hay código sin guardar en el editor. ¿Qué quieres hacer?"
+      @save="handleSaveThenLoad"
+      @discard="handleOverwrite"
+      @cancel="handleCancel"
+    />
   </div>
 </template>
 
@@ -243,45 +378,64 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--secondary);
 }
 
-.editor-icon-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
+.editor-open-file-button {
   margin-right: auto;
 }
 
-.editor-icon-button:hover {
-  background: var(--secondary);
-  opacity: 0.8;
+.editor-language-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
 }
 
-.editor-language-select {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  background-color: var(--background);
-  color: var(--text);
+.editor-options-menu {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem;
+  border: 1px solid var(--secondary);
+  border-radius: 8px;
+  background: var(--background);
+  box-shadow: var(--shadow);
+  z-index: 5;
+}
+
+.editor-options-radio {
+  padding: 0.3rem 0.5rem;
   border: 1px solid var(--secondary);
   border-radius: 6px;
-  padding: 0.15rem 1.2rem 0.15rem 0.4rem;
+  background: transparent;
+  color: var(--text);
   font-family: inherit;
   font-size: 0.75rem;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M2.5 4.5l3.5 3.5 3.5-3.5z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.35rem center;
-  background-size: 8px;
+  text-align: left;
+  cursor: pointer;
 }
 
-.editor-language-select option {
-  background-color: var(--background);
+.editor-options-radio-active {
+  background: var(--secondary);
+  color: var(--background);
+}
+
+.editor-options-divider {
+  height: 1px;
+  margin: 0.2rem 0;
+  background: var(--secondary);
+  opacity: 0.5;
+}
+
+.editor-options-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
   color: var(--text);
+  cursor: pointer;
 }
 
 .editor-body {
@@ -339,54 +493,4 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
-.editor-modal-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10;
-}
-
-.editor-modal {
-  width: min(320px, 80%);
-  padding: 1rem;
-  border-radius: 10px;
-  border: 1px solid var(--secondary);
-  background: var(--background);
-  color: var(--text);
-}
-
-.editor-modal-text {
-  margin: 0 0 0.75rem;
-  font-size: 0.85rem;
-}
-
-.editor-modal-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.editor-modal-button {
-  padding: 0.4rem 0.6rem;
-  border-radius: 6px;
-  border: 1px solid var(--secondary);
-  background: transparent;
-  color: var(--text);
-  font-family: inherit;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-
-.editor-modal-button:hover {
-  background: var(--secondary);
-  opacity: 0.8;
-}
-
-.editor-modal-button-cancel {
-  border-color: transparent;
-  opacity: 0.7;
-}
 </style>

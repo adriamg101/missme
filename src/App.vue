@@ -3,6 +3,7 @@ import MainLayout from "./components/MainLayout.vue"
 import Card from "./components/Card.vue"
 import Editor from "./components/Editor.vue"
 import TitleBar from "./components/TitleBar.vue"
+import HierarchyConfigPanel from "./components/hierarchy-config/HierarchyConfigPanel.vue"
 </script>
 
 <template>
@@ -19,7 +20,7 @@ import TitleBar from "./components/TitleBar.vue"
         </template>
 
         <template #bottom-right>
-          <Card></Card>
+          <HierarchyConfigPanel></HierarchyConfigPanel>
         </template>
       </MainLayout>
     </div>
