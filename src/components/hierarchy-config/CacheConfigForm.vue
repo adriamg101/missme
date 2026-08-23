@@ -79,15 +79,15 @@ function onDirtyPercentChange(value: number) {
           @update:model-value="emit('update', { writePolicy: $event as WritePolicy })"
         />
 
-        <label class="cache-config-form-checkbox">
-          Write allocate
+        <div class="cache-config-form-checkbox">
+          <span class="cache-config-form-checkbox-label">Write allocate</span>
           <input
             type="checkbox"
             aria-label="Write allocate"
             :checked="config.writeAllocate"
             @change="emit('update', { writeAllocate: ($event.target as HTMLInputElement).checked })"
           />
-        </label>
+        </div>
 
         <NumberStepper
           v-if="config.writePolicy === 'write-back'"
@@ -115,9 +115,8 @@ function onDirtyPercentChange(value: number) {
 <style scoped>
 .cache-config-form-checkbox {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.375rem;
   font-size: 0.875rem;
   color: var(--text);
 }

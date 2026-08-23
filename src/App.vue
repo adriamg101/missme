@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import MainLayout from "./components/MainLayout.vue"
-import Card from "./components/Card.vue"
 import Editor from "./components/Editor.vue"
 import TitleBar from "./components/TitleBar.vue"
 import HierarchyConfigPanel from "./components/hierarchy-config/HierarchyConfigPanel.vue"
+import HierarchyDiagram from "./components/hierarchy-config/HierarchyDiagram.vue"
 </script>
 
 <template>
@@ -16,7 +16,7 @@ import HierarchyConfigPanel from "./components/hierarchy-config/HierarchyConfigP
         </template>
 
         <template #top-right>
-          <Card></Card>
+          <HierarchyDiagram></HierarchyDiagram>
         </template>
 
         <template #bottom-right>

@@ -129,3 +129,23 @@ export function maxCacheSize(hierarchy: Hierarchy): number {
   });
   return 2 ** maxExp;
 }
+
+// The largest cache CAPACITY IN BYTES (entries * block size) currently
+// configured anywhere in the hierarchy, across both chains. 1 if the
+// hierarchy is empty. Distinct from maxCacheSize, which returns the largest
+// entry COUNT (2^exp) — this returns real bytes, matching RamConfig.size's
+// own convention (RamConfig.size is bytes, same as CacheConfig.blockSize).
+export function maxCacheByteCapacity(hierarchy: Hierarchy): number {
+  let maxBytes = 1;
+  hierarchy.forEach((level) => {
+    if (level.harvard) {
+      const iBytes = 2 ** level.i!.exp * level.i!.config.blockSize;
+      const dBytes = 2 ** level.d!.exp * level.d!.config.blockSize;
+      maxBytes = Math.max(maxBytes, iBytes, dBytes);
+    } else {
+      const bytes = 2 ** level.unified!.exp * level.unified!.config.blockSize;
+      maxBytes = Math.max(maxBytes, bytes);
+    }
+  });
+  return maxBytes;
+}

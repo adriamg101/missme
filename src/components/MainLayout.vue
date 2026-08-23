@@ -4,7 +4,7 @@ import { ref, onBeforeUnmount } from "vue";
 const MIN_PERCENT = 25;
 const MAX_PERCENT = 75;
 
-const leftPercent = ref(50);
+const leftPercent = ref(100 / 3);
 const topPercent = ref(25);
 
 const containerRef = ref<HTMLElement | null>(null);

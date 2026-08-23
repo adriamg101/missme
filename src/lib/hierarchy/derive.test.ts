@@ -15,6 +15,7 @@ import {
   visibleTabs,
   pageWalkTargets,
   maxCacheSize,
+  maxCacheByteCapacity,
 } from "./derive";
 
 function unifiedLevel(id: string, exp: number): Level {
@@ -149,5 +150,23 @@ describe("maxCacheSize", () => {
   it("considers both i and d sides of a harvard level", () => {
     const h: Hierarchy = [unifiedLevel("a", 5), harvardLevel("b", 10, 20)];
     expect(maxCacheSize(h)).toBe(2 ** 20);
+  });
+});
+
+describe("maxCacheByteCapacity", () => {
+  it("returns 1 for an empty hierarchy", () => {
+    expect(maxCacheByteCapacity([])).toBe(1);
+  });
+
+  it("returns the largest unified level's byte capacity (entries * block size)", () => {
+    const h: Hierarchy = [unifiedLevel("a", 5), unifiedLevel("b", 10)];
+    // 2^10 entries * 64 bytes/entry = 65536
+    expect(maxCacheByteCapacity(h)).toBe(2 ** 10 * 64);
+  });
+
+  it("considers both i and d sides of a harvard level", () => {
+    const h: Hierarchy = [unifiedLevel("a", 5), harvardLevel("b", 8, 12)];
+    // 2^12 entries * 64 bytes/entry = 262144
+    expect(maxCacheByteCapacity(h)).toBe(2 ** 12 * 64);
   });
 });
