@@ -37,12 +37,13 @@ function onBoxClick(box: DiagramBox) {
         @click="onBoxClick(box)"
       >
         <rect :x="box.x" :y="box.y" :width="box.width" :height="box.height" :rx="6" :fill="box.fill" class="hierarchy-diagram-box-rect" />
-        <text :x="box.x + box.width / 2" :y="box.y + 18" class="hierarchy-diagram-box-label">{{ box.label }}</text>
+        <text :x="box.x + box.width / 2" :y="box.y + 18" :fill="box.textFill" class="hierarchy-diagram-box-label">{{ box.label }}</text>
         <text
           v-for="(sub, index) in box.subLabels"
           :key="index"
           :x="box.x + box.width / 2"
           :y="box.y + 34 + index * 12"
+          :fill="box.textFill"
           class="hierarchy-diagram-box-sub"
         >{{ sub }}</text>
       </g>
@@ -63,7 +64,7 @@ function onBoxClick(box: DiagramBox) {
   background: var(--background);
   box-shadow: var(--shadow);
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
 }
 
 .hierarchy-diagram-svg {
@@ -85,14 +86,12 @@ function onBoxClick(box: DiagramBox) {
   text-anchor: middle;
   font-size: 11px;
   font-weight: 700;
-  fill: var(--text);
   pointer-events: none;
 }
 
 .hierarchy-diagram-box-sub {
   text-anchor: middle;
   font-size: 8px;
-  fill: var(--text);
   opacity: 0.65;
   pointer-events: none;
 }

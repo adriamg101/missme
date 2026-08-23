@@ -6,16 +6,17 @@ import NumberStepper from "../ui/NumberStepper.vue";
 import ConfigGrid from "./ConfigGrid.vue";
 import type { Hierarchy, ISA, RamConfig } from "../../lib/hierarchy/model";
 import { defaultRamConfig, maxPositions } from "../../lib/hierarchy/model";
-import { maxCacheSize } from "../../lib/hierarchy/derive";
+import { maxCacheByteCapacity } from "../../lib/hierarchy/derive";
 
 const props = defineProps<{ config: RamConfig; hierarchy: Hierarchy; vmEnabled: boolean; isa: ISA }>();
 const emit = defineEmits<{ update: [patch: Partial<RamConfig>] }>();
 
 // RAM must always be a power of two strictly larger than the largest cache
-// level currently configured (e.g. up to L3 → RAM is the next power of two
-// above L3's size). Doubling maxCacheSize (already a power of two) gives
-// exactly that next power of two.
-const minSize = computed(() => maxCacheSize(props.hierarchy) * 2);
+// level's actual byte capacity currently configured (e.g. up to L3 → RAM is
+// the next power of two above L3's real size in bytes, not its entry count).
+// Doubling maxCacheByteCapacity (already a power of two, since entries and
+// blockSize both are) gives exactly that next power of two.
+const minSize = computed(() => maxCacheByteCapacity(props.hierarchy) * 2);
 
 // RAM can't exceed the address space the ISA can actually reach (2^32 for
 // RV32I, 2^64 for RV64I).

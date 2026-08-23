@@ -61,3 +61,24 @@ describe("HierarchyDiagram — click animation", () => {
     expect(ram.classList.contains("pressed")).toBe(false);
   });
 });
+
+describe("HierarchyDiagram — text contrast", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("gives colored boxes (cache/RAM/DISK) light text and neutral boxes dark text", () => {
+    const store = useHierarchyConfigStore();
+    store.setVmEnabled(true);
+    store.createLevelAt(10);
+    const { container } = render(HierarchyDiagram);
+
+    const cpuLabel = container.querySelector('[data-box-id="cpu"] .hierarchy-diagram-box-label')!;
+    expect(cpuLabel.getAttribute("fill")).toBe("var(--text)");
+
+    // Cache level ids are randomly generated (crypto.randomUUID()), so we
+    // locate the L1 box by its label text rather than by a hardcoded id.
+    const cacheLabel = screen.getByText("L1");
+    expect(cacheLabel.getAttribute("fill")).toBe("var(--background)");
+  });
+});

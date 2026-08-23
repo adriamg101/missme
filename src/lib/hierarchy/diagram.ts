@@ -6,7 +6,7 @@ const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
 // bytes is always an exact power of two here (entries and blockSize are both
 // powers of two), so log2(bytes) is always a whole number.
 export function byteSizeLabel(bytes: number): string {
-  if (bytes <= 0) return "0 B";
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const unitIndex = Math.min(Math.floor(Math.log2(bytes) / 10), SIZE_UNITS.length - 1);
   const value = bytes / 2 ** (unitIndex * 10);
   return `${value} ${SIZE_UNITS[unitIndex]}`;
@@ -24,6 +24,7 @@ export interface DiagramBox {
   width: number;
   height: number;
   fill: string;
+  textFill: string;
   clickable: boolean;
   targetTabId: string | null;
 }
@@ -46,6 +47,7 @@ interface SlotBoxSpec {
   label: string;
   subLabels: string[];
   fill: string;
+  textFill: string;
   clickable: boolean;
   targetTabId: string | null;
 }
@@ -73,10 +75,10 @@ export function computeLayout(
   const slots: Slot[] = [];
 
   slots.push([
-    { id: "cpu", kind: "cpu", label: "CPU", subLabels: [], fill: "var(--background)", clickable: false, targetTabId: null },
+    { id: "cpu", kind: "cpu", label: "CPU", subLabels: [], fill: "var(--background)", textFill: "var(--text)", clickable: false, targetTabId: null },
   ]);
   slots.push([
-    { id: "reg", kind: "reg", label: "REG", subLabels: [], fill: "var(--background)", clickable: true, targetTabId: null },
+    { id: "reg", kind: "reg", label: "REG", subLabels: [], fill: "var(--background)", textFill: "var(--text)", clickable: true, targetTabId: null },
   ]);
 
   hierarchy.forEach((level, index) => {
@@ -90,6 +92,7 @@ export function computeLayout(
           label: chainLabel(hierarchy, index, "i"),
           subLabels: [`Size: ${byteSizeLabel(iBytes)}`, `Latency: ${level.i!.config.hitTime} cycles`],
           fill: "var(--accent)",
+          textFill: "var(--background)",
           clickable: true,
           targetTabId: `${level.id}-i`,
         },
@@ -99,6 +102,7 @@ export function computeLayout(
           label: chainLabel(hierarchy, index, "d"),
           subLabels: [`Size: ${byteSizeLabel(dBytes)}`, `Latency: ${level.d!.config.hitTime} cycles`],
           fill: "var(--accent)",
+          textFill: "var(--background)",
           clickable: true,
           targetTabId: `${level.id}-d`,
         },
@@ -112,6 +116,7 @@ export function computeLayout(
           label: levelName(hierarchy, index),
           subLabels: [`Size: ${byteSizeLabel(bytes)}`, `Latency: ${level.unified!.config.hitTime} cycles`],
           fill: "var(--accent)",
+          textFill: "var(--background)",
           clickable: true,
           targetTabId: level.id,
         },
@@ -123,7 +128,7 @@ export function computeLayout(
     ? [`Size: ${byteSizeLabel(ram.size)}`, `Latency: ${ram.latency} cycles`]
     : [`Latency: ${ram.latency} cycles`];
   slots.push([
-    { id: "ram", kind: "ram", label: "RAM", subLabels: ramSubLabels, fill: "var(--primary)", clickable: true, targetTabId: "ram" },
+    { id: "ram", kind: "ram", label: "RAM", subLabels: ramSubLabels, fill: "var(--primary)", textFill: "var(--background)", clickable: true, targetTabId: "ram" },
   ]);
 
   if (vmEnabled) {
@@ -134,6 +139,7 @@ export function computeLayout(
         label: "DISK",
         subLabels: [`Latency: ${disk.latency} cycles`],
         fill: "var(--secondary)",
+        textFill: "var(--background)",
         clickable: true,
         targetTabId: "disk",
       },
@@ -146,7 +152,7 @@ export function computeLayout(
 
   const boxes: DiagramBox[] = [];
   const slotX: number[] = [];
-  let cursorX = 0;
+  let cursorX = 2;
   slots.forEach((slot) => {
     slotX.push(cursorX);
     if (slot.length === 1) {
@@ -174,6 +180,7 @@ export function computeLayout(
       width: TLB_WIDTH,
       height: TLB_HEIGHT,
       fill: "var(--background)",
+      textFill: "var(--text)",
       clickable: true,
       targetTabId: "tlb",
     };

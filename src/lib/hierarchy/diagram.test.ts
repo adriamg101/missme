@@ -23,6 +23,11 @@ describe("byteSizeLabel", () => {
   it("returns 0 B for zero input", () => {
     expect(byteSizeLabel(0)).toBe("0 B");
   });
+
+  it("returns 0 B for non-finite input (e.g. a legacy config missing the field)", () => {
+    expect(byteSizeLabel(NaN)).toBe("0 B");
+    expect(byteSizeLabel(undefined as unknown as number)).toBe("0 B");
+  });
 });
 
 const tlb: TlbConfig = {
