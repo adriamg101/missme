@@ -52,6 +52,7 @@ function onDirtyPercentChange(value: number) {
       />
 
       <NumberStepper
+        v-if="vmEnabled"
         label="Dirty pages at start (%)"
         :model-value="safeDirtyPercent"
         :min="0"

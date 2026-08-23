@@ -1,5 +1,5 @@
 import type { DiskConfig, Hierarchy, RamConfig, TlbConfig } from "./model";
-import { chainLabel, levelName } from "./derive";
+import { chainLabel, levelName, sizeLabel } from "./derive";
 
 const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
 
@@ -12,6 +12,54 @@ export function byteSizeLabel(bytes: number): string {
   return `${value} ${SIZE_UNITS[unitIndex]}`;
 }
 
+const CYCLE_UNITS = ["", "K", "M", "B"];
+
+// Cycle counts are plain decimal (base 1000), unlike byte counts — no
+// power-of-two assumption here, so this rounds to one decimal place instead
+// of relying on exact division.
+export function cycleLabel(cycles: number): string {
+  if (!Number.isFinite(cycles) || cycles < 0) return "0 cy";
+  let value = cycles;
+  let unitIndex = 0;
+  while (value >= 1000 && unitIndex < CYCLE_UNITS.length - 1) {
+    value /= 1000;
+    unitIndex++;
+  }
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded}${CYCLE_UNITS[unitIndex]} cy`;
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+// Cache levels get a hue gradient (warm at L1, cool at the deepest level)
+// instead of a fixed hue, so an arbitrary number of levels stay visually
+// distinct without hand-picking a color per level. Three anchors (warm ->
+// mid -> cool) via two linear segments, per the design spec.
+const CACHE_HUE_WARM = 45;
+const CACHE_HUE_MID = 130;
+const CACHE_HUE_COOL = 215;
+
+export function cacheHue(levelIndex: number, totalLevels: number): number {
+  if (totalLevels <= 1) return CACHE_HUE_WARM;
+  const t = levelIndex / (totalLevels - 1);
+  if (t < 0.5) return lerp(CACHE_HUE_WARM, CACHE_HUE_MID, t * 2);
+  return lerp(CACHE_HUE_MID, CACHE_HUE_COOL, (t - 0.5) * 2);
+}
+
+// Fixed hues per box kind (OKLCH), from the design spec. Cache is excluded
+// here — its hue is computed per level by cacheHue instead of being fixed.
+const TYPE_CHROMA = 0.07;
+const CACHE_CHROMA = 0.09;
+const HUE_BY_KIND: Record<Exclude<DiagramBoxKind, "cache">, number> = {
+  cpu: 15,
+  reg: 95,
+  tlb: 330,
+  ram: 255,
+  disk: 290,
+};
+
 export type DiagramBoxKind = "cpu" | "reg" | "cache" | "ram" | "disk" | "tlb";
 
 export interface DiagramBox {
@@ -23,8 +71,11 @@ export interface DiagramBox {
   y: number;
   width: number;
   height: number;
-  fill: string;
-  textFill: string;
+  // OKLCH hue (0-360) and chroma for this box's type/cache-level color.
+  // Resolved to actual border/fill/text colors in CSS (theme-aware, via
+  // shared lightness tokens), not here — this stays a pure data function.
+  hue: number;
+  chroma: number;
   clickable: boolean;
   targetTabId: string | null;
 }
@@ -46,8 +97,8 @@ interface SlotBoxSpec {
   kind: DiagramBoxKind;
   label: string;
   subLabels: string[];
-  fill: string;
-  textFill: string;
+  hue: number;
+  chroma: number;
   clickable: boolean;
   targetTabId: string | null;
 }
@@ -56,14 +107,15 @@ interface SlotBoxSpec {
 // boxes (a Harvard-split cache level: i on top, d on bottom).
 type Slot = SlotBoxSpec[];
 
-const BOX_WIDTH = 90;
-const BOX_HEIGHT = 60;
-const SLOT_GAP = 60;
-const CENTER_Y = 120;
-const HARVARD_OFFSET = 45;
-const TLB_WIDTH = 70;
-const TLB_HEIGHT = 50;
-const TLB_GAP = 30;
+const BOX_WIDTH = 120;
+const BOX_HEIGHT = 58;
+const SLOT_GAP = 36;
+const HARVARD_OFFSET = 42;
+const TLB_WIDTH = 90;
+const TLB_HEIGHT = 44;
+const TLB_GAP = 24;
+const TOP_PADDING = 10;
+const BOTTOM_PADDING = 16;
 
 export function computeLayout(
   hierarchy: Hierarchy,
@@ -72,16 +124,23 @@ export function computeLayout(
   tlb: TlbConfig,
   vmEnabled: boolean,
 ): DiagramLayout {
+  // Only reserve the extra vertical room a Harvard split needs when one is
+  // actually present, so the common (no-split) diagram isn't padded for a
+  // shape it doesn't have.
+  const hasHarvard = hierarchy.some((level) => level.harvard);
+  const CENTER_Y = hasHarvard ? TOP_PADDING + HARVARD_OFFSET + BOX_HEIGHT / 2 : TOP_PADDING + BOX_HEIGHT / 2;
+
   const slots: Slot[] = [];
 
   slots.push([
-    { id: "cpu", kind: "cpu", label: "CPU", subLabels: [], fill: "var(--background)", textFill: "var(--text)", clickable: false, targetTabId: null },
+    { id: "cpu", kind: "cpu", label: "CPU", subLabels: [], hue: HUE_BY_KIND.cpu, chroma: TYPE_CHROMA, clickable: false, targetTabId: null },
   ]);
   slots.push([
-    { id: "reg", kind: "reg", label: "REG", subLabels: [], fill: "var(--background)", textFill: "var(--text)", clickable: true, targetTabId: null },
+    { id: "reg", kind: "reg", label: "REG", subLabels: [], hue: HUE_BY_KIND.reg, chroma: TYPE_CHROMA, clickable: true, targetTabId: null },
   ]);
 
   hierarchy.forEach((level, index) => {
+    const hue = cacheHue(index, hierarchy.length);
     if (level.harvard) {
       const iBytes = 2 ** level.i!.exp * level.i!.config.blockSize;
       const dBytes = 2 ** level.d!.exp * level.d!.config.blockSize;
@@ -90,9 +149,9 @@ export function computeLayout(
           id: `${level.id}-i`,
           kind: "cache",
           label: chainLabel(hierarchy, index, "i"),
-          subLabels: [`Size: ${byteSizeLabel(iBytes)}`, `Latency: ${level.i!.config.hitTime} cycles`],
-          fill: "var(--accent)",
-          textFill: "var(--background)",
+          subLabels: [`Size: ${byteSizeLabel(iBytes)}`, `Latency: ${cycleLabel(level.i!.config.hitTime)}`],
+          hue,
+          chroma: CACHE_CHROMA,
           clickable: true,
           targetTabId: `${level.id}-i`,
         },
@@ -100,9 +159,9 @@ export function computeLayout(
           id: `${level.id}-d`,
           kind: "cache",
           label: chainLabel(hierarchy, index, "d"),
-          subLabels: [`Size: ${byteSizeLabel(dBytes)}`, `Latency: ${level.d!.config.hitTime} cycles`],
-          fill: "var(--accent)",
-          textFill: "var(--background)",
+          subLabels: [`Size: ${byteSizeLabel(dBytes)}`, `Latency: ${cycleLabel(level.d!.config.hitTime)}`],
+          hue,
+          chroma: CACHE_CHROMA,
           clickable: true,
           targetTabId: `${level.id}-d`,
         },
@@ -114,9 +173,9 @@ export function computeLayout(
           id: level.id,
           kind: "cache",
           label: levelName(hierarchy, index),
-          subLabels: [`Size: ${byteSizeLabel(bytes)}`, `Latency: ${level.unified!.config.hitTime} cycles`],
-          fill: "var(--accent)",
-          textFill: "var(--background)",
+          subLabels: [`Size: ${byteSizeLabel(bytes)}`, `Latency: ${cycleLabel(level.unified!.config.hitTime)}`],
+          hue,
+          chroma: CACHE_CHROMA,
           clickable: true,
           targetTabId: level.id,
         },
@@ -125,10 +184,10 @@ export function computeLayout(
   });
 
   const ramSubLabels = vmEnabled
-    ? [`Size: ${byteSizeLabel(ram.size)}`, `Latency: ${ram.latency} cycles`]
-    : [`Latency: ${ram.latency} cycles`];
+    ? [`Size: ${byteSizeLabel(ram.size)}`, `Latency: ${cycleLabel(ram.latency)}`]
+    : [`Latency: ${cycleLabel(ram.latency)}`];
   slots.push([
-    { id: "ram", kind: "ram", label: "RAM", subLabels: ramSubLabels, fill: "var(--primary)", textFill: "var(--background)", clickable: true, targetTabId: "ram" },
+    { id: "ram", kind: "ram", label: "RAM", subLabels: ramSubLabels, hue: HUE_BY_KIND.ram, chroma: TYPE_CHROMA, clickable: true, targetTabId: "ram" },
   ]);
 
   if (vmEnabled) {
@@ -137,9 +196,9 @@ export function computeLayout(
         id: "disk",
         kind: "disk",
         label: "DISK",
-        subLabels: [`Latency: ${disk.latency} cycles`],
-        fill: "var(--secondary)",
-        textFill: "var(--background)",
+        subLabels: [`Latency: ${cycleLabel(disk.latency)}`],
+        hue: HUE_BY_KIND.disk,
+        chroma: TYPE_CHROMA,
         clickable: true,
         targetTabId: "disk",
       },
@@ -174,13 +233,16 @@ export function computeLayout(
       id: "tlb",
       kind: "tlb",
       label: "TLB",
-      subLabels: [`Entries: ${tlb.entries}`],
+      // TLB entries is always a power of two, same convention as cache
+      // "size" — reuse sizeLabel (K/M/G/... entry-count formatting) rather
+      // than the raw number, which can otherwise run into the thousands.
+      subLabels: [`Entries: ${sizeLabel(Math.log2(tlb.entries))}`],
       x: tlbX,
       y: tlbY,
       width: TLB_WIDTH,
       height: TLB_HEIGHT,
-      fill: "var(--background)",
-      textFill: "var(--text)",
+      hue: HUE_BY_KIND.tlb,
+      chroma: TYPE_CHROMA,
       clickable: true,
       targetTabId: "tlb",
     };
@@ -208,18 +270,18 @@ export function computeLayout(
       connectors.push({ id: `link-${i}-top`, path: `M ${aRightX} ${topY} L ${bLeftX} ${CENTER_Y}` });
       connectors.push({ id: `link-${i}-bottom`, path: `M ${aRightX} ${bottomY} L ${bLeftX} ${CENTER_Y}` });
     } else {
-      const midX = (aRightX + bLeftX) / 2;
-      connectors.push({ id: `link-${i}-in-top`, path: `M ${aRightX} ${topY} L ${midX} ${CENTER_Y}` });
-      connectors.push({ id: `link-${i}-in-bottom`, path: `M ${aRightX} ${bottomY} L ${midX} ${CENTER_Y}` });
-      connectors.push({ id: `link-${i}-out-top`, path: `M ${midX} ${CENTER_Y} L ${bLeftX} ${topY}` });
-      connectors.push({ id: `link-${i}-out-bottom`, path: `M ${midX} ${CENTER_Y} L ${bLeftX} ${bottomY}` });
+      // Two adjacent Harvard-split levels: instruction cache connects
+      // straight across to instruction cache, data to data — two parallel
+      // lines, not a pinch-merge through the center.
+      connectors.push({ id: `link-${i}-top`, path: `M ${aRightX} ${topY} L ${bLeftX} ${topY}` });
+      connectors.push({ id: `link-${i}-bottom`, path: `M ${aRightX} ${bottomY} L ${bLeftX} ${bottomY}` });
     }
   }
 
-  const mainAxisBottom = CENTER_Y + HARVARD_OFFSET + BOX_HEIGHT / 2;
+  const mainAxisBottom = hasHarvard ? CENTER_Y + HARVARD_OFFSET + BOX_HEIGHT / 2 : CENTER_Y + BOX_HEIGHT / 2;
   const tlbBottom = tlbBox ? tlbBox.y + TLB_HEIGHT : 0;
   const width = cursorX - SLOT_GAP + 20;
-  const height = Math.max(mainAxisBottom, tlbBottom) + 20;
+  const height = Math.max(mainAxisBottom, tlbBottom) + BOTTOM_PADDING;
 
   return { width, height, boxes, connectors };
 }

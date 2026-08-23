@@ -106,6 +106,7 @@ function handleCancel() {
 
     <div class="hierarchy-config-panel-body">
       <GlobalConfigBar />
+      <div class="hierarchy-config-panel-divider"></div>
       <LevelTabs />
     </div>
 
@@ -156,5 +157,12 @@ function handleCancel() {
   min-height: 0;
   padding: 1rem 0;
   overflow-y: auto;
+}
+
+.hierarchy-config-panel-divider {
+  height: 1px;
+  margin: 0 0.875rem;
+  background: var(--secondary);
+  opacity: 0.4;
 }
 </style>

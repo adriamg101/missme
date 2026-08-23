@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { byteSizeLabel, computeLayout } from "./diagram";
+import { byteSizeLabel, cycleLabel, cacheHue, computeLayout } from "./diagram";
 import { defaultRamConfig, defaultDiskConfig } from "./model";
 import type { TlbConfig, Hierarchy } from "./model";
 
@@ -30,6 +30,40 @@ describe("byteSizeLabel", () => {
   });
 });
 
+describe("cycleLabel", () => {
+  it("labels counts below 1000 with no unit letter", () => {
+    expect(cycleLabel(1)).toBe("1 cy");
+    expect(cycleLabel(100)).toBe("100 cy");
+  });
+
+  it("scales to K at 1000", () => {
+    expect(cycleLabel(1000)).toBe("1K cy");
+    expect(cycleLabel(10000)).toBe("10K cy");
+  });
+
+  it("scales to M and B, rounding to one decimal place", () => {
+    expect(cycleLabel(2_500_000)).toBe("2.5M cy");
+    expect(cycleLabel(3_000_000_000)).toBe("3B cy");
+  });
+
+  it("returns 0 cy for non-finite or negative input", () => {
+    expect(cycleLabel(NaN)).toBe("0 cy");
+    expect(cycleLabel(-5)).toBe("0 cy");
+  });
+});
+
+describe("cacheHue", () => {
+  it("returns the warm anchor for a single level", () => {
+    expect(cacheHue(0, 1)).toBe(45);
+  });
+
+  it("spans warm -> mid -> cool across the first and last of several levels", () => {
+    expect(cacheHue(0, 3)).toBe(45);
+    expect(cacheHue(1, 3)).toBe(130);
+    expect(cacheHue(2, 3)).toBe(215);
+  });
+});
+
 const tlb: TlbConfig = {
   pageSize: 4096,
   pageTableLevels: 1,
@@ -56,7 +90,7 @@ describe("computeLayout — base chain", () => {
     expect(reg.targetTabId).toBeNull();
 
     const ram = layout.boxes.find((b) => b.id === "ram")!;
-    expect(ram.subLabels).toEqual(["Latency: 100 cycles"]);
+    expect(ram.subLabels).toEqual(["Latency: 100 cy"]);
     expect(ram.clickable).toBe(false);
   });
 
@@ -65,13 +99,13 @@ describe("computeLayout — base chain", () => {
     expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "reg", "ram", "disk", "tlb"]);
 
     const ram = layout.boxes.find((b) => b.id === "ram")!;
-    expect(ram.subLabels).toEqual(["Size: 1 KB", "Latency: 100 cycles"]);
+    expect(ram.subLabels).toEqual(["Size: 1 KB", "Latency: 100 cy"]);
     expect(ram.clickable).toBe(true);
     expect(ram.targetTabId).toBe("ram");
 
     const disk = layout.boxes.find((b) => b.id === "disk")!;
     expect(disk.label).toBe("DISK");
-    expect(disk.subLabels).toEqual(["Latency: 10000 cycles"]);
+    expect(disk.subLabels).toEqual(["Latency: 10K cy"]);
     expect(disk.clickable).toBe(false);
 
     const tlbBox = layout.boxes.find((b) => b.id === "tlb")!;
@@ -114,14 +148,14 @@ describe("computeLayout — unified cache levels", () => {
     const l1 = layout.boxes.find((b) => b.id === "l1")!;
     expect(l1.label).toBe("L1");
     // 2^10 entries * 64 bytes/entry = 65536 bytes = 64 KB
-    expect(l1.subLabels).toEqual(["Size: 64 KB", "Latency: 1 cycles"]);
+    expect(l1.subLabels).toEqual(["Size: 64 KB", "Latency: 1 cy"]);
     expect(l1.clickable).toBe(true);
     expect(l1.targetTabId).toBe("l1");
 
     const l2 = layout.boxes.find((b) => b.id === "l2")!;
     expect(l2.label).toBe("L2");
     // 2^13 entries * 64 bytes/entry = 524288 bytes = 512 KB
-    expect(l2.subLabels).toEqual(["Size: 512 KB", "Latency: 10 cycles"]);
+    expect(l2.subLabels).toEqual(["Size: 512 KB", "Latency: 10 cy"]);
 
     // Boxes are laid out left-to-right in slot order.
     expect(l1.x).toBeLessThan(l2.x);

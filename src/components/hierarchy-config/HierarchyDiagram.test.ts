@@ -62,23 +62,28 @@ describe("HierarchyDiagram — click animation", () => {
   });
 });
 
-describe("HierarchyDiagram — text contrast", () => {
+describe("HierarchyDiagram — box colors", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
   });
 
-  it("gives colored boxes (cache/RAM/DISK) light text and neutral boxes dark text", () => {
+  it("gives each box its own --box-hue/--box-chroma custom properties, driving the CSS oklch() color", () => {
     const store = useHierarchyConfigStore();
     store.setVmEnabled(true);
     store.createLevelAt(10);
     const { container } = render(HierarchyDiagram);
 
-    const cpuLabel = container.querySelector('[data-box-id="cpu"] .hierarchy-diagram-box-label')!;
-    expect(cpuLabel.getAttribute("fill")).toBe("var(--text)");
+    const cpu = container.querySelector('[data-box-id="cpu"]') as HTMLElement;
+    expect(cpu.style.getPropertyValue("--box-hue")).toBe("15");
+    expect(cpu.style.getPropertyValue("--box-chroma")).toBe("0.07");
+
+    const ram = container.querySelector('[data-box-id="ram"]') as HTMLElement;
+    expect(ram.style.getPropertyValue("--box-hue")).toBe("255");
 
     // Cache level ids are randomly generated (crypto.randomUUID()), so we
     // locate the L1 box by its label text rather than by a hardcoded id.
-    const cacheLabel = screen.getByText("L1");
-    expect(cacheLabel.getAttribute("fill")).toBe("var(--background)");
+    const cacheGroup = screen.getByText("L1").closest("g")!;
+    expect(cacheGroup.style.getPropertyValue("--box-hue")).toBe("45");
+    expect(cacheGroup.style.getPropertyValue("--box-chroma")).toBe("0.09");
   });
 });
