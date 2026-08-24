@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -11,6 +11,8 @@ import ConfirmModal from "./ui/ConfirmModal.vue";
 import { useHierarchyConfigStore } from "../stores/hierarchyConfig";
 import CompileConfigForm from "./compile-config/CompileConfigForm.vue";
 import { useCompileConfigStore } from "../stores/compileConfig";
+import SimulationToolbar from "./simulation/SimulationToolbar.vue";
+import { useSimulationStore } from "../stores/simulation";
 
 // TODO: in the future this list should come from the backend
 const languages = ["RISC-V"];
@@ -30,6 +32,7 @@ type RiscvExtension = "M" | "F" | "D" | "Q";
 
 const hierarchyConfigStore = useHierarchyConfigStore();
 const compileConfigStore = useCompileConfigStore();
+const simulationStore = useSimulationStore();
 const riscvBase = computed({
   get: () => hierarchyConfigStore.isa,
   set: (value) => hierarchyConfigStore.setIsa(value),
@@ -66,11 +69,48 @@ const gutterRef = ref<HTMLDivElement | null>(null);
 
 const lineCount = computed(() => code.value.split("\n").length);
 
+const scrollTop = ref(0);
+
 function syncScroll() {
   if (textareaRef.value && gutterRef.value) {
     gutterRef.value.scrollTop = textareaRef.value.scrollTop;
+    scrollTop.value = textareaRef.value.scrollTop;
   }
 }
+
+const lineHeightPx = ref(20);
+
+// Matches the top padding set on .editor-textarea (0.5rem) so the highlight
+// overlay lines up with the text instead of the top of .editor-body.
+const TEXTAREA_TOP_PADDING_PX = 8;
+
+function measureLineHeight() {
+  if (!gutterRef.value) return;
+  const firstLine = gutterRef.value.querySelector(".editor-gutter-line");
+  if (firstLine) {
+    lineHeightPx.value = (firstLine as HTMLElement).getBoundingClientRect().height;
+  } else if (lineCount.value > 0) {
+    lineHeightPx.value = gutterRef.value.scrollHeight / lineCount.value;
+  }
+}
+
+const currentLineHighlightStyle = computed(() => {
+  if (simulationStore.currentLine === null) return { display: "none" };
+  const top =
+    (simulationStore.currentLine - 1) * lineHeightPx.value - scrollTop.value + TEXTAREA_TOP_PADDING_PX;
+  return {
+    position: "absolute" as const,
+    left: "0",
+    right: "0",
+    top: `${top}px`,
+    height: `${lineHeightPx.value}px`,
+    background: "var(--accent)",
+    opacity: "0.15",
+    pointerEvents: "none" as const,
+  };
+});
+
+watch(lineCount, measureLineHeight);
 
 const breakpoints = ref(new Set<number>());
 
@@ -140,7 +180,10 @@ function handleNewFileClick() {
   requestLoad({ kind: "new" });
 }
 
+const isCompiling = ref(false);
+
 async function handleStartClick() {
+  isCompiling.value = true;
   errorCount.value = 0;
   errorOutput.value = "";
 
@@ -149,6 +192,7 @@ async function handleStartClick() {
       error_count: number;
       error_output: string;
       config: unknown;
+      codegen: unknown;
     }>("compile", {
       source: code.value,
       config: {
@@ -163,9 +207,27 @@ async function handleStartClick() {
 
     errorCount.value = result.error_count;
     errorOutput.value = result.error_output;
+
+    if (result.error_count === 0 && result.codegen) {
+      await simulationStore.start(
+        riscvBase.value,
+        result.codegen,
+        {
+          isa: hierarchyConfigStore.isa,
+          vmEnabled: hierarchyConfigStore.vmEnabled,
+          hierarchy: hierarchyConfigStore.hierarchy,
+          tlb: hierarchyConfigStore.tlb,
+          ram: hierarchyConfigStore.ram,
+          disk: hierarchyConfigStore.disk,
+        },
+        Array.from(breakpoints.value),
+      );
+    }
   } catch (err) {
     errorCount.value = 1;
     errorOutput.value = typeof err === "string" ? err : String(err);
+  } finally {
+    isCompiling.value = false;
   }
 }
 
@@ -191,7 +253,9 @@ function handleCancel() {
 }
 
 const editorBodyRef = ref<HTMLDivElement | null>(null);
+const currentLineHighlightRef = ref<HTMLDivElement | null>(null);
 let unlistenDragDrop: (() => void) | null = null;
+let unlistenSimEvents: (() => void) | null = null;
 
 function isPointInEditorBody(physicalX: number, physicalY: number): boolean {
   if (!editorBodyRef.value) return false;
@@ -227,11 +291,16 @@ onMounted(async () => {
       isDragOver.value = false;
     }
   });
+
+  unlistenSimEvents = await simulationStore.listenForEvents();
+
+  measureLineHeight();
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("click", handleDocumentClick);
   unlistenDragDrop?.();
+  unlistenSimEvents?.();
 });
 
 // Exposed for tests only: `languages` currently has a single entry, so
@@ -277,6 +346,7 @@ defineExpose({ selectedLanguage });
       <IconButton
         size="sm"
         ariaLabel="Compilar"
+        :disabled="isCompiling"
         @click="handleStartClick"
       >
         <svg viewBox="0 0 16 16" width="16" height="16">
@@ -284,51 +354,54 @@ defineExpose({ selectedLanguage });
         </svg>
       </IconButton>
 
-      <div class="editor-language-group" ref="optionsMenuRef">
-        <SelectField v-model="selectedLanguage" :options="languageOptions" size="sm" aria-label="Language" />
+      <template v-if="!simulationStore.isActive">
+        <div class="editor-language-group" ref="optionsMenuRef">
+          <SelectField v-model="selectedLanguage" :options="languageOptions" size="sm" aria-label="Language" />
 
-        <IconButton
-          size="sm"
-          ariaLabel="Opciones de compilación"
-          @click.stop="toggleOptionsMenu"
-        >
-          <svg viewBox="0 0 16 16" width="16" height="16">
-            <path fill="currentColor" d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
-            <path
-              fill="currentColor"
-              d="M8 1a1 1 0 0 1 1 1v.6a5.98 5.98 0 0 1 1.7.7l.42-.43a1 1 0 0 1 1.42 1.42l-.43.42c.32.5.56 1.08.7 1.7H13a1 1 0 1 1 0 2h-.19a5.98 5.98 0 0 1-.7 1.7l.43.42a1 1 0 1 1-1.42 1.42l-.42-.43a5.98 5.98 0 0 1-1.7.7V13a1 1 0 1 1-2 0v-.19a5.98 5.98 0 0 1-1.7-.7l-.42.43a1 1 0 1 1-1.42-1.42l.43-.42a5.98 5.98 0 0 1-.7-1.7H3a1 1 0 1 1 0-2h.19c.14-.62.38-1.2.7-1.7l-.43-.42A1 1 0 1 1 4.88 3.3l.42.43a5.98 5.98 0 0 1 1.7-.7V2a1 1 0 0 1 1-1Z"
-            />
-          </svg>
-        </IconButton>
-
-        <div v-if="isOptionsMenuOpen" class="editor-options-menu">
-          <button
-            v-for="base in (['RV32I', 'RV64I'] as const)"
-            :key="base"
-            type="button"
-            class="editor-options-radio"
-            :class="{ 'editor-options-radio-active': riscvBase === base }"
-            @click="selectBase(base)"
+          <IconButton
+            size="sm"
+            ariaLabel="Opciones de compilación"
+            @click.stop="toggleOptionsMenu"
           >
-            {{ base }}
-          </button>
+            <svg viewBox="0 0 16 16" width="16" height="16">
+              <path fill="currentColor" d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
+              <path
+                fill="currentColor"
+                d="M8 1a1 1 0 0 1 1 1v.6a5.98 5.98 0 0 1 1.7.7l.42-.43a1 1 0 0 1 1.42 1.42l-.43.42c.32.5.56 1.08.7 1.7H13a1 1 0 1 1 0 2h-.19a5.98 5.98 0 0 1-.7 1.7l.43.42a1 1 0 1 1-1.42 1.42l-.42-.43a5.98 5.98 0 0 1-1.7.7V13a1 1 0 1 1-2 0v-.19a5.98 5.98 0 0 1-1.7-.7l-.42.43a1 1 0 1 1-1.42-1.42l.43-.42a5.98 5.98 0 0 1-.7-1.7H3a1 1 0 1 1 0-2h.19c.14-.62.38-1.2.7-1.7l-.43-.42A1 1 0 1 1 4.88 3.3l.42.43a5.98 5.98 0 0 1 1.7-.7V2a1 1 0 0 1 1-1Z"
+              />
+            </svg>
+          </IconButton>
 
-          <div class="editor-options-divider"></div>
+          <div v-if="isOptionsMenuOpen" class="editor-options-menu">
+            <button
+              v-for="base in (['RV32I', 'RV64I'] as const)"
+              :key="base"
+              type="button"
+              class="editor-options-radio"
+              :class="{ 'editor-options-radio-active': riscvBase === base }"
+              @click="selectBase(base)"
+            >
+              {{ base }}
+            </button>
 
-          <label
-            v-for="extension in (['M', 'F', 'D', 'Q'] as const)"
-            :key="extension"
-            class="editor-options-checkbox"
-          >
-            <input
-              type="checkbox"
-              :checked="riscvExtensions.has(extension)"
-              @change="toggleExtension(extension)"
-            />
-            {{ extension }}
-          </label>
+            <div class="editor-options-divider"></div>
+
+            <label
+              v-for="extension in (['M', 'F', 'D', 'Q'] as const)"
+              :key="extension"
+              class="editor-options-checkbox"
+            >
+              <input
+                type="checkbox"
+                :checked="riscvExtensions.has(extension)"
+                @change="toggleExtension(extension)"
+              />
+              {{ extension }}
+            </label>
+          </div>
         </div>
-      </div>
+      </template>
+      <SimulationToolbar v-else />
     </div>
 
     <div
@@ -341,12 +414,19 @@ defineExpose({ selectedLanguage });
           v-for="n in lineCount"
           :key="n"
           class="editor-gutter-line"
+          :class="{ 'editor-gutter-line-current': simulationStore.currentLine === n }"
           @click="toggleBreakpoint(n)"
         >
           <span v-if="breakpoints.has(n)" class="editor-breakpoint-dot"></span>
+          <span v-if="simulationStore.currentLine === n" class="editor-current-line-arrow">▶</span>
           {{ n }}
         </div>
       </div>
+      <div
+        class="editor-current-line-highlight"
+        :style="currentLineHighlightStyle"
+        ref="currentLineHighlightRef"
+      ></div>
       <textarea
         ref="textareaRef"
         v-model="code"
@@ -462,9 +542,11 @@ defineExpose({ selectedLanguage });
 }
 
 .editor-body {
+  position: relative;
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
+  overflow: hidden;
 }
 
 .editor-body-drag-over {
@@ -499,6 +581,19 @@ defineExpose({ selectedLanguage });
   height: 6px;
   border-radius: 50%;
   background: #e5484d;
+}
+
+.editor-current-line-arrow {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.6rem;
+  color: var(--accent);
+}
+
+.editor-gutter-line-current {
+  color: var(--accent);
 }
 
 .editor-compile-config {

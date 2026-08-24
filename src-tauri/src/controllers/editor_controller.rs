@@ -6,12 +6,14 @@ use serde::Serialize;
 use crate::models::interpreter::error::{CodegenError, LexError, ParseError, SemanticError};
 use crate::models::interpreter::language::Language;
 use crate::models::interpreter::riscv::{CodegenConfig, RiscV, RiscvConfig};
+use crate::models::interpreter::riscv::codegen::ir::CodegenOutput;
 
 #[derive(Debug, Serialize)]
 pub struct CompileResult {
     pub error_count: usize,
     pub error_output: String,
     pub config: RiscvConfig,
+    pub codegen: Option<CodegenOutput>,
 }
 
 enum CompileErrorEntry {
@@ -97,6 +99,14 @@ pub fn compile(
 
     entries.sort_by_key(line_col);
 
+    let codegen = if entries.is_empty() {
+        fs::read_to_string(&codegen_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str(&contents).ok())
+    } else {
+        None
+    };
+
     let error_output = entries
         .iter()
         .map(format_entry)
@@ -107,6 +117,7 @@ pub fn compile(
         error_count: entries.len(),
         error_output,
         config,
+        codegen,
     })
 }
 
@@ -170,5 +181,19 @@ mod tests {
         assert!(codegen_result
             .error_output
             .contains("instruction found in .data section"));
+
+        // Test codegen output on success
+        let success_config = RiscvConfig { base: Base::Rv32i, extensions: HashSet::new() };
+        let success_result = compile("add x1, x2, x3\n".to_string(), success_config, None).unwrap();
+        assert_eq!(success_result.error_count, 0);
+        let codegen = success_result.codegen.expect("successful compile should return codegen");
+        assert_eq!(codegen.entries.len(), 1);
+        assert_eq!(codegen.entries[0].address, codegen.layout.text_base);
+
+        // Test codegen output on error
+        let error_config = RiscvConfig { base: Base::Rv32i, extensions: HashSet::new() };
+        let error_result = compile("add x1, @x2, x3\n".to_string(), error_config, None).unwrap();
+        assert!(error_result.error_count > 0);
+        assert!(error_result.codegen.is_none());
     }
 }
