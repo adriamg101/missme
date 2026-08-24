@@ -27,7 +27,7 @@ const safeDirtyPercent = computed(() =>
   Number.isFinite(props.config.dirtyPercent) ? props.config.dirtyPercent : defaultCacheConfig().dirtyPercent,
 );
 
-const replacementOptions = ["LRU", "FIFO", "Random", "LFU", "PLRU"].map((value) => ({ value, label: value }));
+const replacementOptions = ["LRU", "FIFO", "Random", "LFU"].map((value) => ({ value, label: value }));
 const writePolicyOptions = [
   { value: "write-through", label: "write-through" },
   { value: "write-back", label: "write-back" },
