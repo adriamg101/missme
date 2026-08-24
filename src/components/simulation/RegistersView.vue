@@ -49,17 +49,17 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="simulation-registers-view">
-    <div class="simulation-registers-group">
-      <div v-for="(value, i) in intRegs" :key="`x${i}`" class="simulation-register-row">
-        <span class="simulation-register-name">x{{ i }}</span>
-        <span class="simulation-register-value">{{ value }}</span>
-      </div>
+    <div class="simulation-registers-grid">
+      <template v-for="(value, i) in intRegs" :key="`x${i}`">
+        <span class="simulation-register-cell simulation-register-name">x{{ i }}</span>
+        <span class="simulation-register-cell">{{ value }}</span>
+      </template>
     </div>
-    <div class="simulation-registers-group">
-      <div v-for="(value, i) in fpRegs" :key="`f${i}`" class="simulation-register-row">
-        <span class="simulation-register-name">f{{ i }}</span>
-        <span class="simulation-register-value">{{ value }}</span>
-      </div>
+    <div class="simulation-registers-grid">
+      <template v-for="(value, i) in fpRegs" :key="`f${i}`">
+        <span class="simulation-register-cell simulation-register-name">f{{ i }}</span>
+        <span class="simulation-register-cell">{{ value }}</span>
+      </template>
     </div>
   </div>
 </template>
@@ -72,22 +72,27 @@ onBeforeUnmount(() => {
   overflow-y: auto;
 }
 
-.simulation-registers-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+.simulation-registers-grid {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr;
+  align-items: stretch;
+  font-size: 0.75rem;
+  font-family: monospace;
   flex: 1 1 0;
 }
 
-.simulation-register-row {
+.simulation-register-cell {
   display: flex;
-  justify-content: space-between;
-  font-size: 0.75rem;
-  font-family: monospace;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--secondary);
+  padding: 0.15rem 0.35rem;
+  box-sizing: border-box;
 }
 
 .simulation-register-name {
   color: var(--text-muted, var(--text));
   opacity: 0.7;
+  justify-content: flex-start;
 }
 </style>

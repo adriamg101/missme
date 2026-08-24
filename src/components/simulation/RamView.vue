@@ -57,6 +57,12 @@ function hex(value: number): string {
   return (value >>> 0).toString(16);
 }
 
+const wordsPerBlock = computed(() => RAM_BLOCK_SIZE / 4);
+const rowGridStyle = computed(() => ({
+  display: "grid" as const,
+  gridTemplateColumns: `8rem repeat(${wordsPerBlock.value}, minmax(4rem, auto))`,
+}));
+
 let unlisten: (() => void) | null = null;
 let disposed = false;
 
@@ -80,20 +86,24 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="simulation-ram-view" ref="containerRef" @scroll="onScroll">
+    <div class="simulation-ram-grid-header" :style="rowGridStyle">
+      <span class="simulation-ram-cell simulation-ram-cell-header">Adreca</span>
+      <span v-for="wi in wordsPerBlock" :key="wi" class="simulation-ram-cell simulation-ram-cell-header">W{{ wi - 1 }}</span>
+    </div>
     <div class="simulation-ram-spacer" :style="{ height: `${range.totalHeight}px`, position: 'relative' }">
       <div
         v-for="index in Array.from({ length: Math.max(0, range.end - range.start) }, (_, i) => range.start + i)"
         :key="index"
         class="simulation-ram-row"
-        :style="{ position: 'absolute', top: `${index * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }"
+        :style="{ position: 'absolute', top: `${index * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px`, ...rowGridStyle }"
       >
         <template v-if="blocks.get(index)">
-          <span class="simulation-ram-address">0x{{ hex(blocks.get(index)!.address) }}</span>
+          <span class="simulation-ram-cell simulation-ram-address">0x{{ hex(blocks.get(index)!.address) }}</span>
           <span
             v-for="(word, wi) in blocks.get(index)!.words"
             :key="wi"
-            class="simulation-ram-word"
-            :class="{ 'simulation-ram-word-empty': !blocks.get(index)!.populated }"
+            class="simulation-ram-cell"
+            :class="{ 'simulation-ram-cell-empty': !blocks.get(index)!.populated }"
           >{{ hex(word) }}</span>
         </template>
       </div>
@@ -106,25 +116,43 @@ onBeforeUnmount(() => {
   padding: 0.5rem;
   font-size: 0.75rem;
   font-family: monospace;
-  overflow-y: auto;
+  overflow: auto;
   height: 100%;
   box-sizing: border-box;
 }
 
+.simulation-ram-grid-header {
+  align-items: stretch;
+  position: sticky;
+  top: 0;
+  background: var(--background);
+  z-index: 1;
+}
+
 .simulation-ram-row {
+  align-items: stretch;
+  width: 100%;
+}
+
+.simulation-ram-cell {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  width: 100%;
+  justify-content: center;
+  border: 1px solid var(--secondary);
+  padding: 0.15rem 0.35rem;
+  box-sizing: border-box;
+}
+
+.simulation-ram-cell-header {
+  font-weight: 600;
+  opacity: 0.75;
 }
 
 .simulation-ram-address {
   color: var(--text-muted, var(--text));
-  opacity: 0.7;
-  min-width: 5rem;
 }
 
-.simulation-ram-word-empty {
+.simulation-ram-cell-empty {
   opacity: 0.3;
 }
 </style>

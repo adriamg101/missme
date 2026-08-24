@@ -47,6 +47,16 @@ function hex(value: number): string {
   return (value >>> 0).toString(16);
 }
 
+const wayColumnCount = computed(() => 3 + (snapshot.value?.wordsPerLine ?? 0));
+const rowGridStyle = computed(() => ({
+  display: "grid" as const,
+  gridTemplateColumns: `4rem repeat(${snapshot.value?.associativity ?? 0}, auto)`,
+}));
+const wayGridStyle = computed(() => ({
+  display: "grid" as const,
+  gridTemplateColumns: `repeat(${wayColumnCount.value}, minmax(2.75rem, auto))`,
+}));
+
 async function loadLevel() {
   if (levelIndex.value < 0) {
     snapshot.value = null;
@@ -87,20 +97,32 @@ watch(() => [props.levelId, props.side], loadLevel);
   <div class="simulation-cache-level-view" ref="containerRef" @scroll="onScroll">
     <template v-if="snapshot">
       <div class="simulation-cache-header">Associativitat: {{ snapshot.associativity }} | Mida de bloc: {{ snapshot.blockSize }}</div>
+      <div class="simulation-cache-grid-header" :style="rowGridStyle">
+        <span class="simulation-cache-cell simulation-cache-cell-header">Set</span>
+        <div v-for="w in snapshot.associativity" :key="w" class="simulation-cache-way" :style="wayGridStyle">
+          <span class="simulation-cache-cell simulation-cache-cell-header">D</span>
+          <span class="simulation-cache-cell simulation-cache-cell-header">LRU</span>
+          <span class="simulation-cache-cell simulation-cache-cell-header">Tag</span>
+          <span v-for="wi in snapshot.wordsPerLine" :key="wi" class="simulation-cache-cell simulation-cache-cell-header">W{{ wi - 1 }}</span>
+        </div>
+      </div>
       <div class="simulation-cache-spacer" :style="{ height: `${range.totalHeight}px`, position: 'relative' }">
         <div
           v-for="set in visibleSets"
           :key="set.setIndex"
           class="simulation-cache-set-row"
-          :style="{ position: 'absolute', top: `${set.setIndex * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }"
+          :style="{ position: 'absolute', top: `${set.setIndex * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px`, ...rowGridStyle }"
         >
-          <span class="simulation-cache-set-index">{{ set.setIndex }}</span>
-          <div v-for="(way, wi) in set.ways" :key="wi" class="simulation-cache-way" :class="{ 'simulation-cache-way-empty': !way.valid }">
+          <span class="simulation-cache-cell simulation-cache-set-index">{{ set.setIndex }}</span>
+          <div v-for="(way, wi) in set.ways" :key="wi" class="simulation-cache-way" :class="{ 'simulation-cache-way-empty': !way.valid }" :style="wayGridStyle">
             <template v-if="way.valid">
-              <span class="simulation-cache-way-dirty">{{ way.dirty ? "D" : "" }}</span>
-              <span class="simulation-cache-way-lru">{{ way.recencyRank }}</span>
-              <span class="simulation-cache-way-tag">{{ hex(way.tag) }}</span>
-              <span v-for="(word, wj) in way.words" :key="wj" class="simulation-cache-word">{{ hex(word) }}</span>
+              <span class="simulation-cache-cell">{{ way.dirty ? "D" : "-" }}</span>
+              <span class="simulation-cache-cell">{{ way.recencyRank }}</span>
+              <span class="simulation-cache-cell">{{ hex(way.tag) }}</span>
+              <span v-for="(word, wj) in way.words" :key="wj" class="simulation-cache-cell">{{ hex(word) }}</span>
+            </template>
+            <template v-else>
+              <span v-for="n in wayColumnCount" :key="n" class="simulation-cache-cell"></span>
             </template>
           </div>
         </div>
@@ -125,23 +147,38 @@ watch(() => [props.levelId, props.side], loadLevel);
   margin-bottom: 0.5rem;
 }
 
+.simulation-cache-grid-header {
+  align-items: stretch;
+  position: sticky;
+  top: 0;
+  background: var(--background);
+  z-index: 1;
+}
+
 .simulation-cache-set-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
+  align-items: stretch;
   width: 100%;
 }
 
 .simulation-cache-way {
-  display: flex;
-  gap: 0.3rem;
-  padding: 0.2rem 0.4rem;
-  border: 1px solid var(--secondary);
-  border-radius: 4px;
-  min-width: 6rem;
+  align-items: stretch;
 }
 
-.simulation-cache-way-empty {
-  opacity: 0.3;
+.simulation-cache-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--secondary);
+  padding: 0.15rem 0.35rem;
+  box-sizing: border-box;
+}
+
+.simulation-cache-cell-header {
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.simulation-cache-way-empty .simulation-cache-cell {
+  opacity: 0.25;
 }
 </style>
