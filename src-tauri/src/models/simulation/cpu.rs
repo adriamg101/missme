@@ -1002,6 +1002,10 @@ impl CpuSimulator for RiscvCpuSimulator {
     fn fp_register(&self, id: RegisterId) -> f64 {
         self.read_fp_register(id)
     }
+
+    fn current_source_line(&self) -> Option<usize> {
+        self.instructions.fetch(self.pc).map(|entry| entry.source_line)
+    }
 }
 
 #[cfg(test)]
@@ -2372,5 +2376,29 @@ mod tests {
         sim.f_registers[2] = 2.5;
         sim.step_action();
         assert_eq!(sim.fp_register(RegisterId(1)), 2.5);
+    }
+
+    #[test]
+    fn current_source_line_reflects_the_next_instruction_to_run() {
+        let entry = IrEntry {
+            address: 0x1000,
+            kind: InstructionKind::Add,
+            operands: vec![
+                Operand::Register(RegisterKind::X(1)),
+                Operand::Register(RegisterKind::X(2)),
+                Operand::Register(RegisterKind::X(3)),
+            ],
+            bytecode: 0,
+            source_line: 42,
+            source_column: 1,
+        };
+        let sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
+        assert_eq!(sim.current_source_line(), Some(42));
+    }
+
+    #[test]
+    fn current_source_line_is_none_when_finished() {
+        let sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![]), mem());
+        assert_eq!(sim.current_source_line(), None);
     }
 }

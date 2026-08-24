@@ -1,0 +1,159 @@
+use std::collections::HashSet;
+
+use super::{Action, CpuSimulator};
+
+pub struct SimulationSession {
+    simulator: Box<dyn CpuSimulator + Send>,
+    breakpoints: HashSet<usize>,
+}
+
+impl SimulationSession {
+    pub fn new(simulator: Box<dyn CpuSimulator + Send>, breakpoints: HashSet<usize>) -> Self {
+        Self { simulator, breakpoints }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.simulator.is_finished()
+    }
+
+    pub fn pc(&self) -> u64 {
+        self.simulator.pc()
+    }
+
+    pub fn is_at_breakpoint(&self) -> bool {
+        match self.simulator.current_source_line() {
+            Some(line) => self.breakpoints.contains(&line),
+            None => false,
+        }
+    }
+
+    /// The source line of the instruction about to run (the same value
+    /// `is_at_breakpoint()` reads internally), exposed so the controller
+    /// can remember "the line we paused at" and use it to decide when to
+    /// re-arm the breakpoint check after a resume.
+    pub fn current_source_line(&self) -> Option<usize> {
+        self.simulator.current_source_line()
+    }
+
+    pub fn step_action(&mut self) -> Option<Action> {
+        if self.simulator.is_finished() {
+            return None;
+        }
+        Some(self.simulator.step_action())
+    }
+
+    pub fn step_instruction(&mut self) -> Vec<Action> {
+        let mut actions = Vec::new();
+        loop {
+            match self.step_action() {
+                None => break,
+                Some(action) => {
+                    let complete = action.instruction_complete;
+                    actions.push(action);
+                    if complete {
+                        break;
+                    }
+                }
+            }
+        }
+        actions
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::interpreter::riscv::codegen::ir::{CodegenOutput, IrEntry, MemoryLayout};
+    use crate::models::interpreter::riscv::lexer::token::{InstructionKind, RegisterKind};
+    use crate::models::interpreter::riscv::parser::ast::Operand;
+    use crate::models::interpreter::riscv::Base;
+    use crate::models::simulation::cpu::RiscvCpuSimulator;
+    use crate::models::simulation::memory::backing_store::DataStore;
+    use crate::models::simulation::memory::config::{DiskConfig, HierarchyConfig, InclusionPolicy, RamConfig, TlbConfig, TlbReplacementPolicy};
+    use crate::models::simulation::memory::hierarchy::MemoryHierarchySimulator;
+    use std::collections::{HashMap, HashSet};
+
+    fn no_cache_hierarchy_config() -> HierarchyConfig {
+        HierarchyConfig {
+            isa: Base::Rv32i,
+            vm_enabled: false,
+            hierarchy: vec![],
+            tlb: TlbConfig { page_size: 4096, page_table_levels: 1, page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru },
+            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
+            disk: DiskConfig { latency: 10000 },
+        }
+    }
+
+    fn mem() -> MemoryHierarchySimulator {
+        MemoryHierarchySimulator::new(no_cache_hierarchy_config(), DataStore::new(64), DataStore::new(64))
+    }
+
+    fn add_entry(address: u32, line: usize) -> IrEntry {
+        IrEntry {
+            address,
+            kind: InstructionKind::Add,
+            operands: vec![Operand::Register(RegisterKind::X(1)), Operand::Register(RegisterKind::X(2)), Operand::Register(RegisterKind::X(3))],
+            bytecode: 0,
+            source_line: line,
+            source_column: 1,
+        }
+    }
+
+    fn codegen(entries: Vec<IrEntry>) -> CodegenOutput {
+        CodegenOutput {
+            layout: MemoryLayout { text_base: 0x1000, data_base: 0x2000, labels: HashMap::new(), initial_data: vec![] },
+            entries,
+        }
+    }
+
+    fn sim(entries: Vec<IrEntry>) -> Box<dyn CpuSimulator + Send> {
+        Box::new(RiscvCpuSimulator::new(Base::Rv32i, codegen(entries), mem()))
+    }
+
+    #[test]
+    fn step_action_returns_none_once_finished() {
+        let mut session = SimulationSession::new(sim(vec![]), HashSet::new());
+        assert!(session.is_finished());
+        assert!(session.step_action().is_none());
+    }
+
+    #[test]
+    fn step_action_advances_and_returns_the_action() {
+        let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
+        let action = session.step_action().unwrap();
+        assert!(action.instruction_complete);
+        assert!(session.is_finished());
+    }
+
+    #[test]
+    fn is_at_breakpoint_is_true_only_for_a_configured_line_before_it_runs() {
+        let session_with_bp = SimulationSession::new(sim(vec![add_entry(0x1000, 5)]), HashSet::from([5]));
+        assert!(session_with_bp.is_at_breakpoint());
+
+        let session_without_bp = SimulationSession::new(sim(vec![add_entry(0x1000, 5)]), HashSet::from([99]));
+        assert!(!session_without_bp.is_at_breakpoint());
+    }
+
+    #[test]
+    fn is_at_breakpoint_is_false_once_finished() {
+        let session = SimulationSession::new(sim(vec![]), HashSet::from([1]));
+        assert!(!session.is_at_breakpoint());
+    }
+
+    #[test]
+    fn step_instruction_collects_every_action_for_one_instruction() {
+        let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1), add_entry(0x1004, 2)]), HashSet::new());
+        let actions = session.step_instruction();
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].instruction_complete);
+        assert!(!session.is_finished());
+        assert_eq!(session.step_instruction().len(), 1);
+        assert!(session.is_finished());
+    }
+
+    #[test]
+    fn step_instruction_on_a_finished_session_returns_an_empty_vec() {
+        let mut session = SimulationSession::new(sim(vec![]), HashSet::new());
+        assert_eq!(session.step_instruction(), vec![]);
+    }
+}
