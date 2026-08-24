@@ -25,6 +25,8 @@ pub fn run() {
             controllers::simulation_controller::stop_simulation,
             controllers::simulation_controller::set_speed,
             controllers::simulation_controller::get_registers,
+            controllers::simulation_controller::get_cache_level,
+            controllers::simulation_controller::get_ram_blocks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

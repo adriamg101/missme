@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from "vue"
+import { listen } from "@tauri-apps/api/event"
 import MainLayout from "./components/MainLayout.vue"
 import Editor from "./components/Editor.vue"
 import TitleBar from "./components/TitleBar.vue"
@@ -6,22 +8,79 @@ import HierarchyConfigPanel from "./components/hierarchy-config/HierarchyConfigP
 import HierarchyDiagram from "./components/hierarchy-config/HierarchyDiagram.vue"
 import SimulationInfoPanel from "./components/simulation/SimulationInfoPanel.vue"
 import { useSimulationStore } from "./stores/simulation"
+import { useHierarchyConfigStore } from "./stores/hierarchyConfig"
 import type { DiagramBox } from "./lib/hierarchy/diagram"
 
 const simulationStore = useSimulationStore()
+const hierarchyConfigStore = useHierarchyConfigStore()
+const diagramRef = ref<InstanceType<typeof HierarchyDiagram> | null>(null)
+
+function levelIdAndSideFromBoxId(boxId: string): { levelId: string; side: "unified" | "i" | "d" } {
+  if (boxId.endsWith("-i")) return { levelId: boxId.slice(0, -2), side: "i" }
+  if (boxId.endsWith("-d")) return { levelId: boxId.slice(0, -2), side: "d" }
+  return { levelId: boxId, side: "unified" }
+}
 
 function handleBoxClick(box: DiagramBox) {
   if (!simulationStore.isActive) return
   if (box.kind === "reg") {
     simulationStore.openView({ kind: "registers" })
   } else if (box.kind === "cache") {
-    const levelId = box.id.replace(/-[id]$/, "")
-    simulationStore.openView({ kind: "cache", levelId })
+    const { levelId, side } = levelIdAndSideFromBoxId(box.id)
+    simulationStore.openView({ kind: "cache", levelId, side })
   } else if (box.kind === "ram") {
     simulationStore.openView({ kind: "ram" })
   }
   // tlb/disk: no dedicated view this epic, deliberate no-op.
 }
+
+function boxIdsForLevel(levelIndex: number): string[] {
+  const level = hierarchyConfigStore.hierarchy[levelIndex]
+  if (!level) return []
+  return level.harvard ? [`${level.id}-i`, `${level.id}-d`] : [level.id]
+}
+
+let pendingClear = false
+
+function handleSimEvent(event: { payload: Record<string, unknown> }) {
+  const kind = event.payload.kind as string
+
+  if (pendingClear && kind !== "instruction_complete") {
+    diagramRef.value?.clearAccessStates()
+    pendingClear = false
+  }
+
+  if (kind === "cache_access") {
+    const levelIndex = event.payload.levelIndex as number
+    const outcome = event.payload.outcome as "hit" | "miss"
+    for (const boxId of boxIdsForLevel(levelIndex)) {
+      diagramRef.value?.triggerHitMiss(boxId, outcome)
+    }
+  } else if (kind === "ram_access") {
+    diagramRef.value?.triggerReadWrite("ram", "read")
+  } else if (kind === "disk_access") {
+    diagramRef.value?.triggerReadWrite("disk", "read")
+  } else if (kind === "tlb_access") {
+    const outcome = event.payload.outcome as "hit" | "miss"
+    diagramRef.value?.triggerHitMiss("tlb", outcome)
+  } else if (kind === "instruction_complete") {
+    pendingClear = true
+  }
+}
+
+let unlistenSimEvent: (() => void) | null = null
+let disposed = false
+
+onMounted(async () => {
+  const stopListening = await listen<Record<string, unknown>>("sim:event", handleSimEvent)
+  if (disposed) stopListening()
+  else unlistenSimEvent = stopListening
+})
+
+onBeforeUnmount(() => {
+  disposed = true
+  unlistenSimEvent?.()
+})
 </script>
 
 <template>
@@ -34,7 +93,7 @@ function handleBoxClick(box: DiagramBox) {
         </template>
 
         <template #top-right>
-          <HierarchyDiagram @box-click="handleBoxClick"></HierarchyDiagram>
+          <HierarchyDiagram ref="diagramRef" @box-click="handleBoxClick"></HierarchyDiagram>
         </template>
 
         <template #bottom-right>

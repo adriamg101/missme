@@ -9,7 +9,9 @@ use crate::models::interpreter::riscv::Base;
 use crate::models::simulation::cpu::RiscvCpuSimulator;
 use crate::models::simulation::memory::backing_store::DataStore;
 use crate::models::simulation::memory::config::HierarchyConfig;
-use crate::models::simulation::memory::hierarchy::{LevelId, LevelOutcome, MemoryHierarchySimulator};
+use crate::models::simulation::memory::hierarchy::{
+    CacheLevelSnapshot, CacheSide, LevelId, LevelOutcome, MemoryHierarchySimulator, RamBlockSnapshot,
+};
 use crate::models::simulation::session::SimulationSession;
 use crate::models::simulation::{Action, ActionKind};
 
@@ -262,6 +264,51 @@ fn snapshot_registers(state: &SessionState) -> Result<RegisterSnapshot, String> 
     let int = (0..32u8).map(|i| session.register(crate::models::simulation::RegisterId(i))).collect();
     let fp = (0..32u8).map(|i| session.fp_register(crate::models::simulation::RegisterId(i))).collect();
     Ok(RegisterSnapshot { int, fp })
+}
+
+fn parse_cache_side(side: &str) -> Result<CacheSide, String> {
+    match side {
+        "unified" => Ok(CacheSide::Unified),
+        "i" => Ok(CacheSide::Instruction),
+        "d" => Ok(CacheSide::Data),
+        other => Err(format!("unknown cache side '{other}'")),
+    }
+}
+
+fn snapshot_cache_level(state: &SessionState, level_index: usize, side: String) -> Result<CacheLevelSnapshot, String> {
+    const MAX_SETS: u64 = 4096;
+    let cache_side = parse_cache_side(&side)?;
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no active simulation session")?;
+    if let Some(info) = session.memory().cache_level_info(level_index, cache_side) {
+        if info.num_sets > MAX_SETS {
+            return Err(format!("level {level_index} has {} sets, exceeding the maximum of {MAX_SETS}", info.num_sets));
+        }
+    }
+    session
+        .memory()
+        .cache_level_snapshot(level_index, cache_side)
+        .ok_or_else(|| format!("level {level_index} has no {side} cache"))
+}
+
+#[tauri::command]
+pub fn get_cache_level(state: tauri::State<SessionState>, level_index: usize, side: String) -> Result<CacheLevelSnapshot, String> {
+    snapshot_cache_level(&state, level_index, side)
+}
+
+fn snapshot_ram_blocks(state: &SessionState, start_address: u64, count: u32) -> Result<Vec<RamBlockSnapshot>, String> {
+    const MAX_COUNT: u32 = 512;
+    if count > MAX_COUNT {
+        return Err(format!("count {count} exceeds the maximum of {MAX_COUNT}"));
+    }
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no active simulation session")?;
+    Ok(session.memory().ram_blocks(start_address, count))
+}
+
+#[tauri::command]
+pub fn get_ram_blocks(state: tauri::State<SessionState>, start_address: u64, count: u32) -> Result<Vec<RamBlockSnapshot>, String> {
+    snapshot_ram_blocks(&state, start_address, count)
 }
 
 #[tauri::command]
@@ -863,5 +910,62 @@ mod tests {
         let state = SessionState::default();
         let result = snapshot_registers(&state);
         assert_eq!(result.unwrap_err(), "no active simulation session");
+    }
+
+    #[test]
+    fn snapshot_cache_level_errors_with_no_active_session() {
+        let state = SessionState::default();
+        let result = snapshot_cache_level(&state, 0, "unified".to_string());
+        assert_eq!(result.unwrap_err(), "no active simulation session");
+    }
+
+    #[test]
+    fn snapshot_ram_blocks_errors_with_no_active_session() {
+        let state = SessionState::default();
+        let result = snapshot_ram_blocks(&state, 0, 1);
+        assert_eq!(result.unwrap_err(), "no active simulation session");
+    }
+
+    fn oversized_cache_hierarchy_config() -> HierarchyConfig {
+        // exp: 20, associativity: 1 -> num_sets = 2^20 = 1,048,576, well
+        // over the MAX_SETS cap `snapshot_cache_level` enforces.
+        HierarchyConfig {
+            isa: Base::Rv32i,
+            vm_enabled: false,
+            hierarchy: vec![crate::models::simulation::memory::config::Level {
+                id: "l1".into(),
+                harvard: false,
+                unified: Some(crate::models::simulation::memory::config::CacheEntry {
+                    exp: 20,
+                    config: crate::models::simulation::memory::config::CacheConfig {
+                        block_size: 64,
+                        associativity: 1,
+                        replacement: crate::models::simulation::memory::config::ReplacementPolicy::Lru,
+                        write_policy: crate::models::simulation::memory::config::WritePolicy::WriteBack,
+                        write_allocate: true,
+                        hit_time: 1,
+                        dirty_percent: 0,
+                    },
+                }),
+                i: None,
+                d: None,
+                inclusion: crate::models::simulation::memory::config::InclusionPolicy::Nine,
+                bus_width: 32,
+            }],
+            tlb: TlbConfig { page_size: 4096, page_table_levels: 1, page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru },
+            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
+            disk: DiskConfig { latency: 10000 },
+        }
+    }
+
+    #[test]
+    fn snapshot_cache_level_rejects_a_level_with_too_many_sets() {
+        let state = SessionState::default();
+        let session = build_session(Base::Rv32i, empty_codegen(), oversized_cache_hierarchy_config(), 64, 64, vec![]);
+        *state.session.lock().unwrap() = Some(session);
+
+        let result = snapshot_cache_level(&state, 0, "unified".to_string());
+        let err = result.unwrap_err();
+        assert!(err.contains("exceeding the maximum"), "unexpected error message: {err}");
     }
 }

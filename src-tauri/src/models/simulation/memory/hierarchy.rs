@@ -1,6 +1,7 @@
 use super::backing_store::DataStore;
 use super::cache::SetAssociativeCache;
 use super::config::{CacheConfig, CacheEntry, HierarchyConfig, Level, WritePolicy};
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessKind {
@@ -40,6 +41,64 @@ pub struct LevelResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessResult {
     pub load_bytes: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheSide {
+    Unified,
+    Instruction,
+    Data,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheLevelInfo {
+    pub associativity: usize,
+    pub block_size: u32,
+    pub num_sets: u64,
+    pub words_per_line: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheWaySnapshot {
+    pub valid: bool,
+    pub dirty: bool,
+    pub tag: u64,
+    pub recency_rank: Option<usize>,
+    pub words: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheSetSnapshot {
+    pub set_index: u64,
+    pub ways: Vec<CacheWaySnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheLevelSnapshot {
+    pub associativity: usize,
+    pub block_size: u32,
+    pub num_sets: u64,
+    pub words_per_line: u32,
+    pub sets: Vec<CacheSetSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RamBlockSnapshot {
+    pub address: u64,
+    pub words: Vec<u32>,
+    pub populated: bool,
+}
+
+fn entry_slot_for_side(side: CacheSide) -> EntrySlot {
+    match side {
+        CacheSide::Unified => EntrySlot::Unified,
+        CacheSide::Instruction => EntrySlot::I,
+        CacheSide::Data => EntrySlot::D,
+    }
 }
 
 struct CacheLevelState {
@@ -85,6 +144,14 @@ impl CacheLevelState {
             EntrySlot::Unified => self.unified.as_mut().expect("slot_for chose Unified because it is Some"),
             EntrySlot::I => self.i.as_mut().expect("slot_for chose I because it is Some"),
             EntrySlot::D => self.d.as_mut().expect("slot_for chose D because it is Some"),
+        }
+    }
+
+    fn entry(&self, slot: &EntrySlot) -> Option<&(CacheConfig, u32, SetAssociativeCache)> {
+        match slot {
+            EntrySlot::Unified => self.unified.as_ref(),
+            EntrySlot::I => self.i.as_ref(),
+            EntrySlot::D => self.d.as_ref(),
         }
     }
 }
@@ -150,6 +217,71 @@ impl MemoryHierarchySimulator {
         self.in_progress = None;
         self.cursor = None;
         self.finished_result.take().expect("the access hasn't finished yet")
+    }
+
+    pub fn cache_level_info(&self, level_index: usize, side: CacheSide) -> Option<CacheLevelInfo> {
+        let level_state = self.levels.get(level_index)?;
+        let slot = entry_slot_for_side(side);
+        let (cache_config, exp, cache) = level_state.entry(&slot)?;
+        let associativity = cache.associativity();
+        let num_sets = ((1u64 << *exp) / (associativity as u64).max(1)).max(1);
+        let words_per_line = (cache_config.block_size / 4).max(1);
+        Some(CacheLevelInfo { associativity, block_size: cache_config.block_size, num_sets, words_per_line })
+    }
+
+    fn cache_set_ways(&self, level_index: usize, side: CacheSide, set_index: u64, info: &CacheLevelInfo) -> Vec<CacheWaySnapshot> {
+        let level_state = &self.levels[level_index];
+        let slot = entry_slot_for_side(side);
+        let (_, _, cache) = level_state.entry(&slot).expect("caller already confirmed this side exists via cache_level_info");
+        cache
+            .snapshot_set(set_index)
+            .into_iter()
+            .map(|line| {
+                let words = if line.valid {
+                    let base_address = line.tag * info.block_size as u64;
+                    self.ram
+                        .read_block(base_address, info.block_size as usize)
+                        .chunks(4)
+                        .map(|chunk| {
+                            let mut bytes = [0u8; 4];
+                            bytes[..chunk.len()].copy_from_slice(chunk);
+                            u32::from_le_bytes(bytes)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                CacheWaySnapshot { valid: line.valid, dirty: line.dirty, tag: line.tag, recency_rank: line.recency_rank, words }
+            })
+            .collect()
+    }
+
+    pub fn cache_level_snapshot(&self, level_index: usize, side: CacheSide) -> Option<CacheLevelSnapshot> {
+        let info = self.cache_level_info(level_index, side)?;
+        let sets = (0..info.num_sets)
+            .map(|set_index| CacheSetSnapshot { set_index, ways: self.cache_set_ways(level_index, side, set_index, &info) })
+            .collect();
+        Some(CacheLevelSnapshot { associativity: info.associativity, block_size: info.block_size, num_sets: info.num_sets, words_per_line: info.words_per_line, sets })
+    }
+
+    pub fn ram_blocks(&self, start_address: u64, count: u32) -> Vec<RamBlockSnapshot> {
+        let block_size = self.ram.block_size() as u64;
+        (0..count as u64)
+            .map(|i| {
+                let address = start_address + i * block_size;
+                let words = self
+                    .ram
+                    .read_block(address, block_size as usize)
+                    .chunks(4)
+                    .map(|chunk| {
+                        let mut bytes = [0u8; 4];
+                        bytes[..chunk.len()].copy_from_slice(chunk);
+                        u32::from_le_bytes(bytes)
+                    })
+                    .collect();
+                RamBlockSnapshot { address, words, populated: self.ram.is_populated(address) }
+            })
+            .collect()
     }
 
     fn advance(&mut self) -> LevelResult {
@@ -490,5 +622,89 @@ mod tests {
         let mut mem = sim(one_level_config(false));
         mem.begin_access(load(0x10000000));
         mem.take_result();
+    }
+
+    #[test]
+    fn cache_level_info_reports_derived_sizing() {
+        let mem = sim(one_level_config(false)); // 1 level, exp: 1, associativity: 1, block_size: 4 -> 2 sets
+        let info = mem.cache_level_info(0, CacheSide::Unified).unwrap();
+        assert_eq!(info.associativity, 1);
+        assert_eq!(info.block_size, 4);
+        assert_eq!(info.num_sets, 2);
+        assert_eq!(info.words_per_line, 1); // 4 bytes / 4-byte words
+    }
+
+    #[test]
+    fn cache_level_info_is_none_for_a_side_the_level_does_not_have() {
+        let mem = sim(one_level_config(false)); // unified only
+        assert!(mem.cache_level_info(0, CacheSide::Instruction).is_none());
+        assert!(mem.cache_level_info(5, CacheSide::Unified).is_none()); // out of range
+    }
+
+    #[test]
+    fn cache_level_snapshot_reflects_a_stored_line_and_its_words() {
+        let mut mem = sim(one_level_config(false));
+        mem.begin_access(store(0x10000000, vec![0x11, 0x22, 0x33, 0x44]));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let snap = mem.cache_level_snapshot(0, CacheSide::Unified).unwrap();
+        assert_eq!(snap.associativity, 1);
+        assert_eq!(snap.num_sets, 2);
+        assert_eq!(snap.sets.len(), 2);
+
+        // address 0x10000000 / block_size 4 -> tag 0x4000000, set_index = tag % 2 = 0
+        let set0 = snap.sets.iter().find(|s| s.set_index == 0).unwrap();
+        let way = set0.ways.iter().find(|w| w.valid).expect("the stored line must be present");
+        assert_eq!(way.tag, 0x10000000 / 4);
+        assert_eq!(way.words, vec![u32::from_le_bytes([0x11, 0x22, 0x33, 0x44])]);
+    }
+
+    #[test]
+    fn cache_level_snapshot_is_none_out_of_range() {
+        let mem = sim(one_level_config(false));
+        assert!(mem.cache_level_snapshot(9, CacheSide::Unified).is_none());
+    }
+
+    #[test]
+    fn ram_blocks_reports_populated_and_empty_blocks() {
+        let mut mem = sim(one_level_config(false));
+        mem.begin_access(store(0x10000000, vec![0xDE, 0xAD, 0xBE, 0xEF]));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let blocks = mem.ram_blocks(0x10000000, 3);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].address, 0x10000000);
+        assert!(blocks[0].populated);
+        assert_eq!(blocks[0].words, vec![u32::from_le_bytes([0xDE, 0xAD, 0xBE, 0xEF])]);
+        assert!(!blocks[1].populated);
+        assert_eq!(blocks[1].words, vec![0]);
+    }
+
+    #[test]
+    fn ram_blocks_returns_zero_length_for_zero_count() {
+        let mem = sim(one_level_config(false));
+        assert_eq!(mem.ram_blocks(0x10000000, 0).len(), 0);
+    }
+
+    #[test]
+    fn ram_blocks_word_matches_the_value_a_little_endian_sw_would_store() {
+        // A real `sw` storing the 32-bit value 0x12345678 lays out its bytes
+        // little-endian: LSB first. The snapshot's `words` should reconstruct
+        // the exact same value the CPU stored, not a byte-swapped one.
+        let mut mem = sim(one_level_config(false));
+        mem.begin_access(store(0x10000000, vec![0x78, 0x56, 0x34, 0x12]));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let blocks = mem.ram_blocks(0x10000000, 1);
+        assert_eq!(blocks[0].words, vec![0x12345678]);
     }
 }

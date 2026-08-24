@@ -72,6 +72,18 @@ impl DataStore {
             .or_insert_with(|| vec![0u8; block_size]);
         block[offset] = value;
     }
+
+    pub fn read_block(&self, address: u64, len: usize) -> Vec<u8> {
+        (0..len as u64).map(|i| self.read_byte(address + i)).collect()
+    }
+
+    pub fn is_populated(&self, block_address: u64) -> bool {
+        self.blocks.contains_key(&block_address)
+    }
+
+    pub fn block_size(&self) -> usize {
+        self.block_size
+    }
 }
 
 #[cfg(test)]
@@ -156,5 +168,29 @@ mod tests {
         assert_eq!(store.block_address(0x105), 0x100);
         assert_eq!(store.block_address(0x13F), 0x100);
         assert_eq!(store.block_address(0x140), 0x140);
+    }
+
+    #[test]
+    fn read_block_returns_len_bytes_including_unwritten_zeros() {
+        let mut store = DataStore::new(8);
+        store.write_byte(0x100, 0xAA);
+        store.write_byte(0x102, 0xBB);
+        let block = store.read_block(0x100, 4);
+        assert_eq!(block, vec![0xAA, 0x00, 0xBB, 0x00]);
+    }
+
+    #[test]
+    fn is_populated_reflects_whether_the_block_has_been_written() {
+        let mut store = DataStore::new(8);
+        assert!(!store.is_populated(0x100));
+        store.write_byte(0x100, 1);
+        assert!(store.is_populated(0x100));
+        assert!(!store.is_populated(0x108)); // a different block, still untouched
+    }
+
+    #[test]
+    fn block_size_returns_the_configured_value() {
+        let store = DataStore::new(64);
+        assert_eq!(store.block_size(), 64);
     }
 }

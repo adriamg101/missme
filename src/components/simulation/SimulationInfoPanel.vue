@@ -15,8 +15,9 @@ const store = useSimulationStore();
     <RegistersView v-else-if="store.activeView.kind === 'registers'" />
     <CacheLevelView
       v-else-if="store.activeView.kind === 'cache'"
-      :key="store.activeView.levelId"
+      :key="`${store.activeView.levelId}:${store.activeView.side}`"
       :levelId="store.activeView.levelId"
+      :side="store.activeView.side"
     />
     <RamView v-else-if="store.activeView.kind === 'ram'" />
     <StatsButton />
@@ -26,7 +27,14 @@ const store = useSimulationStore();
 <style scoped>
 .simulation-info-panel {
   position: relative;
-  height: 100%;
+  width: calc(100% - 0.5rem);
+  height: calc(100% - 0.5rem);
+  margin: 0.25rem;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 1px solid var(--secondary);
+  background: var(--background);
+  box-shadow: var(--shadow);
   overflow-y: auto;
 }
 </style>

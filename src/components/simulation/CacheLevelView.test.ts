@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { render, screen } from "@testing-library/vue";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
+const invokeMock = vi.fn();
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 let capturedHandler: ((event: { payload: Record<string, unknown> }) => void) | null = null;
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn((_channel: string, handler: typeof capturedHandler) => {
@@ -14,41 +15,74 @@ vi.mock("@tauri-apps/api/event", () => ({
 import CacheLevelView from "./CacheLevelView.vue";
 import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 
-beforeEach(() => {
-  setActivePinia(createPinia());
-  capturedHandler = null;
-});
-
 function seedOneLevel() {
   const store = useHierarchyConfigStore();
   store.hierarchy = [
     {
       id: "l1",
       harvard: false,
-      unified: { exp: 6, config: { blockSize: 64, associativity: 4, replacement: "LRU", writePolicy: "WriteBack", writeAllocate: true, hitTime: 2, dirtyPercent: 0 } },
+      unified: { exp: 1, config: { blockSize: 4, associativity: 1, replacement: "LRU", writePolicy: "WriteBack", writeAllocate: true, hitTime: 2, dirtyPercent: 0 } },
       inclusion: "NonInclusive",
-      busWidth: 64,
+      busWidth: 32,
     },
   ] as unknown as typeof store.hierarchy;
   return store;
 }
 
+function snapshot() {
+  return {
+    associativity: 1,
+    blockSize: 4,
+    numSets: 2,
+    wordsPerLine: 1,
+    sets: [
+      { setIndex: 0, ways: [{ valid: true, dirty: false, tag: 5, recencyRank: 0, words: [0xdeadbeef] }] },
+      { setIndex: 1, ways: [{ valid: false, dirty: false, tag: 0, recencyRank: null, words: [] }] },
+    ],
+  };
+}
+
+beforeEach(() => {
+  setActivePinia(createPinia());
+  invokeMock.mockReset();
+  invokeMock.mockResolvedValue(snapshot());
+  capturedHandler = null;
+});
+
 describe("CacheLevelView", () => {
-  it("shows the resolved level's static config", () => {
+  it("fetches and renders the level snapshot on mount", async () => {
     seedOneLevel();
-    render(CacheLevelView, { props: { levelId: "l1" } });
-    expect(screen.getByText(/Associativitat/)).toBeTruthy();
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(invokeMock).toHaveBeenCalledWith("get_cache_level", { levelIndex: 0, side: "unified" });
+    expect(await screen.findByText("deadbeef")).toBeTruthy();
   });
 
-  it("counts hit/miss events for the matching level index", async () => {
+  it("refetches the level on a matching cache_access event", async () => {
     seedOneLevel();
-    render(CacheLevelView, { props: { levelId: "l1" } });
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await Promise.resolve();
+    await Promise.resolve();
+    invokeMock.mockClear();
+
     capturedHandler!({ payload: { kind: "cache_access", levelIndex: 0, outcome: "hit", sourceLine: 1 } });
-    capturedHandler!({ payload: { kind: "cache_access", levelIndex: 0, outcome: "miss", sourceLine: 1 } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invokeMock).toHaveBeenCalledWith("get_cache_level", { levelIndex: 0, side: "unified" });
+  });
+
+  it("ignores a cache_access event for a different level", async () => {
+    seedOneLevel();
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await Promise.resolve();
+    await Promise.resolve();
+    invokeMock.mockClear();
+
     capturedHandler!({ payload: { kind: "cache_access", levelIndex: 1, outcome: "hit", sourceLine: 1 } });
     await Promise.resolve();
-    expect(screen.getByText("1", { selector: ".simulation-cache-hits" })).toBeTruthy();
-    expect(screen.getByText("1", { selector: ".simulation-cache-misses" })).toBeTruthy();
+
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

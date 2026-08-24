@@ -28,6 +28,10 @@ impl SimulationSession {
         self.simulator.fp_register(id)
     }
 
+    pub fn memory(&self) -> &super::memory::hierarchy::MemoryHierarchySimulator {
+        self.simulator.memory()
+    }
+
     pub fn is_at_breakpoint(&self) -> bool {
         match self.simulator.current_source_line() {
             Some(line) => self.breakpoints.contains(&line),
@@ -175,5 +179,14 @@ mod tests {
         // write has happened to that register
         let _ = session.register(RegisterId(31));
         let _ = session.fp_register(RegisterId(31));
+    }
+
+    #[test]
+    fn memory_exposes_the_underlying_memory_simulator() {
+        let session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
+        // Any read-only call must succeed without panicking — proves the
+        // accessor actually reaches a live MemoryHierarchySimulator, not
+        // just that it type-checks.
+        assert!(session.memory().cache_level_info(0, crate::models::simulation::memory::hierarchy::CacheSide::Unified).is_none());
     }
 }

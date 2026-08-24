@@ -121,8 +121,8 @@ describe("simulation store", () => {
     const store = useSimulationStore();
     store.openView({ kind: "registers" });
     expect(store.activeView).toEqual({ kind: "registers" });
-    store.openView({ kind: "cache", levelId: "l1" });
-    expect(store.activeView).toEqual({ kind: "cache", levelId: "l1" });
+    store.openView({ kind: "cache", levelId: "l1", side: "unified" });
+    expect(store.activeView).toEqual({ kind: "cache", levelId: "l1", side: "unified" });
   });
 
   it("start resets activeView to stats", async () => {

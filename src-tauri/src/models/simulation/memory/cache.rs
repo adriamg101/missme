@@ -20,6 +20,14 @@ pub struct Eviction {
     pub dirty: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheLineSnapshot {
+    pub valid: bool,
+    pub dirty: bool,
+    pub tag: u64,
+    pub recency_rank: Option<usize>,
+}
+
 /// A single shared implementation of set-associative storage, reused by
 /// every cache level and by the TLB. Only LRU replacement is simulated —
 /// see this plan's Global Constraints.
@@ -84,6 +92,32 @@ impl SetAssociativeCache {
                 line.dirty = true;
             }
         }
+    }
+
+    pub fn associativity(&self) -> usize {
+        self.associativity
+    }
+
+    /// Read-only: never touches `last_used`/`tick`, unlike `lookup`. Always
+    /// returns exactly `associativity` entries; ways beyond how many lines
+    /// this set currently holds are reported empty.
+    pub fn snapshot_set(&self, set_index: u64) -> Vec<CacheLineSnapshot> {
+        let empty: Vec<CacheLine> = Vec::new();
+        let lines = self.sets.get(&set_index).unwrap_or(&empty);
+
+        let mut recency_order: Vec<usize> = (0..lines.len()).collect();
+        recency_order.sort_by_key(|&i| std::cmp::Reverse(lines[i].last_used));
+        let mut rank_of: Vec<Option<usize>> = vec![None; lines.len()];
+        for (rank, &i) in recency_order.iter().enumerate() {
+            rank_of[i] = Some(rank);
+        }
+
+        (0..self.associativity)
+            .map(|way| match lines.get(way) {
+                Some(line) => CacheLineSnapshot { valid: true, dirty: line.dirty, tag: line.tag, recency_rank: rank_of[way] },
+                None => CacheLineSnapshot { valid: false, dirty: false, tag: 0, recency_rank: None },
+            })
+            .collect()
     }
 }
 
@@ -165,5 +199,54 @@ mod tests {
     fn mark_dirty_on_a_tag_not_resident_is_a_no_op() {
         let mut cache = SetAssociativeCache::new(1);
         cache.mark_dirty(0, 999); // must not panic
+    }
+
+    #[test]
+    fn snapshot_set_of_an_untouched_set_is_all_empty_ways() {
+        let cache = SetAssociativeCache::new(2);
+        let snap = cache.snapshot_set(0);
+        assert_eq!(snap.len(), 2);
+        assert!(snap.iter().all(|w| !w.valid && w.tag == 0 && w.recency_rank.is_none()));
+    }
+
+    #[test]
+    fn snapshot_set_reports_valid_ways_with_tag_and_dirty() {
+        let mut cache = SetAssociativeCache::new(2);
+        cache.insert(0, 42, true);
+        let snap = cache.snapshot_set(0);
+        assert_eq!(snap.len(), 2);
+        assert!(snap[0].valid);
+        assert_eq!(snap[0].tag, 42);
+        assert!(snap[0].dirty);
+        assert!(!snap[1].valid);
+    }
+
+    #[test]
+    fn snapshot_set_ranks_recency_with_zero_as_most_recent() {
+        let mut cache = SetAssociativeCache::new(2);
+        cache.insert(0, 1, false);
+        cache.insert(0, 2, false);
+        cache.lookup(0, 1); // touch tag 1 so it becomes most recently used
+
+        let snap = cache.snapshot_set(0);
+        let rank_of = |tag: u64| snap.iter().find(|w| w.valid && w.tag == tag).unwrap().recency_rank.unwrap();
+        assert_eq!(rank_of(1), 0);
+        assert_eq!(rank_of(2), 1);
+    }
+
+    #[test]
+    fn snapshot_set_does_not_mutate_recency() {
+        let mut cache = SetAssociativeCache::new(1);
+        cache.insert(0, 1, false);
+        cache.snapshot_set(0); // must not touch last_used/tick
+        cache.insert(0, 2, false); // if snapshot_set bumped tick, eviction order would be unaffected here anyway; the real guard is the compiler: snapshot_set takes &self
+        let evicted = cache.insert(0, 3, false);
+        assert_eq!(evicted.unwrap().tag, 2);
+    }
+
+    #[test]
+    fn associativity_returns_the_configured_value() {
+        let cache = SetAssociativeCache::new(4);
+        assert_eq!(cache.associativity(), 4);
     }
 }

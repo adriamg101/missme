@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { render, screen } from "@testing-library/vue";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
+const invokeMock = vi.fn();
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 let capturedHandlers: Array<(event: { payload: Record<string, unknown> }) => void> = [];
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn((_channel: string, handler: (event: { payload: Record<string, unknown> }) => void) => {
@@ -18,6 +19,8 @@ import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 beforeEach(() => {
   setActivePinia(createPinia());
   capturedHandlers = [];
+  invokeMock.mockReset();
+  invokeMock.mockResolvedValue({ associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1, sets: [] });
 });
 
 function seedTwoLevels() {
@@ -52,22 +55,21 @@ describe("SimulationInfoPanel", () => {
     expect(container.querySelector(".simulation-stats-view")).toBeFalsy();
   });
 
-  it("resets hit/miss counts when switching between two cache levels", async () => {
+  it("fetches a fresh snapshot when switching between two cache levels", async () => {
     seedTwoLevels();
     const store = useSimulationStore();
-    store.openView({ kind: "cache", levelId: "l1" });
+    store.openView({ kind: "cache", levelId: "l1", side: "unified" });
     render(SimulationInfoPanel);
     await Promise.resolve();
-
-    expect(capturedHandlers.length).toBe(1);
-    capturedHandlers[0]({ payload: { kind: "cache_access", levelIndex: 0, outcome: "hit", sourceLine: 1 } });
-    await Promise.resolve();
-    expect(screen.getByText("1", { selector: ".simulation-cache-hits" })).toBeTruthy();
-
-    store.openView({ kind: "cache", levelId: "l2" });
-    await Promise.resolve();
     await Promise.resolve();
 
-    expect(screen.getByText("0", { selector: ".simulation-cache-hits" })).toBeTruthy();
+    expect(invokeMock).toHaveBeenCalledWith("get_cache_level", { levelIndex: 0, side: "unified" });
+    invokeMock.mockClear();
+
+    store.openView({ kind: "cache", levelId: "l2", side: "unified" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invokeMock).toHaveBeenCalledWith("get_cache_level", { levelIndex: 1, side: "unified" });
   });
 });

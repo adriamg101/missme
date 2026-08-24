@@ -1003,6 +1003,10 @@ impl CpuSimulator for RiscvCpuSimulator {
         self.read_fp_register(id)
     }
 
+    fn memory(&self) -> &MemoryHierarchySimulator {
+        &self.memory
+    }
+
     fn current_source_line(&self) -> Option<usize> {
         self.instructions.fetch(self.pc).map(|entry| entry.source_line)
     }

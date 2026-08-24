@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 export type SimulationView =
   | { kind: "stats" }
   | { kind: "registers" }
-  | { kind: "cache"; levelId: string }
+  | { kind: "cache"; levelId: string; side: "unified" | "i" | "d" }
   | { kind: "ram" };
 
 interface SimulationState {
