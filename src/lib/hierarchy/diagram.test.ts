@@ -74,7 +74,7 @@ const tlb: TlbConfig = {
 };
 
 describe("computeLayout — base chain", () => {
-  it("without VM: CPU, REG, RAM only — RAM is terminal so it has no Size line and isn't clickable", () => {
+  it("without VM: CPU, REG, RAM only — RAM is terminal, has no Size line, but stays clickable", () => {
     const layout = computeLayout([], defaultRamConfig(), defaultDiskConfig(), tlb, false);
     expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "reg", "ram"]);
 
@@ -91,7 +91,7 @@ describe("computeLayout — base chain", () => {
 
     const ram = layout.boxes.find((b) => b.id === "ram")!;
     expect(ram.subLabels).toEqual(["Latency: 100 cy"]);
-    expect(ram.clickable).toBe(false);
+    expect(ram.clickable).toBe(true);
   });
 
   it("with VM: adds TLB (branch, below CPU) and DISK (terminal); RAM shows Size and is clickable", () => {

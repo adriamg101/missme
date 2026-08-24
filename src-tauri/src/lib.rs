@@ -24,6 +24,7 @@ pub fn run() {
             controllers::simulation_controller::step_instruction,
             controllers::simulation_controller::stop_simulation,
             controllers::simulation_controller::set_speed,
+            controllers::simulation_controller::get_registers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

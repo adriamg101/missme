@@ -250,6 +250,20 @@ fn require_active_session(state: &SessionState) -> Result<(), String> {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct RegisterSnapshot {
+    pub int: Vec<u64>,
+    pub fp: Vec<f64>,
+}
+
+fn snapshot_registers(state: &SessionState) -> Result<RegisterSnapshot, String> {
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no active simulation session")?;
+    let int = (0..32u8).map(|i| session.register(crate::models::simulation::RegisterId(i))).collect();
+    let fp = (0..32u8).map(|i| session.fp_register(crate::models::simulation::RegisterId(i))).collect();
+    Ok(RegisterSnapshot { int, fp })
+}
+
 #[tauri::command]
 pub fn resume_simulation(app: tauri::AppHandle, state: tauri::State<SessionState>) -> Result<(), String> {
     // Same "no active session" guard as `step_action`/`step_instruction`:
@@ -348,6 +362,11 @@ pub fn step_instruction(app: tauri::AppHandle, state: tauri::State<SessionState>
 pub fn set_speed(state: tauri::State<SessionState>, ms: u32) -> Result<(), String> {
     state.speed_ms.store(ms, Ordering::SeqCst);
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_registers(state: tauri::State<SessionState>) -> Result<RegisterSnapshot, String> {
+    snapshot_registers(&state)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -837,5 +856,12 @@ mod tests {
         let actions = session.step_instruction();
         assert!(!actions.is_empty(), "the instruction-step that completes the program must still return its actions");
         assert!(session.is_finished(), "the session must report finished immediately after the instruction-step that completed it");
+    }
+
+    #[test]
+    fn snapshot_registers_errors_with_no_active_session() {
+        let state = SessionState::default();
+        let result = snapshot_registers(&state);
+        assert_eq!(result.unwrap_err(), "no active simulation session");
     }
 }

@@ -111,4 +111,32 @@ describe("simulation store", () => {
 
     expect(store.isRunning).toBe(false);
   });
+
+  it("defaults activeView to stats", () => {
+    const store = useSimulationStore();
+    expect(store.activeView).toEqual({ kind: "stats" });
+  });
+
+  it("openView updates activeView", () => {
+    const store = useSimulationStore();
+    store.openView({ kind: "registers" });
+    expect(store.activeView).toEqual({ kind: "registers" });
+    store.openView({ kind: "cache", levelId: "l1" });
+    expect(store.activeView).toEqual({ kind: "cache", levelId: "l1" });
+  });
+
+  it("start resets activeView to stats", async () => {
+    const store = useSimulationStore();
+    store.openView({ kind: "ram" });
+    await store.start("RV32I", {}, {}, []);
+    expect(store.activeView).toEqual({ kind: "stats" });
+  });
+
+  it("stop resets activeView to stats", async () => {
+    const store = useSimulationStore();
+    await store.start("RV32I", {}, {}, []);
+    store.openView({ kind: "registers" });
+    await store.stop();
+    expect(store.activeView).toEqual({ kind: "stats" });
+  });
 });

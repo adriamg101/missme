@@ -6,6 +6,8 @@ import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 
 const store = useHierarchyConfigStore();
 
+const emit = defineEmits<{ boxClick: [box: DiagramBox] }>();
+
 const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.disk, store.tlb, store.vmEnabled));
 
 const pressedBoxId = ref<string | null>(null);
@@ -16,6 +18,7 @@ function onBoxClick(box: DiagramBox) {
   setTimeout(() => {
     if (pressedBoxId.value === box.id) pressedBoxId.value = null;
   }, 150);
+  emit("boxClick", box);
 }
 
 type HitMiss = "hit" | "miss";

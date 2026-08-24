@@ -205,9 +205,13 @@ export function computeLayout(
     ]);
   }
 
-  // First (CPU) and last (terminal) slot in the main chain are never clickable.
+  // First (CPU) slot in the main chain is never clickable. The last (terminal)
+  // slot is also never clickable, except RAM, which must stay clickable
+  // regardless of whether it ends the chain (i.e. VM disabled) or not.
   slots[0][0].clickable = false;
-  slots[slots.length - 1].forEach((box) => (box.clickable = false));
+  slots[slots.length - 1].forEach((box) => {
+    if (box.kind !== "ram") box.clickable = false;
+  });
 
   const boxes: DiagramBox[] = [];
   const slotX: number[] = [];

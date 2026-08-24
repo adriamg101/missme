@@ -54,11 +54,11 @@ describe("HierarchyDiagram — click animation", () => {
     expect(cpu.classList.contains("pressed")).toBe(false);
   });
 
-  it("does not add a pressed class when RAM (terminal, no VM) is clicked", async () => {
+  it("adds a pressed class when RAM (terminal, no VM) is clicked", async () => {
     const { container } = render(HierarchyDiagram);
     const ram = container.querySelector('[data-box-id="ram"]')!;
     await fireEvent.click(ram);
-    expect(ram.classList.contains("pressed")).toBe(false);
+    expect(ram.classList.contains("pressed")).toBe(true);
   });
 });
 
@@ -85,5 +85,29 @@ describe("HierarchyDiagram — box colors", () => {
     const cacheGroup = screen.getByText("L1").closest("g")!;
     expect(cacheGroup.style.getPropertyValue("--box-hue")).toBe("45");
     expect(cacheGroup.style.getPropertyValue("--box-chroma")).toBe("0.09");
+  });
+});
+
+describe("HierarchyDiagram — boxClick emit", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("emits boxClick with the clicked box when it is clickable", async () => {
+    const { container, emitted } = render(HierarchyDiagram);
+    const clickableBox = container.querySelector('[data-box-id="reg"]');
+    expect(clickableBox).toBeTruthy();
+    await fireEvent.click(clickableBox!);
+    const events = emitted().boxClick;
+    expect(events).toBeTruthy();
+    expect(((events![0] as unknown[])[0] as unknown as { id: string }).id).toBe("reg");
+  });
+
+  it("does not emit boxClick for a non-clickable box", async () => {
+    const { container, emitted } = render(HierarchyDiagram);
+    const cpuBox = container.querySelector('[data-box-id="cpu"]');
+    expect(cpuBox).toBeTruthy();
+    await fireEvent.click(cpuBox!);
+    expect(emitted().boxClick).toBeFalsy();
   });
 });

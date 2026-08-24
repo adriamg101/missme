@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::{Action, CpuSimulator};
+use super::{Action, CpuSimulator, RegisterId};
 
 pub struct SimulationSession {
     simulator: Box<dyn CpuSimulator + Send>,
@@ -18,6 +18,14 @@ impl SimulationSession {
 
     pub fn pc(&self) -> u64 {
         self.simulator.pc()
+    }
+
+    pub fn register(&self, id: RegisterId) -> u64 {
+        self.simulator.register(id)
+    }
+
+    pub fn fp_register(&self, id: RegisterId) -> f64 {
+        self.simulator.fp_register(id)
     }
 
     pub fn is_at_breakpoint(&self) -> bool {
@@ -69,8 +77,9 @@ mod tests {
     use crate::models::interpreter::riscv::Base;
     use crate::models::simulation::cpu::RiscvCpuSimulator;
     use crate::models::simulation::memory::backing_store::DataStore;
-    use crate::models::simulation::memory::config::{DiskConfig, HierarchyConfig, InclusionPolicy, RamConfig, TlbConfig, TlbReplacementPolicy};
+    use crate::models::simulation::memory::config::{DiskConfig, HierarchyConfig, RamConfig, TlbConfig, TlbReplacementPolicy};
     use crate::models::simulation::memory::hierarchy::MemoryHierarchySimulator;
+    use crate::models::simulation::RegisterId;
     use std::collections::{HashMap, HashSet};
 
     fn no_cache_hierarchy_config() -> HierarchyConfig {
@@ -155,5 +164,16 @@ mod tests {
     fn step_instruction_on_a_finished_session_returns_an_empty_vec() {
         let mut session = SimulationSession::new(sim(vec![]), HashSet::new());
         assert_eq!(session.step_instruction(), vec![]);
+    }
+
+    #[test]
+    fn register_and_fp_register_read_through_to_the_simulator() {
+        let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
+        assert_eq!(session.register(RegisterId(0)), 0);
+        session.step_instruction();
+        // any register/fp_register call must not panic even before any
+        // write has happened to that register
+        let _ = session.register(RegisterId(31));
+        let _ = session.fp_register(RegisterId(31));
     }
 }
