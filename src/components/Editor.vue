@@ -221,6 +221,7 @@ async function handleStartClick() {
           disk: hierarchyConfigStore.disk,
         },
         Array.from(breakpoints.value),
+        Array.from(riscvExtensions.value),
       );
     }
   } catch (err) {

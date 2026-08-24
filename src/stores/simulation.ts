@@ -14,6 +14,7 @@ interface SimulationState {
   speedMs: number;
   currentLine: number | null;
   activeView: SimulationView;
+  activeExtensions: string[];
 }
 
 export const useSimulationStore = defineStore("simulation", {
@@ -23,14 +24,16 @@ export const useSimulationStore = defineStore("simulation", {
     speedMs: 100,
     currentLine: null,
     activeView: { kind: "stats" },
+    activeExtensions: [],
   }),
   actions: {
-    async start(base: string, codegen: unknown, hierarchy: unknown, breakpoints: number[]) {
+    async start(base: string, codegen: unknown, hierarchy: unknown, breakpoints: number[], extensions: string[] = []) {
       await invoke("start_simulation", { base, codegen, hierarchy, breakpoints });
       this.isActive = true;
       this.isRunning = true;
       this.currentLine = null;
       this.activeView = { kind: "stats" };
+      this.activeExtensions = extensions;
     },
     async pause() {
       await invoke("pause_simulation", {});
@@ -52,6 +55,7 @@ export const useSimulationStore = defineStore("simulation", {
       this.isRunning = false;
       this.currentLine = null;
       this.activeView = { kind: "stats" };
+      this.activeExtensions = [];
     },
     async setSpeed(ms: number) {
       await invoke("set_speed", { ms });
