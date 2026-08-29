@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import { render, screen, waitFor } from "@testing-library/vue";
+import { render, waitFor } from "@testing-library/vue";
 
 let allHandlers: Array<(event: unknown) => void> = [];
 
@@ -33,7 +33,7 @@ describe("App simulation panel swap", () => {
     const store = useSimulationStore();
     store.isActive = true;
     render(App);
-    expect(screen.getByLabelText("Stats")).toBeTruthy();
+    expect(document.querySelector(".simulation-info-panel")).toBeTruthy();
   });
 
   it("clicking the register box while active opens the registers view", async () => {
@@ -109,6 +109,44 @@ describe("App simulation panel swap", () => {
     // Note: SVG elements return SVGAnimatedString for className, so we use getAttribute instead
     await waitFor(() => {
       expect(box!.getAttribute("class")).toContain("access-hit");
+    });
+  });
+
+  it("clears the last hit/miss colors and status message once the simulation is no longer active", async () => {
+    const store = useSimulationStore();
+    store.isActive = true;
+    const hierarchyStore = useHierarchyConfigStore();
+    hierarchyStore.hierarchy = [
+      {
+        id: "l1",
+        harvard: false,
+        unified: { exp: 1, config: { blockSize: 4, associativity: 1, replacement: "LRU", writePolicy: "WriteBack", writeAllocate: true, hitTime: 2, dirtyPercent: 0 } },
+        inclusion: "NonInclusive",
+        busWidth: 32,
+      },
+    ] as unknown as typeof hierarchyStore.hierarchy;
+
+    render(App);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const box = document.querySelector('[data-box-id="l1"]');
+    const event = { payload: { kind: "cache_access", levelIndex: 0, outcome: "hit", sourceLine: 1, accessKind: "load", address: 0x1000 } };
+    for (const handler of allHandlers) handler(event);
+
+    await waitFor(() => {
+      expect(box!.getAttribute("class")).toContain("access-hit");
+      expect(document.querySelector(".hierarchy-diagram-status")).toBeTruthy();
+    });
+
+    // The simulation ends (Stop pressed, or otherwise no longer active) —
+    // no further sim:event will ever arrive to trigger the usual
+    // before-the-next-step clear, so this must reset on its own.
+    store.isActive = false;
+
+    await waitFor(() => {
+      expect(box!.getAttribute("class")).not.toContain("access-hit");
+      expect(document.querySelector(".hierarchy-diagram-status")).toBeNull();
     });
   });
 });

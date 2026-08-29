@@ -1,3 +1,9 @@
+// Session lifecycle (start/pause/resume/step/stop/set_speed) and the
+// `sim:event` stream (`SimEvent`/`action_to_sim_event`) that drives
+// `HierarchyDiagram.vue`'s hit/miss/read/write animations. Split out of the
+// former single `simulation_controller.rs` so this event-stream/lifecycle
+// concern lives apart from the memory-contents-inspection commands (see
+// `memory_contents_controller.rs`) and the future stats controller.
 use serde::Serialize;
 use tauri::Manager;
 
@@ -9,14 +15,15 @@ use crate::models::interpreter::riscv::Base;
 use crate::models::simulation::cpu::RiscvCpuSimulator;
 use crate::models::simulation::memory::backing_store::DataStore;
 use crate::models::simulation::memory::config::HierarchyConfig;
-use crate::models::simulation::memory::hierarchy::{
-    CacheLevelSnapshot, CacheSide, LevelId, LevelOutcome, MemoryHierarchySimulator, RamBlockSnapshot,
-};
+use crate::models::simulation::memory::hierarchy::{AccessKind, LevelId, LevelOutcome, MemoryHierarchySimulator};
+use crate::models::simulation::memory::seeded_random;
 use crate::models::simulation::session::SimulationSession;
 use crate::models::simulation::{Action, ActionKind};
 
 pub struct SessionState {
-    session: Mutex<Option<SimulationSession>>,
+    // pub(crate): memory_contents_controller.rs's snapshot_* helpers lock
+    // this directly, the same way the commands in this file do.
+    pub(crate) session: Mutex<Option<SimulationSession>>,
     running: Arc<AtomicBool>,
     speed_ms: Arc<AtomicU32>,
     generation: Arc<AtomicU64>,
@@ -47,7 +54,7 @@ impl SessionState {
     }
 }
 
-fn build_session(
+pub(crate) fn build_session(
     base: Base,
     codegen: CodegenOutput,
     hierarchy: HierarchyConfig,
@@ -55,7 +62,18 @@ fn build_session(
     disk_block_size: usize,
     breakpoints: Vec<usize>,
 ) -> SimulationSession {
-    let memory = MemoryHierarchySimulator::new(hierarchy, DataStore::new(ram_block_size), DataStore::new(disk_block_size));
+    let ram_dirty_percent = hierarchy.ram.dirty_percent;
+    // The user's chosen seed (if any) lives on the config only as a raw
+    // preference — resolve it here, once, into the concrete value this
+    // whole session actually uses, since it has to seed both the RAM store
+    // built right below and every cache the simulator builds internally.
+    let seed = hierarchy.seed.unwrap_or_else(seeded_random::generate_seed);
+    let memory = MemoryHierarchySimulator::new(
+        hierarchy,
+        DataStore::with_dirty_percent_seeded(ram_block_size, ram_dirty_percent, seed),
+        DataStore::new(disk_block_size),
+        seed,
+    );
     let simulator: Box<dyn crate::models::simulation::CpuSimulator + Send> =
         Box::new(RiscvCpuSimulator::new(base, codegen, memory));
     SimulationSession::new(simulator, breakpoints.into_iter().collect())
@@ -71,11 +89,11 @@ pub fn start_simulation(
     breakpoints: Vec<usize>,
 ) -> Result<(), String> {
     // Block size for the RAM/disk backing stores: this branch doesn't yet
-    // plumb a dedicated frontend field for it, so a fixed 64-byte block is
-    // used as a reasonable default (matches the most common cache block
-    // size used throughout this project's tests) — revisit if a future
-    // branch needs this configurable.
-    const DEFAULT_BLOCK_SIZE: usize = 64;
+    // plumb a dedicated frontend field for it, so a fixed 32-byte block is
+    // used as a reasonable default — must match RAM_BLOCK_SIZE in
+    // src/components/simulation/RamView.vue, which independently assumes
+    // this same stride when laying out the RAM inspection grid.
+    const DEFAULT_BLOCK_SIZE: usize = 32;
     let session = build_session(base, codegen, hierarchy, DEFAULT_BLOCK_SIZE, DEFAULT_BLOCK_SIZE, breakpoints);
 
     // Bump the generation (and mark `running`) BEFORE installing the new
@@ -252,65 +270,6 @@ fn require_active_session(state: &SessionState) -> Result<(), String> {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct RegisterSnapshot {
-    pub int: Vec<u64>,
-    pub fp: Vec<f64>,
-}
-
-fn snapshot_registers(state: &SessionState) -> Result<RegisterSnapshot, String> {
-    let guard = state.session.lock().map_err(|e| e.to_string())?;
-    let session = guard.as_ref().ok_or("no active simulation session")?;
-    let int = (0..32u8).map(|i| session.register(crate::models::simulation::RegisterId(i))).collect();
-    let fp = (0..32u8).map(|i| session.fp_register(crate::models::simulation::RegisterId(i))).collect();
-    Ok(RegisterSnapshot { int, fp })
-}
-
-fn parse_cache_side(side: &str) -> Result<CacheSide, String> {
-    match side {
-        "unified" => Ok(CacheSide::Unified),
-        "i" => Ok(CacheSide::Instruction),
-        "d" => Ok(CacheSide::Data),
-        other => Err(format!("unknown cache side '{other}'")),
-    }
-}
-
-fn snapshot_cache_level(state: &SessionState, level_index: usize, side: String) -> Result<CacheLevelSnapshot, String> {
-    const MAX_SETS: u64 = 4096;
-    let cache_side = parse_cache_side(&side)?;
-    let guard = state.session.lock().map_err(|e| e.to_string())?;
-    let session = guard.as_ref().ok_or("no active simulation session")?;
-    if let Some(info) = session.memory().cache_level_info(level_index, cache_side) {
-        if info.num_sets > MAX_SETS {
-            return Err(format!("level {level_index} has {} sets, exceeding the maximum of {MAX_SETS}", info.num_sets));
-        }
-    }
-    session
-        .memory()
-        .cache_level_snapshot(level_index, cache_side)
-        .ok_or_else(|| format!("level {level_index} has no {side} cache"))
-}
-
-#[tauri::command]
-pub fn get_cache_level(state: tauri::State<SessionState>, level_index: usize, side: String) -> Result<CacheLevelSnapshot, String> {
-    snapshot_cache_level(&state, level_index, side)
-}
-
-fn snapshot_ram_blocks(state: &SessionState, start_address: u64, count: u32) -> Result<Vec<RamBlockSnapshot>, String> {
-    const MAX_COUNT: u32 = 512;
-    if count > MAX_COUNT {
-        return Err(format!("count {count} exceeds the maximum of {MAX_COUNT}"));
-    }
-    let guard = state.session.lock().map_err(|e| e.to_string())?;
-    let session = guard.as_ref().ok_or("no active simulation session")?;
-    Ok(session.memory().ram_blocks(start_address, count))
-}
-
-#[tauri::command]
-pub fn get_ram_blocks(state: tauri::State<SessionState>, start_address: u64, count: u32) -> Result<Vec<RamBlockSnapshot>, String> {
-    snapshot_ram_blocks(&state, start_address, count)
-}
-
 #[tauri::command]
 pub fn resume_simulation(app: tauri::AppHandle, state: tauri::State<SessionState>) -> Result<(), String> {
     // Same "no active session" guard as `step_action`/`step_instruction`:
@@ -411,20 +370,15 @@ pub fn set_speed(state: tauri::State<SessionState>, ms: u32) -> Result<(), Strin
     Ok(())
 }
 
-#[tauri::command]
-pub fn get_registers(state: tauri::State<SessionState>) -> Result<RegisterSnapshot, String> {
-    snapshot_registers(&state)
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum SimEvent {
     RegWrite { register: u8, value: u64, source_line: usize },
     FpRegWrite { register: u8, value: f64, source_line: usize },
-    CacheAccess { level_index: usize, outcome: String, source_line: usize },
-    RamAccess { outcome: String, source_line: usize },
-    DiskAccess { outcome: String, source_line: usize },
-    TlbAccess { outcome: String, source_line: usize },
+    CacheAccess { level_index: usize, outcome: String, address: u64, access_kind: String, source_line: usize },
+    RamAccess { outcome: String, address: u64, access_kind: String, source_line: usize },
+    DiskAccess { outcome: String, address: u64, access_kind: String, source_line: usize },
+    TlbAccess { outcome: String, address: u64, access_kind: String, source_line: usize },
     NoOp { source_line: usize },
     InstructionComplete { pc: u64, source_line: usize },
     SimulationPaused { reason: String },
@@ -437,6 +391,14 @@ fn outcome_str(outcome: LevelOutcome) -> String {
     }
 }
 
+fn access_kind_str(kind: AccessKind) -> String {
+    match kind {
+        AccessKind::Fetch => "fetch".to_string(),
+        AccessKind::Load => "load".to_string(),
+        AccessKind::Store => "store".to_string(),
+    }
+}
+
 pub fn action_to_sim_event(action: &Action) -> SimEvent {
     let source_line = action.source_line;
     match &action.kind {
@@ -446,14 +408,17 @@ pub fn action_to_sim_event(action: &Action) -> SimEvent {
         ActionKind::FpRegisterWrite { register, value } => {
             SimEvent::FpRegWrite { register: register.0, value: *value, source_line }
         }
-        ActionKind::MemoryLevel(level_result) => match level_result.level {
-            LevelId::Tlb => SimEvent::TlbAccess { outcome: outcome_str(level_result.outcome), source_line },
-            LevelId::Cache(index) => {
-                SimEvent::CacheAccess { level_index: index, outcome: outcome_str(level_result.outcome), source_line }
+        ActionKind::MemoryLevel(level_result) => {
+            let outcome = outcome_str(level_result.outcome);
+            let address = level_result.address;
+            let access_kind = access_kind_str(level_result.access_kind);
+            match level_result.level {
+                LevelId::Tlb => SimEvent::TlbAccess { outcome, address, access_kind, source_line },
+                LevelId::Cache(index) => SimEvent::CacheAccess { level_index: index, outcome, address, access_kind, source_line },
+                LevelId::Ram => SimEvent::RamAccess { outcome, address, access_kind, source_line },
+                LevelId::Disk => SimEvent::DiskAccess { outcome, address, access_kind, source_line },
             }
-            LevelId::Ram => SimEvent::RamAccess { outcome: outcome_str(level_result.outcome), source_line },
-            LevelId::Disk => SimEvent::DiskAccess { outcome: outcome_str(level_result.outcome), source_line },
-        },
+        }
         ActionKind::NoOp => SimEvent::NoOp { source_line },
     }
 }
@@ -461,7 +426,7 @@ pub fn action_to_sim_event(action: &Action) -> SimEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::simulation::memory::hierarchy::{LevelId, LevelOutcome, LevelResult};
+    use crate::models::simulation::memory::hierarchy::{AccessKind, LevelId, LevelOutcome, LevelResult};
     use crate::models::simulation::{ActionKind, RegisterId};
 
     #[test]
@@ -495,7 +460,12 @@ mod tests {
     #[test]
     fn cache_hit_translates_to_cache_access_event() {
         let action = Action {
-            kind: ActionKind::MemoryLevel(LevelResult { level: LevelId::Cache(1), outcome: LevelOutcome::Hit }),
+            kind: ActionKind::MemoryLevel(LevelResult {
+                level: LevelId::Cache(1),
+                outcome: LevelOutcome::Hit,
+                address: 0x1000,
+                access_kind: AccessKind::Load,
+            }),
             source_line: 9,
             instruction_complete: false,
         };
@@ -504,24 +474,38 @@ mod tests {
         assert_eq!(json["kind"], "cache_access");
         assert_eq!(json["levelIndex"], 1);
         assert_eq!(json["outcome"], "hit");
+        assert_eq!(json["address"], 0x1000);
+        assert_eq!(json["accessKind"], "load");
     }
 
     #[test]
     fn ram_miss_translates_to_ram_access_event() {
         let action = Action {
-            kind: ActionKind::MemoryLevel(LevelResult { level: LevelId::Ram, outcome: LevelOutcome::Hit }),
+            kind: ActionKind::MemoryLevel(LevelResult {
+                level: LevelId::Ram,
+                outcome: LevelOutcome::Hit,
+                address: 0x2000,
+                access_kind: AccessKind::Store,
+            }),
             source_line: 9,
             instruction_complete: false,
         };
         let event = action_to_sim_event(&action);
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["kind"], "ram_access");
+        assert_eq!(json["address"], 0x2000);
+        assert_eq!(json["accessKind"], "store");
     }
 
     #[test]
     fn tlb_result_translates_to_tlb_access_event() {
         let action = Action {
-            kind: ActionKind::MemoryLevel(LevelResult { level: LevelId::Tlb, outcome: LevelOutcome::Miss }),
+            kind: ActionKind::MemoryLevel(LevelResult {
+                level: LevelId::Tlb,
+                outcome: LevelOutcome::Miss,
+                address: 0x3000,
+                access_kind: AccessKind::Fetch,
+            }),
             source_line: 9,
             instruction_complete: false,
         };
@@ -529,6 +513,8 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["kind"], "tlb_access");
         assert_eq!(json["outcome"], "miss");
+        assert_eq!(json["address"], 0x3000);
+        assert_eq!(json["accessKind"], "fetch");
     }
 
     #[test]
@@ -547,7 +533,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::Ordering;
 
-    fn empty_hierarchy_config() -> HierarchyConfig {
+    pub(crate) fn empty_hierarchy_config() -> HierarchyConfig {
         HierarchyConfig {
             isa: Base::Rv32i,
             vm_enabled: false,
@@ -555,10 +541,11 @@ mod tests {
             tlb: TlbConfig { page_size: 4096, page_table_levels: 1, page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
             disk: DiskConfig { latency: 10000 },
+            seed: None,
         }
     }
 
-    fn empty_codegen() -> crate::models::interpreter::riscv::codegen::ir::CodegenOutput {
+    pub(crate) fn empty_codegen() -> crate::models::interpreter::riscv::codegen::ir::CodegenOutput {
         crate::models::interpreter::riscv::codegen::ir::CodegenOutput {
             layout: MemoryLayout { text_base: 0x1000, data_base: 0x2000, labels: HashMap::new(), initial_data: vec![] },
             entries: vec![],
@@ -584,6 +571,28 @@ mod tests {
     fn session_pc_delegates_to_the_inner_simulator() {
         let session = build_session(Base::Rv32i, empty_codegen(), empty_hierarchy_config(), 64, 64, vec![]);
         assert_eq!(session.pc(), 0x1000);
+    }
+
+    fn hierarchy_config_with(seed: Option<u64>, ram_dirty_percent: u8) -> HierarchyConfig {
+        HierarchyConfig { ram: RamConfig { latency: 100, size: 1024, dirty_percent: ram_dirty_percent }, seed, ..empty_hierarchy_config() }
+    }
+
+    #[test]
+    fn an_explicit_seed_makes_ram_dirty_seeding_reproducible_across_sessions() {
+        let a = build_session(Base::Rv32i, empty_codegen(), hierarchy_config_with(Some(1234), 100), 64, 64, vec![]);
+        let b = build_session(Base::Rv32i, empty_codegen(), hierarchy_config_with(Some(1234), 100), 64, 64, vec![]);
+        let blocks_a = a.memory().ram_blocks(0x10000000, 1);
+        let blocks_b = b.memory().ram_blocks(0x10000000, 1);
+        assert_eq!(blocks_a[0].words, blocks_b[0].words);
+        assert!(blocks_a[0].dirty);
+    }
+
+    #[test]
+    fn no_seed_still_builds_a_working_session_with_ram_dirty_seeding_enabled() {
+        // No explicit seed — build_session must fall back to a randomly
+        // generated one instead of panicking or leaving dirty-seeding off.
+        let session = build_session(Base::Rv32i, empty_codegen(), hierarchy_config_with(None, 100), 64, 64, vec![]);
+        assert!(session.memory().ram_blocks(0x10000000, 1)[0].dirty);
     }
 
     #[test]
@@ -647,6 +656,11 @@ mod tests {
         let mut session = build_session(Base::Rv32i, codegen, empty_hierarchy_config(), 64, 64, vec![]);
 
         let pc_before_first_step = session.pc();
+        // Every instruction now begins with its own Fetch access walking
+        // the hierarchy first — with an empty hierarchy that's one
+        // MemoryLevel action (not complete), then the completing action.
+        let fetch_action = session.step_action().unwrap();
+        assert!(!fetch_action.instruction_complete);
         let action = session.step_action().unwrap();
         assert!(action.instruction_complete);
 
@@ -783,8 +797,23 @@ mod tests {
         assert_eq!(skip_while_line, Some(1));
         assert!(session.is_at_breakpoint());
 
-        // Iteration 1: the memory-level action. Must be skipped (not
-        // re-paused) and pc/source line must NOT have moved yet.
+        // Iteration 0: the instruction's own Fetch access, walking the
+        // hierarchy first — with a zero-level hierarchy that's one
+        // MemoryLevel action (not complete), same skip requirement as any
+        // other mid-instruction action.
+        let current_line = session.current_source_line();
+        if skip_while_line.is_some() && skip_while_line != current_line {
+            skip_while_line = None;
+        }
+        assert!(!should_check_breakpoint(skip_while_line, current_line), "must still be skipping on the fetch's memory-level action");
+        let fetch_action = session.step_action().unwrap();
+        assert!(matches!(fetch_action.kind, ActionKind::MemoryLevel(_)));
+        assert!(!fetch_action.instruction_complete, "the fetch access resolves in one memory-level step against a zero-level hierarchy");
+        assert_eq!(session.current_source_line(), Some(1), "pc must not have advanced yet — the instruction isn't complete");
+
+        // Iteration 1: the load's own memory-level action, begun once the
+        // fetch above finished. Must be skipped (not re-paused) and
+        // pc/source line must NOT have moved yet.
         let current_line = session.current_source_line();
         if skip_while_line.is_some() && skip_while_line != current_line {
             skip_while_line = None;
@@ -868,6 +897,12 @@ mod tests {
         let mut session = build_session(Base::Rv32i, codegen, empty_hierarchy_config(), 64, 64, vec![]);
 
         assert!(!session.is_finished());
+        // Every instruction now begins with its own Fetch access walking
+        // the hierarchy first — with an empty hierarchy that's one
+        // MemoryLevel action (not complete), then the completing action.
+        let fetch_action = session.step_action();
+        assert!(fetch_action.is_some());
+        assert!(!session.is_finished(), "the fetch access alone must not finish the program");
         let action = session.step_action();
         assert!(action.is_some(), "the step that completes the program must still return the action");
         assert!(session.is_finished(), "the session must report finished immediately after the step that completed it");
@@ -903,69 +938,5 @@ mod tests {
         let actions = session.step_instruction();
         assert!(!actions.is_empty(), "the instruction-step that completes the program must still return its actions");
         assert!(session.is_finished(), "the session must report finished immediately after the instruction-step that completed it");
-    }
-
-    #[test]
-    fn snapshot_registers_errors_with_no_active_session() {
-        let state = SessionState::default();
-        let result = snapshot_registers(&state);
-        assert_eq!(result.unwrap_err(), "no active simulation session");
-    }
-
-    #[test]
-    fn snapshot_cache_level_errors_with_no_active_session() {
-        let state = SessionState::default();
-        let result = snapshot_cache_level(&state, 0, "unified".to_string());
-        assert_eq!(result.unwrap_err(), "no active simulation session");
-    }
-
-    #[test]
-    fn snapshot_ram_blocks_errors_with_no_active_session() {
-        let state = SessionState::default();
-        let result = snapshot_ram_blocks(&state, 0, 1);
-        assert_eq!(result.unwrap_err(), "no active simulation session");
-    }
-
-    fn oversized_cache_hierarchy_config() -> HierarchyConfig {
-        // exp: 20, associativity: 1 -> num_sets = 2^20 = 1,048,576, well
-        // over the MAX_SETS cap `snapshot_cache_level` enforces.
-        HierarchyConfig {
-            isa: Base::Rv32i,
-            vm_enabled: false,
-            hierarchy: vec![crate::models::simulation::memory::config::Level {
-                id: "l1".into(),
-                harvard: false,
-                unified: Some(crate::models::simulation::memory::config::CacheEntry {
-                    exp: 20,
-                    config: crate::models::simulation::memory::config::CacheConfig {
-                        block_size: 64,
-                        associativity: 1,
-                        replacement: crate::models::simulation::memory::config::ReplacementPolicy::Lru,
-                        write_policy: crate::models::simulation::memory::config::WritePolicy::WriteBack,
-                        write_allocate: true,
-                        hit_time: 1,
-                        dirty_percent: 0,
-                    },
-                }),
-                i: None,
-                d: None,
-                inclusion: crate::models::simulation::memory::config::InclusionPolicy::Nine,
-                bus_width: 32,
-            }],
-            tlb: TlbConfig { page_size: 4096, page_table_levels: 1, page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru },
-            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
-            disk: DiskConfig { latency: 10000 },
-        }
-    }
-
-    #[test]
-    fn snapshot_cache_level_rejects_a_level_with_too_many_sets() {
-        let state = SessionState::default();
-        let session = build_session(Base::Rv32i, empty_codegen(), oversized_cache_hierarchy_config(), 64, 64, vec![]);
-        *state.session.lock().unwrap() = Some(session);
-
-        let result = snapshot_cache_level(&state, 0, "unified".to_string());
-        let err = result.unwrap_err();
-        assert!(err.contains("exceeding the maximum"), "unexpected error message: {err}");
     }
 }

@@ -14,18 +14,39 @@ function togglePlayPause() {
   }
 }
 
-const speedText = computed({
-  get: () => String(store.speedMs),
+// The slider is log-scaled: a linear 10..1000x range makes the fast end
+// (10-50ms) feel cramped into the first ~5% of the track, while the rest
+// of the track (50-1000ms) all reads as "slow" with no perceptible
+// difference — humans perceive a speed/delay range multiplicatively, not
+// additively. The raw input stays a plain 0..SLIDER_MAX range (for normal
+// <input type="range"> behavior); it's mapped to/from ms exponentially.
+const MIN_MS = 10;
+const MAX_MS = 1000;
+const SLIDER_MAX = 100;
+const LOG_RATIO = Math.log(MAX_MS / MIN_MS);
+
+function msToSlider(ms: number): number {
+  const clamped = Math.min(MAX_MS, Math.max(MIN_MS, ms));
+  return Math.round((SLIDER_MAX * Math.log(clamped / MIN_MS)) / LOG_RATIO);
+}
+
+function sliderToMs(position: number): number {
+  const clamped = Math.min(SLIDER_MAX, Math.max(0, position));
+  return Math.round(MIN_MS * Math.exp((clamped / SLIDER_MAX) * LOG_RATIO));
+}
+
+const speedSlider = computed({
+  get: () => String(msToSlider(store.speedMs)),
   set: (value: string) => {
-    const ms = Number(value);
-    if (Number.isFinite(ms)) store.setSpeed(ms);
+    const position = Number(value);
+    if (Number.isFinite(position)) store.setSpeed(sliderToMs(position));
   },
 });
 </script>
 
 <template>
   <div class="simulation-toolbar">
-    <IconButton size="sm" aria-label="Play/Pause" @click="togglePlayPause">
+    <IconButton size="sm" ariaLabel="Play/Pause" @click="togglePlayPause">
       <svg v-if="!store.isRunning" viewBox="0 0 16 16" width="16" height="16">
         <path fill="currentColor" d="M4 2.5v11l10-5.5-10-5.5Z" />
       </svg>
@@ -34,19 +55,19 @@ const speedText = computed({
       </svg>
     </IconButton>
 
-    <IconButton size="sm" aria-label="Stop" @click="store.stop">
+    <IconButton size="sm" ariaLabel="Stop" @click="store.stop">
       <svg viewBox="0 0 16 16" width="16" height="16">
         <path fill="currentColor" d="M3.5 3.5h9v9h-9v-9Z" />
       </svg>
     </IconButton>
 
-    <IconButton size="sm" aria-label="Step action" :disabled="store.isRunning" @click="store.stepAction">
+    <IconButton size="sm" ariaLabel="Step action" :disabled="store.isRunning" @click="store.stepAction">
       <svg viewBox="0 0 16 16" width="16" height="16">
         <path fill="currentColor" d="M4 2.5v11l7-5.5-7-5.5Zm8 0h1.5v11H12v-11Z" />
       </svg>
     </IconButton>
 
-    <IconButton size="sm" aria-label="Step instruction" :disabled="store.isRunning" @click="store.stepInstruction">
+    <IconButton size="sm" ariaLabel="Step instruction" :disabled="store.isRunning" @click="store.stepInstruction">
       <svg viewBox="0 0 16 16" width="16" height="16">
         <path fill="currentColor" d="M2 2.5v11l5-5.5-5-5.5Zm6 0v11l5-5.5-5-5.5Z" />
       </svg>
@@ -55,12 +76,12 @@ const speedText = computed({
     <input
       class="simulation-toolbar-speed"
       type="range"
-      min="10"
-      max="1000"
-      step="10"
-      aria-label="Delay (ms)"
-      :value="speedText"
-      @input="speedText = ($event.target as HTMLInputElement).value"
+      min="0"
+      :max="SLIDER_MAX"
+      step="1"
+      ariaLabel="Delay (ms)"
+      :value="speedSlider"
+      @input="speedSlider = ($event.target as HTMLInputElement).value"
     />
   </div>
 </template>

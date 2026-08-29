@@ -150,7 +150,7 @@ describe("moveMarker", () => {
   it("clamps against the slider extremes when there is no neighbor", () => {
     const h: Hierarchy = [unifiedLevel("a", 5)];
     const movedLeft = moveMarker(h, "a", "unified", -10, "RV32I");
-    expect(movedLeft.find((l) => l.id === "a")!.unified!.exp).toBe(1); // MIN_POSITION
+    expect(movedLeft.find((l) => l.id === "a")!.unified!.exp).toBe(0); // MIN_POSITION
 
     const movedRight = moveMarker(h, "a", "unified", 999, "RV32I");
     expect(movedRight.find((l) => l.id === "a")!.unified!.exp).toBe(31); // RV32I max position

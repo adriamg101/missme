@@ -17,17 +17,19 @@ const emit = defineEmits<{
   "remove-level": [levelId: string];
 }>();
 
-// The slider never exposes position 0 (2^0 = 1 byte isn't a useful minimum);
-// the reachable range is [MIN_POSITION, maxPositions(isa) - 1].
+// The reachable range is [MIN_POSITION, maxPositions(isa) - 1] — MIN_POSITION
+// is 0, so a cache with a single entry (2^0 = 1) is reachable, same as any
+// other power-of-two position.
 const maxPosition = computed(() => maxPositions(props.isa) - 1);
 const positions = computed(() =>
   Array.from({ length: maxPosition.value - MIN_POSITION + 1 }, (_, i) => i + MIN_POSITION),
 );
 
-// Label every position whose value is itself a power of two, plus the
-// maximum reachable position (which is only a power of two for RV64I).
+// Label every position whose value is itself a power of two, plus position
+// 0 (2^0 = 1, not reachable by doubling from 1) and the maximum reachable
+// position (which is only a power of two for RV64I).
 const labeledPositions = computed<Set<number>>(() => {
-  const set = new Set<number>();
+  const set = new Set<number>([0]);
   for (let value = 1; value <= maxPosition.value; value *= 2) set.add(value);
   set.add(maxPosition.value);
   return set;

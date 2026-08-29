@@ -13,13 +13,10 @@
   --diagram-lightness-border: 0.5;
   --diagram-lightness-fill: 0.95;
   --diagram-lightness-text: 0.32;
-  /* Access-state overlays: hit/miss replace the border+glow temporarily;
-     read/write show as a small corner dot. Neither touches the box's own
-     type color, so they combine freely (e.g. hit + write). */
+  /* Access-state overlay: hit/miss replaces the border+glow temporarily.
+     Doesn't touch the box's own type color, so it combines freely. */
   --diagram-hit-color: oklch(0.5 0.17 145);
   --diagram-miss-color: oklch(0.52 0.19 25);
-  --diagram-read-color: oklch(0.5 0.15 250);
-  --diagram-write-color: oklch(0.55 0.15 75);
 }
 
 :root[data-theme="dark"] {
@@ -34,8 +31,6 @@
   --diagram-lightness-text: 0.85;
   --diagram-hit-color: oklch(0.78 0.17 145);
   --diagram-miss-color: oklch(0.75 0.19 25);
-  --diagram-read-color: oklch(0.72 0.15 250);
-  --diagram-write-color: oklch(0.75 0.15 75);
 }
 
 :root {

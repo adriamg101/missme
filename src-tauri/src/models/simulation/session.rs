@@ -94,11 +94,12 @@ mod tests {
             tlb: TlbConfig { page_size: 4096, page_table_levels: 1, page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
             disk: DiskConfig { latency: 10000 },
+            seed: None,
         }
     }
 
     fn mem() -> MemoryHierarchySimulator {
-        MemoryHierarchySimulator::new(no_cache_hierarchy_config(), DataStore::new(64), DataStore::new(64))
+        MemoryHierarchySimulator::new(no_cache_hierarchy_config(), DataStore::new(64), DataStore::new(64), 0)
     }
 
     fn add_entry(address: u32, line: usize) -> IrEntry {
@@ -133,8 +134,18 @@ mod tests {
     #[test]
     fn step_action_advances_and_returns_the_action() {
         let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
-        let action = session.step_action().unwrap();
-        assert!(action.instruction_complete);
+
+        // Every instruction now begins with its own Fetch access walking
+        // the memory hierarchy first — with a zero-level hierarchy that's
+        // one MemoryLevel action (not yet complete), then a second
+        // step_action() call finishes the fetch and executes the
+        // instruction itself.
+        let first = session.step_action().unwrap();
+        assert!(!first.instruction_complete);
+        assert!(!session.is_finished());
+
+        let second = session.step_action().unwrap();
+        assert!(second.instruction_complete);
         assert!(session.is_finished());
     }
 
@@ -157,10 +168,13 @@ mod tests {
     fn step_instruction_collects_every_action_for_one_instruction() {
         let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1), add_entry(0x1004, 2)]), HashSet::new());
         let actions = session.step_instruction();
-        assert_eq!(actions.len(), 1);
-        assert!(actions[0].instruction_complete);
+        // Fetch (its own MemoryLevel action) + the add's own completion —
+        // two actions per instruction now, with a zero-level hierarchy.
+        assert_eq!(actions.len(), 2);
+        assert!(!actions[0].instruction_complete);
+        assert!(actions[1].instruction_complete);
         assert!(!session.is_finished());
-        assert_eq!(session.step_instruction().len(), 1);
+        assert_eq!(session.step_instruction().len(), 2);
         assert!(session.is_finished());
     }
 

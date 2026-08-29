@@ -20,7 +20,11 @@ beforeEach(() => {
   setActivePinia(createPinia());
   capturedHandlers = [];
   invokeMock.mockReset();
-  invokeMock.mockResolvedValue({ associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1, sets: [] });
+  invokeMock.mockImplementation((cmd: string) => {
+    if (cmd === "get_cache_level_info") return Promise.resolve({ associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1 });
+    if (cmd === "get_cache_sets") return Promise.resolve([]);
+    return Promise.resolve(undefined);
+  });
 });
 
 function seedTwoLevels() {
@@ -37,7 +41,14 @@ function seedTwoLevels() {
 }
 
 describe("SimulationInfoPanel", () => {
-  it("shows the Stats button", () => {
+  it("hides the Stats button while already on the stats view", () => {
+    render(SimulationInfoPanel);
+    expect(screen.queryByLabelText("Stats")).toBeNull();
+  });
+
+  it("shows the Stats button once a non-stats view is active", () => {
+    const store = useSimulationStore();
+    store.openView({ kind: "registers" });
     render(SimulationInfoPanel);
     expect(screen.getByLabelText("Stats")).toBeTruthy();
   });
@@ -63,13 +74,13 @@ describe("SimulationInfoPanel", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(invokeMock).toHaveBeenCalledWith("get_cache_level", { levelIndex: 0, side: "unified" });
+    expect(invokeMock).toHaveBeenCalledWith("get_cache_level_info", { levelIndex: 0, side: "unified" });
     invokeMock.mockClear();
 
     store.openView({ kind: "cache", levelId: "l2", side: "unified" });
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(invokeMock).toHaveBeenCalledWith("get_cache_level", { levelIndex: 1, side: "unified" });
+    expect(invokeMock).toHaveBeenCalledWith("get_cache_level_info", { levelIndex: 1, side: "unified" });
   });
 });

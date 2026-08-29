@@ -11,7 +11,7 @@ beforeEach(() => {
 describe("Editor ISA selection", () => {
   it("selecting RV64I in the options menu updates the shared store", async () => {
     render(Editor, { global: { plugins: [] } });
-    await fireEvent.click(screen.getByLabelText("Opciones de compilación"));
+    await fireEvent.click(screen.getByLabelText("Compilation options"));
     await fireEvent.click(screen.getByText("RV64I"));
     const store = useHierarchyConfigStore();
     expect(store.isa).toBe("RV64I");

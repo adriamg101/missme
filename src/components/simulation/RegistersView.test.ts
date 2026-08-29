@@ -14,6 +14,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: (...args: unknown[]) => listen
 
 import RegistersView from "./RegistersView.vue";
 import { useSimulationStore } from "../../stores/simulation";
+import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 
 beforeEach(() => {
   setActivePinia(createPinia());
@@ -66,6 +67,24 @@ describe("RegistersView", () => {
     await Promise.resolve();
     capturedHandler!({ payload: { kind: "reg_write", register: 3, value: 42, sourceLine: 1 } });
     await Promise.resolve();
-    expect(await screen.findByText("42")).toBeTruthy();
+    expect(await screen.findByText("0x0000002A")).toBeTruthy();
+  });
+
+  it("shows integer register values as zero-padded hex", async () => {
+    invokeMock.mockResolvedValue({ int: Array(32).fill(0).map((_, i) => (i === 5 ? 255 : 0)), fp: Array(32).fill(0) });
+    render(RegistersView);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await screen.findByText("0x000000FF")).toBeTruthy();
+  });
+
+  it("pads integer register values to 16 hex digits on RV64I", async () => {
+    useSimulationStore().activeExtensions = [];
+    useHierarchyConfigStore().isa = "RV64I";
+    invokeMock.mockResolvedValue({ int: Array(32).fill(0).map((_, i) => (i === 5 ? 255 : 0)), fp: Array(32).fill(0) });
+    render(RegistersView);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await screen.findByText("0x00000000000000FF")).toBeTruthy();
   });
 });

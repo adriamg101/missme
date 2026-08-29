@@ -22,18 +22,18 @@ describe("Editor simulation integration", () => {
           error_count: 0,
           error_output: "",
           config: {},
-          codegen: { layout: { text_base: 0x1000 }, entries: [] },
+          codegen: { layout: { text_base: 0x1000, initial_data: [] }, entries: [] },
         });
       }
       return Promise.resolve(undefined);
     });
 
     render(Editor);
-    await fireEvent.click(screen.getByLabelText("Compilar"));
+    await fireEvent.click(screen.getByLabelText("Compile"));
 
     expect(invokeMock).toHaveBeenCalledWith(
       "start_simulation",
-      expect.objectContaining({ codegen: { layout: { text_base: 0x1000 }, entries: [] } }),
+      expect.objectContaining({ codegen: { layout: { text_base: 0x1000, initial_data: [] }, entries: [] } }),
     );
   });
 
@@ -46,7 +46,7 @@ describe("Editor simulation integration", () => {
     });
 
     render(Editor);
-    await fireEvent.click(screen.getByLabelText("Compilar"));
+    await fireEvent.click(screen.getByLabelText("Compile"));
 
     expect(invokeMock).not.toHaveBeenCalledWith("start_simulation", expect.anything());
   });
@@ -56,7 +56,8 @@ describe("Editor simulation integration", () => {
     store.isActive = true;
     render(Editor);
     expect(screen.getByLabelText("Play/Pause")).toBeTruthy();
-    expect(screen.queryByLabelText("Opciones de compilación")).toBeNull();
+    expect(screen.queryByLabelText("Compilation options")).toBeNull();
+    expect(screen.queryByLabelText("Compile")).toBeNull();
   });
 
   it("marks the current line in the gutter", async () => {

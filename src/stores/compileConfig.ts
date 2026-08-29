@@ -8,11 +8,18 @@ const TEXT_BASE = 0x00400000;
 
 interface CompileConfigState {
   dataBase: number;
+  // Populated after a successful compile, from the actual codegen output —
+  // lets validation (e.g. the .data/.text collision check) use real sizes
+  // instead of a guess. Null until the first successful compile.
+  lastCompiledTextSize: number | null;
+  lastCompiledDataSize: number | null;
 }
 
 export const useCompileConfigStore = defineStore("compileConfig", {
   state: (): CompileConfigState => ({
     dataBase: 0x10000000,
+    lastCompiledTextSize: null,
+    lastCompiledDataSize: null,
   }),
   getters: {
     textBase: (): number => TEXT_BASE,
@@ -20,6 +27,10 @@ export const useCompileConfigStore = defineStore("compileConfig", {
   actions: {
     setDataBase(value: number) {
       this.dataBase = value;
+    },
+    setCompiledSizes(textSize: number, dataSize: number) {
+      this.lastCompiledTextSize = textSize;
+      this.lastCompiledDataSize = dataSize;
     },
   },
 });

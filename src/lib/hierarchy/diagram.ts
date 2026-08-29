@@ -116,6 +116,26 @@ const TLB_HEIGHT = 44;
 const TLB_GAP = 24;
 const TOP_PADDING = 10;
 const BOTTOM_PADDING = 16;
+const REG_WIDTH = 94;
+const REG_HEIGHT = 28;
+const REG_INSET_BOTTOM = 6;
+const PAGE_WALK_GAP = 24;
+
+// Right-angle routing: a straight line when both ends already share an axis,
+// otherwise a horizontal-vertical-horizontal dogleg through the midpoint —
+// no diagonals, per the design spec.
+function orthogonalPath(x1: number, y1: number, x2: number, y2: number): string {
+  if (y1 === y2 || x1 === x2) return `M ${x1} ${y1} L ${x2} ${y2}`;
+  const midX = (x1 + x2) / 2;
+  return `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
+}
+
+// Routes through a shared horizontal lane at laneY — used for the TLB ->
+// page-walk-target connector, which must cross underneath the whole main
+// chain rather than cut across it.
+function laneRoutePath(x1: number, y1: number, laneY: number, x2: number, y2: number): string {
+  return `M ${x1} ${y1} L ${x1} ${laneY} L ${x2} ${laneY} L ${x2} ${y2}`;
+}
 
 export function computeLayout(
   hierarchy: Hierarchy,
@@ -134,9 +154,6 @@ export function computeLayout(
 
   slots.push([
     { id: "cpu", kind: "cpu", label: "CPU", subLabels: [], hue: HUE_BY_KIND.cpu, chroma: TYPE_CHROMA, clickable: false, targetTabId: null },
-  ]);
-  slots.push([
-    { id: "reg", kind: "reg", label: "REG", subLabels: [], hue: HUE_BY_KIND.reg, chroma: TYPE_CHROMA, clickable: true, targetTabId: null },
   ]);
 
   hierarchy.forEach((level, index) => {
@@ -266,26 +283,70 @@ export function computeLayout(
     const bottomY = CENTER_Y + HARVARD_OFFSET;
 
     if (a.length === 1 && b.length === 1) {
-      connectors.push({ id: `link-${i}`, path: `M ${aRightX} ${CENTER_Y} L ${bLeftX} ${CENTER_Y}` });
+      connectors.push({ id: `link-${i}`, path: orthogonalPath(aRightX, CENTER_Y, bLeftX, CENTER_Y) });
     } else if (a.length === 1 && b.length === 2) {
-      connectors.push({ id: `link-${i}-top`, path: `M ${aRightX} ${CENTER_Y} L ${bLeftX} ${topY}` });
-      connectors.push({ id: `link-${i}-bottom`, path: `M ${aRightX} ${CENTER_Y} L ${bLeftX} ${bottomY}` });
+      connectors.push({ id: `link-${i}-top`, path: orthogonalPath(aRightX, CENTER_Y, bLeftX, topY) });
+      connectors.push({ id: `link-${i}-bottom`, path: orthogonalPath(aRightX, CENTER_Y, bLeftX, bottomY) });
     } else if (a.length === 2 && b.length === 1) {
-      connectors.push({ id: `link-${i}-top`, path: `M ${aRightX} ${topY} L ${bLeftX} ${CENTER_Y}` });
-      connectors.push({ id: `link-${i}-bottom`, path: `M ${aRightX} ${bottomY} L ${bLeftX} ${CENTER_Y}` });
+      connectors.push({ id: `link-${i}-top`, path: orthogonalPath(aRightX, topY, bLeftX, CENTER_Y) });
+      connectors.push({ id: `link-${i}-bottom`, path: orthogonalPath(aRightX, bottomY, bLeftX, CENTER_Y) });
     } else {
       // Two adjacent Harvard-split levels: instruction cache connects
       // straight across to instruction cache, data to data — two parallel
       // lines, not a pinch-merge through the center.
-      connectors.push({ id: `link-${i}-top`, path: `M ${aRightX} ${topY} L ${bLeftX} ${topY}` });
-      connectors.push({ id: `link-${i}-bottom`, path: `M ${aRightX} ${bottomY} L ${bLeftX} ${bottomY}` });
+      connectors.push({ id: `link-${i}-top`, path: orthogonalPath(aRightX, topY, bLeftX, topY) });
+      connectors.push({ id: `link-${i}-bottom`, path: orthogonalPath(aRightX, bottomY, bLeftX, bottomY) });
     }
   }
 
   const mainAxisBottom = hasHarvard ? CENTER_Y + HARVARD_OFFSET + BOX_HEIGHT / 2 : CENTER_Y + BOX_HEIGHT / 2;
   const tlbBottom = tlbBox ? tlbBox.y + TLB_HEIGHT : 0;
+
+  // TLB -> page-walk-target: only meaningful with VM on, and only once the
+  // TLB box exists. Routes underneath the whole main chain through a shared
+  // lane rather than cutting diagonally across other boxes. A Harvard-split
+  // target fans out to both its i and d boxes.
+  let pageWalkLaneY = 0;
+  if (vmEnabled && tlbBox) {
+    const targetBoxes =
+      tlb.pageWalkStart === "RAM"
+        ? boxes.filter((b) => b.id === "ram")
+        : boxes.filter((b) => b.id === tlb.pageWalkStart || b.id === `${tlb.pageWalkStart}-i` || b.id === `${tlb.pageWalkStart}-d`);
+
+    if (targetBoxes.length > 0) {
+      pageWalkLaneY = Math.max(mainAxisBottom, tlbBottom) + PAGE_WALK_GAP;
+      const tlbCenterX = tlbBox.x + TLB_WIDTH / 2;
+      const tlbBottomY = tlbBox.y + TLB_HEIGHT;
+      targetBoxes.forEach((target) => {
+        connectors.push({
+          id: `pagewalk-${target.id}`,
+          path: laneRoutePath(tlbCenterX, tlbBottomY, pageWalkLaneY, target.x + target.width / 2, target.y + target.height),
+        });
+      });
+    }
+  }
+
+  // REG nests inside the CPU box (not its own slot) — no separate connector,
+  // just a smaller box inset near the bottom of CPU's rect. Pushed last so
+  // it draws on top of the CPU rect.
+  const cpuBox = boxes[0];
+  boxes.push({
+    id: "reg",
+    kind: "reg",
+    label: "REG",
+    subLabels: [],
+    x: cpuBox.x + (BOX_WIDTH - REG_WIDTH) / 2,
+    y: cpuBox.y + BOX_HEIGHT - REG_HEIGHT - REG_INSET_BOTTOM,
+    width: REG_WIDTH,
+    height: REG_HEIGHT,
+    hue: HUE_BY_KIND.reg,
+    chroma: TYPE_CHROMA,
+    clickable: true,
+    targetTabId: null,
+  });
+
   const width = cursorX - SLOT_GAP + 20;
-  const height = Math.max(mainAxisBottom, tlbBottom) + BOTTOM_PADDING;
+  const height = Math.max(mainAxisBottom, tlbBottom, pageWalkLaneY) + BOTTOM_PADDING;
 
   return { width, height, boxes, connectors };
 }

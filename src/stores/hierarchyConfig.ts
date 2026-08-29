@@ -47,7 +47,7 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
       const result = clampToIsa(this.hierarchy, isa);
       if (result.requiresConfirmation) {
         const confirmed = confirmFn(
-          "Cambiar la ISA obliga a solapar dos niveles de la jerarquía en la misma posición. ¿Aplicar de todas formas?",
+          "Changing the ISA forces two hierarchy levels to overlap at the same position. Apply anyway?",
         );
         if (!confirmed) return;
       }
@@ -85,7 +85,11 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
         if (level.id !== levelId) return level;
         const entry = chain === "unified" ? level.unified : chain === "i" ? level.i : level.d;
         if (!entry) return level;
-        const maxAssociativity = Math.max(1, Math.floor(2 ** entry.exp / entry.config.blockSize));
+        // 2**exp is the cache's total entry (tag-slot) count — numSets *
+        // associativity — independent of blockSize (see diagram.ts's
+        // byteSizeLabel and the backend's num_sets computation, both of
+        // which multiply/divide only by associativity, never blockSize).
+        const maxAssociativity = 2 ** entry.exp;
         if (entry.config.associativity <= maxAssociativity) return level;
         const clampedEntry = { ...entry, config: { ...entry.config, associativity: maxAssociativity } };
         if (chain === "unified") return { ...level, unified: clampedEntry };
@@ -100,6 +104,20 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
         if (chain === "i") return { ...level, i: { ...level.i!, config: { ...level.i!.config, ...patch } } };
         return { ...level, d: { ...level.d!, config: { ...level.d!.config, ...patch } } };
       });
+    },
+    applyCacheConfigToAllLevels(config: CacheConfig) {
+      const applyToEntry = <T extends { exp: number; config: CacheConfig } | undefined>(entry: T): T => {
+        if (!entry) return entry;
+        const maxAssociativity = 2 ** entry.exp;
+        const associativity = Math.min(config.associativity, maxAssociativity);
+        return { ...entry, config: { ...config, associativity } };
+      };
+      this.hierarchy = this.hierarchy.map((level) => ({
+        ...level,
+        unified: applyToEntry(level.unified),
+        i: applyToEntry(level.i),
+        d: applyToEntry(level.d),
+      }));
     },
     updateTlbConfig(patch: Partial<TlbConfig>) {
       this.tlb = { ...this.tlb, ...patch };

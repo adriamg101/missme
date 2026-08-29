@@ -22,16 +22,14 @@ function onBoxClick(box: DiagramBox) {
 }
 
 type HitMiss = "hit" | "miss";
-type ReadWrite = "read" | "write";
 interface AccessState {
   hitMiss: HitMiss | null;
-  readWrite: ReadWrite | null;
 }
 
 const accessStates = reactive<Record<string, AccessState>>({});
 
 function stateFor(boxId: string): AccessState {
-  if (!accessStates[boxId]) accessStates[boxId] = { hitMiss: null, readWrite: null };
+  if (!accessStates[boxId]) accessStates[boxId] = { hitMiss: null };
   return accessStates[boxId];
 }
 
@@ -45,27 +43,41 @@ function triggerHitMiss(boxId: string, kind: HitMiss) {
   stateFor(boxId).hitMiss = kind;
 }
 
-// Instant mode: no transition, so many fast simulation ticks can toggle
-// this without a visible lag — still a persistent state, cleared the same
-// way as hit/miss.
-function triggerReadWrite(boxId: string, kind: ReadWrite) {
-  stateFor(boxId).readWrite = kind;
+// The single status line, replacing the old per-box read/write dot: one
+// general message describing the most recent access, e.g. "Reading data at
+// 0x1000". Persists (like hitMiss) until clearAccessStates() runs.
+const statusMessage = ref<string | null>(null);
+
+type AccessKind = "fetch" | "load" | "store";
+
+function hexAddress(address: number): string {
+  return `0x${(address >>> 0).toString(16)}`;
 }
 
-// Reverts every box to its normal type color — call this before the next
-// step's triggerHitMiss/triggerReadWrite so the previous step's highlight
-// doesn't linger.
+function setStatusMessage(accessKind: AccessKind, address: number) {
+  const text =
+    accessKind === "fetch"
+      ? `Fetching instruction at ${hexAddress(address)}`
+      : accessKind === "load"
+        ? `Reading data at ${hexAddress(address)}`
+        : `Writing data at ${hexAddress(address)}`;
+  statusMessage.value = text;
+}
+
+// Reverts every box to its normal type color and clears the status line —
+// call this before the next step's triggerHitMiss/setStatusMessage so the
+// previous step's highlight doesn't linger.
 function clearAccessStates() {
   for (const state of Object.values(accessStates)) {
     state.hitMiss = null;
-    state.readWrite = null;
   }
+  statusMessage.value = null;
 }
 
 // No caller exists yet (there's no simulation engine driving real access
 // events) — exposed so a future one can trigger these without touching this
 // component again.
-defineExpose({ triggerHitMiss, triggerReadWrite, clearAccessStates });
+defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
 </script>
 
 <template>
@@ -103,15 +115,10 @@ defineExpose({ triggerHitMiss, triggerReadWrite, clearAccessStates });
           :y="box.y + 38 + index * 14"
           class="hierarchy-diagram-box-sub"
         >{{ sub }}</text>
-        <circle
-          v-if="accessStates[box.id]?.readWrite"
-          :cx="box.x + box.width - 8"
-          :cy="box.y + 8"
-          r="6"
-          :class="['hierarchy-diagram-box-dot', accessStates[box.id]?.readWrite === 'read' ? 'dot-read' : 'dot-write']"
-        />
       </g>
     </svg>
+
+    <div v-if="statusMessage" class="hierarchy-diagram-status">{{ statusMessage }}</div>
   </div>
 </template>
 
@@ -187,18 +194,18 @@ defineExpose({ triggerHitMiss, triggerReadWrite, clearAccessStates });
   filter: drop-shadow(0 0 6px var(--diagram-miss-color));
 }
 
-/* Read/write: a small corner dot, shown/hidden with no transition — the
-   "instant" animation mode, for driving many fast simulation ticks. */
-.hierarchy-diagram-box-dot {
-  stroke: var(--background);
-  stroke-width: 2;
-}
-
-.hierarchy-diagram-box-dot.dot-read {
-  fill: var(--diagram-read-color);
-}
-
-.hierarchy-diagram-box-dot.dot-write {
-  fill: var(--diagram-write-color);
+/* Single status line describing the most recent access — replaces the old
+   per-box read/write dot. Persists (like hit/miss) until the next
+   clearAccessStates() call. */
+.hierarchy-diagram-status {
+  position: absolute;
+  left: 0.5rem;
+  bottom: 0.5rem;
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: var(--text);
+  background: var(--secondary);
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
 }
 </style>

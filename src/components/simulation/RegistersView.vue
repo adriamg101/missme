@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useSimulationStore } from "../../stores/simulation";
+import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 
 const INT_ABI_NAMES = [
   "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
@@ -19,9 +20,21 @@ const FP_ABI_NAMES = [
 ];
 
 const simulationStore = useSimulationStore();
+const hierarchyStore = useHierarchyConfigStore();
 const hasFloatExtension = computed(
   () => simulationStore.activeExtensions.includes("F") || simulationStore.activeExtensions.includes("D"),
 );
+
+// Integer registers are the ISA's native width (32 or 64 bits) — pad to
+// match so the hex always reads as a full register, not a truncated one.
+const intHexDigits = computed(() => (hierarchyStore.isa === "RV64I" ? 16 : 8));
+function hexInt(value: number): string {
+  // Register values arrive as an already-unsigned u64 from the backend —
+  // unlike the memory-inspection views, this must NOT go through `>>> 0`
+  // (that coerces to a 32-bit int and would truncate RV64I values above
+  // 2^32).
+  return `0x${value.toString(16).toUpperCase().padStart(intHexDigits.value, "0")}`;
+}
 
 const intRegs = reactive<number[]>(Array(32).fill(0));
 const fpRegs = reactive<number[]>(Array(32).fill(0));
@@ -73,7 +86,7 @@ onBeforeUnmount(() => {
       <template v-for="(value, i) in intRegs" :key="`x${i}`">
         <span class="simulation-register-cell simulation-register-name">x{{ i }}</span>
         <span class="simulation-register-cell simulation-register-alias">{{ INT_ABI_NAMES[i] }}</span>
-        <span class="simulation-register-cell">{{ value }}</span>
+        <span class="simulation-register-cell">{{ hexInt(value) }}</span>
       </template>
     </div>
     <div v-if="hasFloatExtension" class="simulation-registers-grid">
@@ -89,18 +102,20 @@ onBeforeUnmount(() => {
 <style scoped>
 .simulation-registers-view {
   display: flex;
+  justify-content: center;
   gap: 1rem;
   padding: 0.75rem;
-  overflow-y: auto;
+  overflow: auto;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .simulation-registers-grid {
   display: grid;
-  grid-template-columns: 2.5rem 3.5rem 1fr;
+  grid-template-columns: 2.5rem 3.5rem auto;
   align-items: stretch;
   font-size: 0.75rem;
   font-family: monospace;
-  flex: 1 1 0;
 }
 
 .simulation-register-cell {

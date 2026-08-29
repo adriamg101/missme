@@ -192,7 +192,7 @@ async function handleStartClick() {
       error_count: number;
       error_output: string;
       config: unknown;
-      codegen: unknown;
+      codegen: { entries: unknown[]; layout: { initial_data: unknown[] } } | null;
     }>("compile", {
       source: code.value,
       config: {
@@ -209,6 +209,9 @@ async function handleStartClick() {
     errorOutput.value = result.error_output;
 
     if (result.error_count === 0 && result.codegen) {
+      // Each instruction is a fixed 4-byte word in this engine — see the
+      // S4 plan's rulings — so .text's real size is just entry count * 4.
+      compileConfigStore.setCompiledSizes(result.codegen.entries.length * 4, result.codegen.layout.initial_data.length);
       await simulationStore.start(
         riscvBase.value,
         result.codegen,
@@ -219,6 +222,7 @@ async function handleStartClick() {
           tlb: hierarchyConfigStore.tlb,
           ram: hierarchyConfigStore.ram,
           disk: hierarchyConfigStore.disk,
+          seed: hierarchyConfigStore.seed,
         },
         Array.from(breakpoints.value),
         Array.from(riscvExtensions.value),
@@ -315,7 +319,7 @@ defineExpose({ selectedLanguage });
     <div class="editor-header">
       <IconButton
         size="sm"
-        ariaLabel="Nuevo fichero"
+        ariaLabel="New file"
         @click="handleNewFileClick"
       >
         <svg viewBox="0 0 16 16" width="16" height="16">
@@ -333,7 +337,7 @@ defineExpose({ selectedLanguage });
       <IconButton
         class="editor-open-file-button"
         size="sm"
-        ariaLabel="Abrir fichero"
+        ariaLabel="Open file"
         @click="handleOpenFileClick"
       >
         <svg viewBox="0 0 16 16" width="16" height="16">
@@ -345,8 +349,9 @@ defineExpose({ selectedLanguage });
       </IconButton>
 
       <IconButton
+        v-if="!simulationStore.isActive"
         size="sm"
-        ariaLabel="Compilar"
+        ariaLabel="Compile"
         :disabled="isCompiling"
         @click="handleStartClick"
       >
@@ -361,7 +366,7 @@ defineExpose({ selectedLanguage });
 
           <IconButton
             size="sm"
-            ariaLabel="Opciones de compilación"
+            ariaLabel="Compilation options"
             @click.stop="toggleOptionsMenu"
           >
             <svg viewBox="0 0 16 16" width="16" height="16">
@@ -448,7 +453,7 @@ defineExpose({ selectedLanguage });
 
     <ConfirmModal
       v-if="showConfirmModal"
-      message="Hay código sin guardar en el editor. ¿Qué quieres hacer?"
+      message="There is unsaved code in the editor. What do you want to do?"
       @save="handleSaveThenLoad"
       @discard="handleOverwrite"
       @cancel="handleCancel"

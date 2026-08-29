@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue"
+import { onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { listen } from "@tauri-apps/api/event"
 import MainLayout from "./components/MainLayout.vue"
 import Editor from "./components/Editor.vue"
@@ -56,17 +56,34 @@ function handleSimEvent(event: { payload: Record<string, unknown> }) {
     for (const boxId of boxIdsForLevel(levelIndex)) {
       diagramRef.value?.triggerHitMiss(boxId, outcome)
     }
+    diagramRef.value?.setStatusMessage(event.payload.accessKind as "fetch" | "load" | "store", event.payload.address as number)
   } else if (kind === "ram_access") {
-    diagramRef.value?.triggerReadWrite("ram", "read")
+    diagramRef.value?.setStatusMessage(event.payload.accessKind as "fetch" | "load" | "store", event.payload.address as number)
   } else if (kind === "disk_access") {
-    diagramRef.value?.triggerReadWrite("disk", "read")
+    diagramRef.value?.setStatusMessage(event.payload.accessKind as "fetch" | "load" | "store", event.payload.address as number)
   } else if (kind === "tlb_access") {
     const outcome = event.payload.outcome as "hit" | "miss"
     diagramRef.value?.triggerHitMiss("tlb", outcome)
+    diagramRef.value?.setStatusMessage(event.payload.accessKind as "fetch" | "load" | "store", event.payload.address as number)
   } else if (kind === "instruction_complete") {
     pendingClear = true
   }
 }
+
+// The last hit/miss colors and status message otherwise only clear right
+// before the *next* step's event arrives (see pendingClear above) — which
+// never happens once a simulation ends (Stop, or the program running out
+// of instructions), leaving the diagram permanently showing the final
+// step's state. Watching isActive directly catches that case too.
+watch(
+  () => simulationStore.isActive,
+  (active) => {
+    if (!active) {
+      diagramRef.value?.clearAccessStates()
+      pendingClear = false
+    }
+  },
+)
 
 let unlistenSimEvent: (() => void) | null = null
 let disposed = false

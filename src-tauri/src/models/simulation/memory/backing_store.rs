@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use super::seeded_random;
 use crate::models::interpreter::riscv::codegen::ir::IrEntry;
 
 /// `.text` is a known, contiguous, fully populated address range, so
@@ -33,13 +34,37 @@ impl InstructionStore {
 pub struct DataStore {
     block_size: usize,
     blocks: HashMap<u64, Vec<u8>>,
+    dirty_percent: u8,
+    seed: u64,
 }
 
 impl DataStore {
     pub fn new(block_size: usize) -> Self {
+        Self::with_dirty_percent(block_size, 0)
+    }
+
+    /// `dirty_percent` of blocks that are never explicitly written still
+    /// read as pre-existing garbage instead of zero, the same way real
+    /// uninitialized RAM behaves. Which blocks those are, and what garbage
+    /// they hold, is computed on demand from `seeded_random` — never stored
+    /// — so this works the same whether `block_size` covers a few bytes or
+    /// the whole address space. No seed is ever entered by the user, so a
+    /// fresh one is drawn here from OS randomness and held fixed for this
+    /// store's whole lifetime — stable within one simulation run, different
+    /// from the last.
+    pub fn with_dirty_percent(block_size: usize, dirty_percent: u8) -> Self {
+        Self::with_dirty_percent_seeded(block_size, dirty_percent, seeded_random::generate_seed())
+    }
+
+    /// Same as `with_dirty_percent`, but the seed is supplied explicitly
+    /// instead of drawn randomly — for tests that need to assert on a
+    /// specific garbage pattern.
+    pub fn with_dirty_percent_seeded(block_size: usize, dirty_percent: u8, seed: u64) -> Self {
         Self {
             block_size,
             blocks: HashMap::new(),
+            dirty_percent,
+            seed,
         }
     }
 
@@ -53,13 +78,38 @@ impl DataStore {
         }
     }
 
+    /// Passive read: never materializes a dirty-seeded block, so display
+    /// code (the RAM/cache inspection views) can peek at a cell without
+    /// ever revealing garbage the program hasn't actually touched yet. Use
+    /// `access_byte` instead for a real simulated Load/Fetch.
     pub fn read_byte(&self, address: u64) -> u8 {
         let block_addr = self.block_address(address);
         let offset = (address - block_addr) as usize;
-        self.blocks
-            .get(&block_addr)
-            .map(|b| b[offset])
-            .unwrap_or(0)
+        self.blocks.get(&block_addr).map(|b| b[offset]).unwrap_or(0)
+    }
+
+    /// Real access: if `address`'s block is dirty-seeded and still
+    /// untouched, this is the moment it actually gets used, so its garbage
+    /// is generated and written into the store for good (the same way a
+    /// real Store would) — from here on it reads and displays like any
+    /// other populated block, with no special-casing left anywhere else.
+    pub fn access_byte(&mut self, address: u64) -> u8 {
+        let block_addr = self.block_address(address);
+        if !self.blocks.contains_key(&block_addr) && self.is_dirty_seeded(block_addr) {
+            self.materialize_dirty_block(block_addr);
+        }
+        let offset = (address - block_addr) as usize;
+        self.blocks.get(&block_addr).map(|b| b[offset]).unwrap_or(0)
+    }
+
+    fn materialize_dirty_block(&mut self, block_addr: u64) {
+        let seed = self.seed;
+        let bytes: Vec<u8> = (0..self.block_size as u64).map(|i| seeded_random::byte(seed, &[2, block_addr + i])).collect();
+        self.blocks.insert(block_addr, bytes);
+    }
+
+    fn is_dirty_seeded(&self, block_address: u64) -> bool {
+        self.dirty_percent > 0 && seeded_random::percent_roll(self.seed, &[1, block_address]) < self.dirty_percent
     }
 
     pub fn write_byte(&mut self, address: u64, value: u8) {
@@ -79,6 +129,14 @@ impl DataStore {
 
     pub fn is_populated(&self, block_address: u64) -> bool {
         self.blocks.contains_key(&block_address)
+    }
+
+    /// True for a block that was never explicitly written but still reads
+    /// as garbage because it landed in the `dirty_percent` bucket — the
+    /// display layer uses this to distinguish "genuinely empty, show a
+    /// dash" from "pre-existing garbage, show it with a dirty marker".
+    pub fn is_dirty(&self, block_address: u64) -> bool {
+        !self.is_populated(block_address) && self.is_dirty_seeded(block_address)
     }
 
     pub fn block_size(&self) -> usize {
@@ -192,5 +250,55 @@ mod tests {
     fn block_size_returns_the_configured_value() {
         let store = DataStore::new(64);
         assert_eq!(store.block_size(), 64);
+    }
+
+    #[test]
+    fn zero_dirty_percent_never_seeds_garbage() {
+        let store = DataStore::with_dirty_percent(64, 0);
+        assert_eq!(store.read_byte(0x10000000), 0);
+        assert!(!store.is_dirty(0x10000000));
+    }
+
+    #[test]
+    fn a_passive_read_of_a_dirty_seeded_block_never_reveals_garbage() {
+        // The RAM/cache inspection views read passively — a cell the
+        // program hasn't actually touched must never leak its would-be
+        // garbage value, and must never get materialized just from being
+        // looked at.
+        let store = DataStore::with_dirty_percent(64, 100);
+        assert!(store.is_dirty(0x10000000));
+        assert_eq!(store.read_byte(0x10000005), 0);
+        assert!(!store.is_populated(0x10000000));
+        assert!(store.is_dirty(0x10000000)); // still hidden, unaffected by the read
+    }
+
+    #[test]
+    fn a_real_access_materializes_a_dirty_seeded_block_reproducibly() {
+        let mut store = DataStore::with_dirty_percent(64, 100);
+        assert!(store.is_dirty(0x10000000));
+        let first = store.access_byte(0x10000005);
+        // Now really populated — from here on it reads like any other
+        // stored byte, and is no longer reported as (hidden) dirty.
+        assert!(store.is_populated(0x10000000));
+        assert!(!store.is_dirty(0x10000000));
+        let second = store.access_byte(0x10000005);
+        assert_eq!(first, second);
+        assert_eq!(store.read_byte(0x10000005), first);
+    }
+
+    #[test]
+    fn writing_into_a_dirty_seeded_block_makes_it_populated_not_dirty() {
+        let mut store = DataStore::with_dirty_percent(64, 100);
+        assert!(store.is_dirty(0x10000000));
+        store.write_byte(0x10000000, 0xAB);
+        assert!(store.is_populated(0x10000000));
+        assert!(!store.is_dirty(0x10000000));
+        assert_eq!(store.read_byte(0x10000000), 0xAB);
+    }
+
+    #[test]
+    fn dirty_percent_zero_is_the_default_via_new() {
+        let store = DataStore::new(64);
+        assert!(!store.is_dirty(0x10000000));
     }
 }

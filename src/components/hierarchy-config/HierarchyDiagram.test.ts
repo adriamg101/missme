@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/vue";
+import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import HierarchyDiagram from "./HierarchyDiagram.vue";
 import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
@@ -85,6 +86,43 @@ describe("HierarchyDiagram — box colors", () => {
     const cacheGroup = screen.getByText("L1").closest("g")!;
     expect(cacheGroup.style.getPropertyValue("--box-hue")).toBe("45");
     expect(cacheGroup.style.getPropertyValue("--box-chroma")).toBe("0.09");
+  });
+});
+
+describe("HierarchyDiagram — status line", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("shows no status message until setStatusMessage is called", () => {
+    render(HierarchyDiagram);
+    expect(screen.queryByText(/Reading|Writing|Fetching/)).toBeNull();
+  });
+
+  it("shows a general read/write/fetch message with the hex address", async () => {
+    const wrapper = mount(HierarchyDiagram);
+    (wrapper.vm as unknown as { setStatusMessage: (kind: string, address: number) => void }).setStatusMessage("load", 0x1000);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("Reading data at 0x1000");
+  });
+
+  it("clears the status message on clearAccessStates", async () => {
+    const wrapper = mount(HierarchyDiagram);
+    const vm = wrapper.vm as unknown as { setStatusMessage: (kind: string, address: number) => void; clearAccessStates: () => void };
+    vm.setStatusMessage("store", 0x2000);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("Writing data at 0x2000");
+
+    vm.clearAccessStates();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).not.toContain("Writing data at 0x2000");
+  });
+
+  it("shows a fetch message", async () => {
+    const wrapper = mount(HierarchyDiagram);
+    (wrapper.vm as unknown as { setStatusMessage: (kind: string, address: number) => void }).setStatusMessage("fetch", 0x3000);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("Fetching instruction at 0x3000");
   });
 });
 

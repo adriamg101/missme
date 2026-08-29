@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use super::seeded_random;
+
 #[derive(Debug, Clone)]
 pub struct CacheLine {
     pub tag: u64,
@@ -36,14 +38,48 @@ pub struct SetAssociativeCache {
     associativity: usize,
     sets: HashMap<u64, Vec<CacheLine>>,
     tick: u64,
+    dirty_percent: u8,
+    seed: u64,
+}
+
+/// A not-yet-touched way slot in `set_index` counts as pre-loaded ("phantom
+/// dirty") if it rolls under `dirty_percent` — a pure function of coordinates,
+/// never stored, so it's consistent whether asked by a real access or by a
+/// display snapshot. `way` here is always the slot a real insert would fill
+/// next (`lines.len()` at insert time), matching how `snapshot_set` numbers
+/// empty ways, so both agree on which slots are phantom-occupied.
+fn phantom_dirty_roll(dirty_percent: u8, seed: u64, set_index: u64, way: u64) -> bool {
+    dirty_percent > 0 && seeded_random::percent_roll(seed, &[3, set_index, way]) < dirty_percent
+}
+
+/// The fake tag a phantom-dirty way displays/evicts — an arbitrary-looking
+/// value that will essentially never collide with a tag a real access
+/// derives from an actual address.
+fn phantom_tag(seed: u64, set_index: u64, way: u64) -> u64 {
+    seeded_random::value(seed, &[4, set_index, way])
 }
 
 impl SetAssociativeCache {
     pub fn new(associativity: usize) -> Self {
+        Self::with_dirty_seed(associativity, 0, 0)
+    }
+
+    /// `dirty_percent` of ways that a real access has never touched still
+    /// count as already occupied by pre-existing dirty data, the same way a
+    /// cache that wasn't cold-started would be — the first real insert into
+    /// such a slot is a miss-with-eviction (of that phantom line) rather
+    /// than a free append. `seed` is resolved once per simulation session
+    /// (the user's chosen value, or a freshly generated one — see
+    /// `seeded_random::generate_seed`) and derived per level/side by the
+    /// caller, so different caches in the same hierarchy don't roll in
+    /// lockstep.
+    pub fn with_dirty_seed(associativity: usize, dirty_percent: u8, seed: u64) -> Self {
         Self {
             associativity,
             sets: HashMap::new(),
             tick: 0,
+            dirty_percent,
+            seed,
         }
     }
 
@@ -61,6 +97,8 @@ impl SetAssociativeCache {
     pub fn insert(&mut self, set_index: u64, tag: u64, dirty: bool) -> Option<Eviction> {
         self.tick += 1;
         let associativity = self.associativity;
+        let dirty_percent = self.dirty_percent;
+        let seed = self.seed;
         let lines = self.sets.entry(set_index).or_default();
 
         let evicted = if lines.len() >= associativity {
@@ -73,7 +111,12 @@ impl SetAssociativeCache {
             let victim = lines.remove(victim_pos);
             Some(Eviction { tag: victim.tag, dirty: victim.dirty })
         } else {
-            None
+            let way = lines.len() as u64;
+            if phantom_dirty_roll(dirty_percent, seed, set_index, way) {
+                Some(Eviction { tag: phantom_tag(seed, set_index, way), dirty: true })
+            } else {
+                None
+            }
         };
 
         lines.push(CacheLine {
@@ -115,6 +158,12 @@ impl SetAssociativeCache {
         (0..self.associativity)
             .map(|way| match lines.get(way) {
                 Some(line) => CacheLineSnapshot { valid: true, dirty: line.dirty, tag: line.tag, recency_rank: rank_of[way] },
+                None if phantom_dirty_roll(self.dirty_percent, self.seed, set_index, way as u64) => CacheLineSnapshot {
+                    valid: true,
+                    dirty: true,
+                    tag: phantom_tag(self.seed, set_index, way as u64),
+                    recency_rank: None,
+                },
                 None => CacheLineSnapshot { valid: false, dirty: false, tag: 0, recency_rank: None },
             })
             .collect()
@@ -248,5 +297,62 @@ mod tests {
     fn associativity_returns_the_configured_value() {
         let cache = SetAssociativeCache::new(4);
         assert_eq!(cache.associativity(), 4);
+    }
+
+    #[test]
+    fn zero_dirty_percent_never_phantom_seeds_a_set() {
+        let cache = SetAssociativeCache::with_dirty_seed(2, 0, 1);
+        let snap = cache.snapshot_set(0);
+        assert!(snap.iter().all(|w| !w.valid));
+    }
+
+    #[test]
+    fn full_dirty_percent_phantom_seeds_every_way_of_an_untouched_set() {
+        let cache = SetAssociativeCache::with_dirty_seed(2, 100, 1);
+        let snap = cache.snapshot_set(0);
+        assert_eq!(snap.len(), 2);
+        assert!(snap.iter().all(|w| w.valid && w.dirty));
+        // Distinct way slots roll distinct fake tags.
+        assert_ne!(snap[0].tag, snap[1].tag);
+    }
+
+    #[test]
+    fn phantom_seeding_is_deterministic_across_separate_instances_with_the_same_seed() {
+        let a = SetAssociativeCache::with_dirty_seed(2, 100, 7);
+        let b = SetAssociativeCache::with_dirty_seed(2, 100, 7);
+        assert_eq!(a.snapshot_set(3)[1].tag, b.snapshot_set(3)[1].tag);
+    }
+
+    #[test]
+    fn a_different_seed_rolls_different_phantom_tags() {
+        let a = SetAssociativeCache::with_dirty_seed(2, 100, 1);
+        let b = SetAssociativeCache::with_dirty_seed(2, 100, 2);
+        assert_ne!(a.snapshot_set(0)[0].tag, b.snapshot_set(0)[0].tag);
+    }
+
+    #[test]
+    fn a_real_insert_into_a_phantom_dirty_slot_evicts_it_instead_of_freely_appending() {
+        let mut cache = SetAssociativeCache::with_dirty_seed(2, 100, 1);
+        let phantom_tag = cache.snapshot_set(0)[0].tag;
+
+        let evicted = cache.insert(0, 999, false);
+
+        assert_eq!(evicted, Some(Eviction { tag: phantom_tag, dirty: true }));
+        // The set now holds one real line; only the untouched way slot
+        // still rolls as phantom.
+        let snap = cache.snapshot_set(0);
+        assert_eq!(snap[0].tag, 999);
+        assert!(!snap[0].dirty);
+        assert!(snap[1].valid && snap[1].dirty);
+    }
+
+    #[test]
+    fn once_a_slot_holds_a_real_line_it_no_longer_rolls_as_phantom() {
+        let mut cache = SetAssociativeCache::with_dirty_seed(1, 100, 1);
+        cache.insert(0, 1, false);
+        // The only way is now real; a second insert must evict the real
+        // line via normal LRU, not re-roll a phantom for the same slot.
+        let evicted = cache.insert(0, 2, false);
+        assert_eq!(evicted, Some(Eviction { tag: 1, dirty: false }));
     }
 }

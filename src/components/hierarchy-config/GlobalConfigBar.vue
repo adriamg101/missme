@@ -20,7 +20,7 @@ function onConvertToVonNeumann(levelId: string) {
   const result = store.convertToVonNeumann(levelId);
   if (!result.ok) {
     alert(
-      `No se puede convertir a Von Neumann: entraría en conflicto con ${levelName(store.hierarchy, result.conflictIndex)}.`,
+      `Cannot convert to Von Neumann: it would conflict with ${levelName(store.hierarchy, result.conflictIndex)}.`,
     );
   }
 }
