@@ -47,9 +47,9 @@ function decrement() {
   <div class="power-of-two-stepper-field">
     <span v-if="label" class="power-of-two-stepper-label">{{ label }}</span>
     <div class="power-of-two-stepper" :class="`size-${size}`">
-      <button type="button" class="power-of-two-stepper-button" aria-label="Decrementar" @click="decrement">−</button>
+      <button type="button" class="power-of-two-stepper-button" aria-label="Decrement" @click="decrement">−</button>
       <input type="text" readonly role="spinbutton" :aria-label="ariaLabel" :value="display" />
-      <button type="button" class="power-of-two-stepper-button" aria-label="Incrementar" @click="increment">+</button>
+      <button type="button" class="power-of-two-stepper-button" aria-label="Increment" @click="increment">+</button>
     </div>
   </div>
 </template>

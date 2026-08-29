@@ -2,11 +2,19 @@ import { defineStore } from "pinia";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+export type SimulationView =
+  | { kind: "stats" }
+  | { kind: "registers" }
+  | { kind: "cache"; levelId: string; side: "unified" | "i" | "d" }
+  | { kind: "ram" };
+
 interface SimulationState {
   isActive: boolean;
   isRunning: boolean;
   speedMs: number;
   currentLine: number | null;
+  activeView: SimulationView;
+  activeExtensions: string[];
 }
 
 export const useSimulationStore = defineStore("simulation", {
@@ -15,13 +23,17 @@ export const useSimulationStore = defineStore("simulation", {
     isRunning: false,
     speedMs: 100,
     currentLine: null,
+    activeView: { kind: "stats" },
+    activeExtensions: [],
   }),
   actions: {
-    async start(base: string, codegen: unknown, hierarchy: unknown, breakpoints: number[]) {
+    async start(base: string, codegen: unknown, hierarchy: unknown, breakpoints: number[], extensions: string[] = []) {
       await invoke("start_simulation", { base, codegen, hierarchy, breakpoints });
       this.isActive = true;
       this.isRunning = true;
       this.currentLine = null;
+      this.activeView = { kind: "stats" };
+      this.activeExtensions = extensions;
     },
     async pause() {
       await invoke("pause_simulation", {});
@@ -42,10 +54,15 @@ export const useSimulationStore = defineStore("simulation", {
       this.isActive = false;
       this.isRunning = false;
       this.currentLine = null;
+      this.activeView = { kind: "stats" };
+      this.activeExtensions = [];
     },
     async setSpeed(ms: number) {
       await invoke("set_speed", { ms });
       this.speedMs = ms;
+    },
+    openView(view: SimulationView) {
+      this.activeView = view;
     },
     async listenForEvents(): Promise<() => void> {
       return listen<Record<string, unknown>>("sim:event", (event) => {

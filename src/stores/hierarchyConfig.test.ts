@@ -127,16 +127,50 @@ describe("useHierarchyConfigStore", () => {
 
   it("clamps associativity down when moveMarker shrinks the cache size below the current max", () => {
     const store = useHierarchyConfigStore();
-    store.createLevelAt(10); // size exp 10 -> 1KB cache
+    store.createLevelAt(10); // exp 10 -> max associativity 2**10 = 1024 entries
     const id = store.hierarchy[0].id;
-    // blockSize 64 -> max associativity at exp 10 is 2**10/64 = 16
     store.updateCacheConfig(id, "unified", { blockSize: 64, associativity: 16 });
     expect(store.hierarchy[0].unified!.config.associativity).toBe(16);
 
-    // shrink to exp 4 (16 bytes) -> max associativity is floor(16/64) clamped to 1
-    store.moveMarker(id, "unified", 4);
-    expect(store.hierarchy[0].unified!.exp).toBe(4);
-    expect(store.hierarchy[0].unified!.config.associativity).toBe(1);
+    // shrink to exp 2 -> max associativity 2**2 = 4 entries, clamps 16 down to 4.
+    // Max associativity is independent of blockSize — it's purely the
+    // entry count (numSets * associativity), per diagram.ts/backend.
+    store.moveMarker(id, "unified", 2);
+    expect(store.hierarchy[0].unified!.exp).toBe(2);
+    expect(store.hierarchy[0].unified!.config.associativity).toBe(4);
+  });
+
+  it("applyCacheConfigToAllLevels copies the config to every cache entry, clamping associativity per level", () => {
+    const store = useHierarchyConfigStore();
+    store.createLevelAt(10); // exp 10 -> max associativity 1024
+    store.createLevelAt(2); // exp 2 -> max associativity 4, smaller cache
+    const bigLevel = store.hierarchy.find((l) => l.unified!.exp === 10)!;
+    const smallId = store.hierarchy.find((l) => l.unified!.exp === 2)!.id;
+
+    store.applyCacheConfigToAllLevels({
+      blockSize: 64,
+      associativity: 16,
+      replacement: "FIFO",
+      writePolicy: "write-through",
+      writeAllocate: false,
+      hitTime: 3,
+      dirtyPercent: 20,
+    });
+
+    const bigLevelAfter = store.hierarchy.find((l) => l.id === bigLevel.id)!;
+    expect(bigLevelAfter.unified!.config).toEqual({
+      blockSize: 64,
+      associativity: 16,
+      replacement: "FIFO",
+      writePolicy: "write-through",
+      writeAllocate: false,
+      hitTime: 3,
+      dirtyPercent: 20,
+    });
+    // exp 2 -> max associativity 2**2 = 4, clamps the requested 16 down to 4.
+    const smallLevel = store.hierarchy.find((l) => l.id === smallId)!;
+    expect(smallLevel.unified!.config.associativity).toBe(4);
+    expect(smallLevel.unified!.config.replacement).toBe("FIFO");
   });
 
   it("setIsa applies the clamp (colliding two levels) when the confirm callback returns true", () => {

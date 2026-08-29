@@ -30,5 +30,6 @@ pub trait CpuSimulator {
     fn pc(&self) -> u64;
     fn register(&self, id: RegisterId) -> u64;
     fn fp_register(&self, id: RegisterId) -> f64;
+    fn memory(&self) -> &memory::hierarchy::MemoryHierarchySimulator;
     fn current_source_line(&self) -> Option<usize>;
 }

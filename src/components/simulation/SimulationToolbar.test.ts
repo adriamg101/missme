@@ -50,9 +50,29 @@ describe("SimulationToolbar", () => {
     expect(invokeMock).toHaveBeenCalledWith("step_action", {});
   });
 
-  it("changing the speed slider invokes set_speed", async () => {
+  it("shows the default speed (100ms) at the geometric midpoint of the log-scaled slider", () => {
     render(SimulationToolbar);
-    await fireEvent.update(screen.getByLabelText("Delay (ms)"), "250");
-    expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 250 });
+    // 10ms and 1000ms are the two ends of the log scale; 100ms is their
+    // geometric mean, landing exactly at slider position 50 (of 0..100).
+    expect(screen.getByLabelText("Delay (ms)")).toHaveValue("50");
+  });
+
+  it("changing the speed slider maps its log-scaled position to ms before calling set_speed", async () => {
+    render(SimulationToolbar);
+    // Position 50 -> sqrt(10 * 1000) = 100ms (see the geometric-midpoint test above).
+    await fireEvent.update(screen.getByLabelText("Delay (ms)"), "50");
+    expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 100 });
+  });
+
+  it("the fast end of the slider (position 0) maps to the minimum delay", async () => {
+    render(SimulationToolbar);
+    await fireEvent.update(screen.getByLabelText("Delay (ms)"), "0");
+    expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 10 });
+  });
+
+  it("the slow end of the slider (position 100) maps to the maximum delay", async () => {
+    render(SimulationToolbar);
+    await fireEvent.update(screen.getByLabelText("Delay (ms)"), "100");
+    expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 1000 });
   });
 });

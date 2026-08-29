@@ -11,7 +11,7 @@ const props = defineProps<{ tlb: TlbConfig; pageWalkTargets: PageWalkTarget[] }>
 const emit = defineEmits<{ update: [patch: Partial<TlbConfig>] }>();
 
 const pageWalkOptions = props.pageWalkTargets.map((target) => ({ value: target.id, label: target.label }));
-const replacementOptions = ["LRU", "FIFO", "Random", "PLRU"].map((value) => ({ value, label: value }));
+const replacementOptions = ["LRU", "FIFO", "Random"].map((value) => ({ value, label: value }));
 
 function onPageTableLevelsChange(value: number) {
   emit("update", { pageTableLevels: Math.max(1, Number.isFinite(value) ? value : 1) });

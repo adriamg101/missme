@@ -37,7 +37,7 @@ describe("TlbConfigForm", () => {
 
   it("emits an update patch when page size changes via the stepper", async () => {
     const { emitted } = render(TlbConfigForm, { props: { tlb, pageWalkTargets: targets } });
-    await fireEvent.click(screen.getAllByLabelText("Incrementar")[0]);
+    await fireEvent.click(screen.getAllByLabelText("Increment")[0]);
     expect(emitted().update[0]).toEqual([{ pageSize: 8192 }]);
   });
 

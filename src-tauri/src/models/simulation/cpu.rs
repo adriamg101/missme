@@ -24,6 +24,12 @@ pub struct RiscvCpuSimulator {
     instructions: InstructionStore,
     memory: MemoryHierarchySimulator,
     pending: Option<PendingMemoryOp>,
+    // Source line of the instruction currently being fetched, while its
+    // Fetch access is walking the memory hierarchy — mirrors `pending`'s
+    // role for loads/stores, but a fetch has no register to write back on
+    // completion, so it only needs to remember where to attribute the
+    // in-progress MemoryLevel actions.
+    fetch_pending: Option<usize>,
 }
 
 impl RiscvCpuSimulator {
@@ -31,6 +37,14 @@ impl RiscvCpuSimulator {
         let text_base = codegen.layout.text_base as u64;
         let data_base = codegen.layout.data_base as u64;
         memory.preload_ram(data_base, &codegen.layout.initial_data);
+        // Instruction bytecode is preloaded into RAM at text_base too, in
+        // program order (one 4-byte little-endian word per entry) — purely
+        // so a Fetch access has real bytes to read on its way through the
+        // hierarchy/RAM inspection views. Actual instruction decoding never
+        // reads this back; it always uses `instructions` below, which is
+        // the authoritative source of what each instruction is.
+        let text_bytes: Vec<u8> = codegen.entries.iter().flat_map(|entry| entry.bytecode.to_le_bytes()).collect();
+        memory.preload_ram(text_base, &text_bytes);
         Self {
             base,
             registers: [0; 32],
@@ -39,6 +53,7 @@ impl RiscvCpuSimulator {
             instructions: InstructionStore::new(text_base, codegen.entries),
             memory,
             pending: None,
+            fetch_pending: None,
         }
     }
 
@@ -984,7 +999,43 @@ impl CpuSimulator for RiscvCpuSimulator {
             return Action { kind: ActionKind::MemoryLevel(level_result), source_line, instruction_complete: false };
         }
 
-        self.execute_current_instruction()
+        if let Some(source_line) = self.fetch_pending {
+            // Same shape as the `pending` branch above: while the fetch's
+            // walk through the hierarchy isn't finished, report one step
+            // per call; once finished, consume its result (the fetched
+            // bytes themselves are unused — decoding always comes from
+            // `instructions`, never from what was just read out of RAM)
+            // and only THEN move on to actually executing the instruction,
+            // on this same call, exactly as a completed load/store's own
+            // pending branch immediately used to return its completion
+            // action rather than deferring it to yet another call.
+            if self.memory.is_access_finished() {
+                self.fetch_pending = None;
+                self.memory.take_result();
+                return self.execute_current_instruction();
+            }
+            let level_result = self.memory.step();
+            return Action { kind: ActionKind::MemoryLevel(level_result), source_line, instruction_complete: false };
+        }
+
+        // Begin fetching the instruction at pc through the memory
+        // hierarchy — purely for cache/TLB/RAM hit-miss modeling and the
+        // memory-inspection views; the instruction itself is still decoded
+        // straight from `instructions` once this access finishes, below.
+        let entry = self
+            .instructions
+            .fetch(self.pc)
+            .expect("step_action called while finished");
+        let source_line = entry.source_line;
+        let access = super::memory::hierarchy::MemoryAccess {
+            kind: super::memory::hierarchy::AccessKind::Fetch,
+            address: self.pc,
+            size: 4,
+            store_bytes: None,
+        };
+        let level_result = self.memory.begin_access(access);
+        self.fetch_pending = Some(source_line);
+        Action { kind: ActionKind::MemoryLevel(level_result), source_line, instruction_complete: false }
     }
 
     fn is_finished(&self) -> bool {
@@ -1003,6 +1054,10 @@ impl CpuSimulator for RiscvCpuSimulator {
         self.read_fp_register(id)
     }
 
+    fn memory(&self) -> &MemoryHierarchySimulator {
+        &self.memory
+    }
+
     fn current_source_line(&self) -> Option<usize> {
         self.instructions.fetch(self.pc).map(|entry| entry.source_line)
     }
@@ -1010,6 +1065,16 @@ impl CpuSimulator for RiscvCpuSimulator {
 
 #[cfg(test)]
 mod tests {
+
+    fn run_to_finished_action(sim: &mut RiscvCpuSimulator) -> Action {
+        loop {
+            let action = sim.step_action();
+            if action.instruction_complete {
+                return action;
+            }
+        }
+    }
+
     use super::*;
     use crate::models::interpreter::riscv::codegen::ir::{CodegenOutput, MemoryLayout};
     use crate::models::interpreter::riscv::lexer::token::RegisterKind;
@@ -1019,7 +1084,7 @@ mod tests {
         CacheConfig, CacheEntry, DiskConfig, HierarchyConfig, InclusionPolicy, Level, RamConfig, ReplacementPolicy, TlbConfig,
         TlbReplacementPolicy, WritePolicy,
     };
-    use crate::models::simulation::memory::hierarchy::{LevelId, LevelOutcome, LevelResult, MemoryHierarchySimulator};
+    use crate::models::simulation::memory::hierarchy::{AccessKind, LevelId, LevelOutcome, LevelResult, MemoryHierarchySimulator};
     use std::collections::HashMap;
 
     fn no_cache_hierarchy_config() -> HierarchyConfig {
@@ -1037,11 +1102,12 @@ mod tests {
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
             disk: DiskConfig { latency: 10000 },
+            seed: None,
         }
     }
 
     fn mem() -> MemoryHierarchySimulator {
-        MemoryHierarchySimulator::new(no_cache_hierarchy_config(), DataStore::new(64), DataStore::new(64))
+        MemoryHierarchySimulator::new(no_cache_hierarchy_config(), DataStore::new(64), DataStore::new(64), 0)
     }
 
     /// A hierarchy with a single L1 cache level between the CPU and RAM —
@@ -1082,11 +1148,12 @@ mod tests {
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
             disk: DiskConfig { latency: 10000 },
+            seed: None,
         }
     }
 
     fn mem_with_one_cache_level() -> MemoryHierarchySimulator {
-        MemoryHierarchySimulator::new(one_cache_level_hierarchy_config(), DataStore::new(4), DataStore::new(4))
+        MemoryHierarchySimulator::new(one_cache_level_hierarchy_config(), DataStore::new(4), DataStore::new(4), 0)
     }
 
     fn add_entry(address: u32, rd: u8, rs1: u8, rs2: u8) -> IrEntry {
@@ -1170,7 +1237,7 @@ mod tests {
         sim.registers[2] = 10;
         sim.registers[3] = 32;
 
-        let action = sim.step_action();
+        let action = run_to_finished_action(&mut sim);
 
         assert_eq!(action.kind, ActionKind::RegisterWrite { register: RegisterId(1), value: 42 });
         assert_eq!(action.source_line, 1);
@@ -1183,14 +1250,41 @@ mod tests {
     fn x0_always_reads_as_zero_even_after_being_written() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![add_entry(0x1000, 0, 1, 1)]), mem());
         sim.registers[1] = 5;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(0)), 0);
+    }
+
+    #[test]
+    fn instruction_bytecode_is_preloaded_into_ram_at_text_base() {
+        // The engine's memory hierarchy has no separate instruction store
+        // of its own — a Fetch access needs real bytes to read on its way
+        // through RAM, so the compiled bytecode must be preloaded there at
+        // text_base, one little-endian word per entry, in program order.
+        let entry_a = IrEntry {
+            address: 0x1000,
+            kind: InstructionKind::Add,
+            operands: vec![
+                Operand::Register(RegisterKind::X(1)),
+                Operand::Register(RegisterKind::X(2)),
+                Operand::Register(RegisterKind::X(3)),
+            ],
+            bytecode: 0x003100B3,
+            source_line: 1,
+            source_column: 1,
+        };
+        let entry_b = IrEntry { address: 0x1004, bytecode: 0xDEADBEEF, ..entry_a.clone() };
+        let sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry_a, entry_b]), mem());
+
+        let blocks = sim.memory().ram_blocks(0x1000, 1);
+        assert!(blocks[0].populated);
+        assert_eq!(blocks[0].words[0], 0x003100B3);
+        assert_eq!(blocks[0].words[1], 0xDEADBEEF);
     }
 
     #[test]
     fn program_is_finished_after_its_only_instruction_executes() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![add_entry(0x1000, 1, 2, 3)]), mem());
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert!(sim.is_finished());
     }
 
@@ -1198,7 +1292,7 @@ mod tests {
     fn addi_adds_a_sign_extended_immediate() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![i_type_entry(InstructionKind::Addi, 0x1000, 1, 2, -5)]), mem());
         sim.registers[2] = 10;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 5);
     }
 
@@ -1207,7 +1301,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![r_type_entry(InstructionKind::Sub, 0x1000, 1, 2, 3)]), mem());
         sim.registers[2] = 0;
         sim.registers[3] = 1;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF);
     }
 
@@ -1216,7 +1310,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![r_type_entry(InstructionKind::Slt, 0x1000, 1, 2, 3)]), mem());
         sim.registers[2] = 0xFFFF_FFFF; // -1 signed
         sim.registers[3] = 1;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1);
     }
 
@@ -1225,7 +1319,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![r_type_entry(InstructionKind::Sltu, 0x1000, 1, 2, 3)]), mem());
         sim.registers[2] = 0xFFFF_FFFF;
         sim.registers[3] = 1;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0);
     }
 
@@ -1233,7 +1327,7 @@ mod tests {
     fn srai_preserves_sign() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![i_type_entry(InstructionKind::Srai, 0x1000, 1, 2, 1)]), mem());
         sim.registers[2] = 0xFFFF_FFFE; // -2
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF); // -1
     }
 
@@ -1241,7 +1335,7 @@ mod tests {
     fn srli_is_logical() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![i_type_entry(InstructionKind::Srli, 0x1000, 1, 2, 1)]), mem());
         sim.registers[2] = 0xFFFF_FFFE;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0x7FFF_FFFF);
     }
 
@@ -1256,7 +1350,7 @@ mod tests {
             source_column: 1,
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0x1234_5000);
     }
 
@@ -1271,7 +1365,7 @@ mod tests {
             source_column: 1,
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0x1000 + 0x1000);
     }
 
@@ -1301,7 +1395,7 @@ mod tests {
             source_column: 1,
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0x1004);
         assert_eq!(sim.pc(), 0x1100);
     }
@@ -1321,7 +1415,7 @@ mod tests {
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
         sim.registers[2] = 0x2000;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.pc(), 0x2000); // 0x2000 + 1, low bit cleared
     }
 
@@ -1330,7 +1424,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![branch_entry(InstructionKind::Beq, 0x1000, 1, 2, 0x20)]), mem());
         sim.registers[1] = 5;
         sim.registers[2] = 5;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.pc(), 0x1020);
     }
 
@@ -1339,7 +1433,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![branch_entry(InstructionKind::Beq, 0x1000, 1, 2, 0x20)]), mem());
         sim.registers[1] = 5;
         sim.registers[2] = 6;
-        let action = sim.step_action();
+        let action = run_to_finished_action(&mut sim);
         assert_eq!(action.kind, ActionKind::NoOp);
         assert_eq!(sim.pc(), 0x1004);
     }
@@ -1349,7 +1443,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![branch_entry(InstructionKind::Bltu, 0x1000, 1, 2, 0x20)]), mem());
         sim.registers[1] = 0xFFFF_FFFF; // huge unsigned, would be -1 signed
         sim.registers[2] = 1;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.pc(), 0x1004); // not taken: 0xFFFFFFFF is NOT < 1 unsigned
     }
 
@@ -1358,7 +1452,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![branch_entry(InstructionKind::Blt, 0x1000, 1, 2, 0x20)]), mem());
         sim.registers[1] = 0xFFFF_FFFF; // -1 signed
         sim.registers[2] = 1;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.pc(), 0x1020); // taken: -1 < 1 signed
     }
 
@@ -1367,7 +1461,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![branch_entry(InstructionKind::Bge, 0x1000, 1, 2, 0x20)]), mem());
         sim.registers[1] = 0xFFFF_FFFF; // -1 signed
         sim.registers[2] = 1;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.pc(), 0x1004); // not taken: -1 >= 1 is false
     }
 
@@ -1385,15 +1479,6 @@ mod tests {
         }
     }
 
-    fn run_to_finished_action(sim: &mut RiscvCpuSimulator) -> Action {
-        loop {
-            let action = sim.step_action();
-            if action.instruction_complete {
-                return action;
-            }
-        }
-    }
-
     #[test]
     fn lw_reads_a_previously_stored_word() {
         let mut mem = mem();
@@ -1401,13 +1486,31 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![load_entry(InstructionKind::Lw, 0x1000, 1, 2, 0)]), mem);
         sim.registers[2] = 0x10000000;
 
-        // With a zero-level hierarchy, `begin_access` (inside the first
-        // `step_action` call) resolves straight to RAM, so no `step()` is
-        // ever taken — the second `step_action` call must find the access
+        // Every instruction now begins with its own Fetch access walking
+        // the hierarchy first. With a zero-level hierarchy that resolves
+        // straight to RAM in one call, so this single throwaway call
+        // finishes the fetch and, via execute_current_instruction(),
+        // immediately begins the load's own access too (its begin_access
+        // also resolves straight to RAM in one call) — that's the result
+        // this call returns, and what `first` below picks up next.
+        sim.step_action(); // fetch: begin_access resolves straight to RAM
+
+        // With a zero-level hierarchy, the load's own `begin_access`
+        // (returned by the call above, once the fetch that preceded it
+        // finished) resolves straight to RAM, so no `step()` is ever
+        // taken — the next `step_action` call must find the access
         // already finished and complete right away, with no spurious
         // extra step introduced by the finding #1 fix.
         let first = sim.step_action();
-        assert_eq!(first.kind, ActionKind::MemoryLevel(LevelResult { level: LevelId::Ram, outcome: LevelOutcome::Hit }));
+        assert_eq!(
+            first.kind,
+            ActionKind::MemoryLevel(LevelResult {
+                level: LevelId::Ram,
+                outcome: LevelOutcome::Hit,
+                address: 0x10000000,
+                access_kind: AccessKind::Load,
+            })
+        );
         assert!(!first.instruction_complete);
 
         let second = sim.step_action();
@@ -1463,9 +1566,26 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![load_entry(InstructionKind::Lw, 0x1000, 1, 2, 0)]), mem);
         sim.registers[2] = 0x10000000;
 
-        // Call 1: begin_access misses at L1.
+        // Every instruction now begins with its own Fetch access walking
+        // the hierarchy first — for pc 0x1000 that's a cold miss at L1
+        // (throwaway call 1) followed by a RAM hit (throwaway call 2,
+        // which finishes the fetch and, via execute_current_instruction(),
+        // immediately begins the load's own access, whose result is what
+        // `first` below picks up).
+        sim.step_action(); // fetch: misses at L1
+        sim.step_action(); // fetch: hits at RAM, finishes, load's own access begins
+
+        // Call 1 (of the load itself): begin_access misses at L1.
         let first = sim.step_action();
-        assert_eq!(first.kind, ActionKind::MemoryLevel(LevelResult { level: LevelId::Cache(0), outcome: LevelOutcome::Miss }));
+        assert_eq!(
+            first.kind,
+            ActionKind::MemoryLevel(LevelResult {
+                level: LevelId::Cache(0),
+                outcome: LevelOutcome::Miss,
+                address: 0x10000000,
+                access_kind: AccessKind::Load,
+            })
+        );
         assert!(!first.instruction_complete);
         assert_eq!(sim.pc(), 0x1000, "pc must not advance until the instruction actually completes");
 
@@ -1473,7 +1593,15 @@ mod tests {
         // level that actually resolved the load — it must be reported
         // here, as its own action, not dropped.
         let second = sim.step_action();
-        assert_eq!(second.kind, ActionKind::MemoryLevel(LevelResult { level: LevelId::Ram, outcome: LevelOutcome::Hit }));
+        assert_eq!(
+            second.kind,
+            ActionKind::MemoryLevel(LevelResult {
+                level: LevelId::Ram,
+                outcome: LevelOutcome::Hit,
+                address: 0x10000000,
+                access_kind: AccessKind::Load,
+            })
+        );
         assert!(!second.instruction_complete);
         assert_eq!(sim.pc(), 0x1000, "pc must not advance on the resolving step either — only on the completion action");
         assert_eq!(sim.register(RegisterId(1)), 0, "the register write must not happen until the dedicated completion call");
@@ -1571,7 +1699,7 @@ mod tests {
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![entry]), mem());
         sim.registers[2] = 0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF_FFFF_FFFF);
     }
 
@@ -1580,7 +1708,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![r_type_entry(InstructionKind::Addw, 0x1000, 1, 2, 3)]), mem());
         sim.registers[2] = 0xFFFF_FFFF_0000_0001;
         sim.registers[3] = 1;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 2);
     }
 
@@ -1628,7 +1756,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![r_type_entry(InstructionKind::Mul, 0x1000, 1, 2, 3)]), mem());
         sim.registers[2] = 0x1_0000;
         sim.registers[3] = 0x1_0000;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0); // 0x1_0000 * 0x1_0000 = 0x1_0000_0000, wraps to 0 in 32 bits
     }
 
@@ -1637,7 +1765,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![r_type_entry(InstructionKind::Mulhu, 0x1000, 1, 2, 3)]), mem());
         sim.registers[2] = 0xFFFF_FFFF;
         sim.registers[3] = 0xFFFF_FFFF;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFE);
     }
 
@@ -1646,7 +1774,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![r_type_entry(InstructionKind::Div, 0x1000, 1, 2, 3)]), mem());
         sim.registers[2] = 42;
         sim.registers[3] = 0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF);
     }
 
@@ -1655,7 +1783,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![r_type_entry(InstructionKind::Rem, 0x1000, 1, 2, 3)]), mem());
         sim.registers[2] = 42;
         sim.registers[3] = 0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 42);
     }
 
@@ -1664,7 +1792,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![r_type_entry(InstructionKind::Divu, 0x1000, 1, 2, 3)]), mem());
         sim.registers[2] = 10;
         sim.registers[3] = 3;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 3);
     }
 
@@ -1672,7 +1800,7 @@ mod tests {
     fn fence_is_a_no_op_that_advances_pc() {
         let entry = IrEntry { address: 0x1000, kind: InstructionKind::Fence, operands: vec![], bytecode: 0, source_line: 1, source_column: 1 };
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
-        let action = sim.step_action();
+        let action = run_to_finished_action(&mut sim);
         assert_eq!(action.kind, ActionKind::NoOp);
         assert_eq!(sim.pc(), 0x1004);
     }
@@ -1681,7 +1809,7 @@ mod tests {
     fn ecall_advances_past_itself_and_the_program_can_finish() {
         let entry = IrEntry { address: 0x1000, kind: InstructionKind::Ecall, operands: vec![], bytecode: 0, source_line: 1, source_column: 1 };
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert!(sim.is_finished());
     }
 
@@ -1703,14 +1831,14 @@ mod tests {
         // sets bit 31 of the 32-bit result — that must sign-extend through
         // the full 64-bit register under Rv64i.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![u_type_entry(InstructionKind::Lui, 0x1000, 1, 0xFFFFF)]), mem());
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF_FFFF_F000);
     }
 
     #[test]
     fn rv32i_lui_is_unaffected_by_the_sign_extension_fix() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![u_type_entry(InstructionKind::Lui, 0x1000, 1, 0xFFFFF)]), mem());
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_F000);
     }
 
@@ -1720,7 +1848,7 @@ mod tests {
         // before the fix the un-sign-extended immediate made this
         // `0x1_0000_0000` instead.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![u_type_entry(InstructionKind::Auipc, 0x1000, 1, 0xFFFFF)]), mem());
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0);
     }
 
@@ -1734,7 +1862,7 @@ mod tests {
         // always true.
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![i_type_entry(InstructionKind::Sltiu, 0x1000, 1, 2, -1)]), mem());
         sim.registers[2] = 0xFFFF_FFFF;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0);
     }
 
@@ -1866,7 +1994,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FaddS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 1.1;
         sim.f_registers[3] = 2.2;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), (1.1f32 + 2.2f32) as f64);
     }
 
@@ -1875,7 +2003,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FaddD, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 1.1;
         sim.f_registers[3] = 2.2;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 1.1f64 + 2.2f64);
     }
 
@@ -1884,7 +2012,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsubS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 5.0;
         sim.f_registers[3] = 2.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 3.0);
     }
 
@@ -1893,7 +2021,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FmulD, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 3.0;
         sim.f_registers[3] = 4.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 12.0);
     }
 
@@ -1902,7 +2030,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FdivS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 10.0;
         sim.f_registers[3] = 4.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 2.5);
     }
 
@@ -1921,7 +2049,7 @@ mod tests {
     fn fsqrt_d_computes_the_square_root() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r2_entry(InstructionKind::FsqrtD, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 16.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 4.0);
     }
 
@@ -1930,7 +2058,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 5.0;
         sim.f_registers[3] = -1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), -5.0);
     }
 
@@ -1939,7 +2067,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjnS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 5.0;
         sim.f_registers[3] = -1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 5.0);
     }
 
@@ -1948,7 +2076,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjxS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = -5.0;
         sim.f_registers[3] = -1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         // both negative -> XOR is false (positive) -> +5.0
         assert_eq!(sim.fp_register(RegisterId(1)), 5.0);
     }
@@ -1961,7 +2089,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjxS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 5.0;
         sim.f_registers[3] = -1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), -5.0);
     }
 
@@ -1969,7 +2097,7 @@ mod tests {
     fn fsqrt_s_computes_the_square_root() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r2_entry(InstructionKind::FsqrtS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 9.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 3.0);
     }
 
@@ -1978,7 +2106,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjD, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 5.0;
         sim.f_registers[3] = -1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), -5.0);
     }
 
@@ -1999,7 +2127,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FminS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 5.0;
         sim.f_registers[3] = 2.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 2.0);
     }
 
@@ -2008,7 +2136,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FmaxD, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 5.0;
         sim.f_registers[3] = 2.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 5.0);
     }
 
@@ -2017,7 +2145,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FminS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = f64::NAN;
         sim.f_registers[3] = 2.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 2.0);
     }
 
@@ -2043,7 +2171,7 @@ mod tests {
         sim.f_registers[2] = 2.0;
         sim.f_registers[3] = 3.0;
         sim.f_registers[4] = 1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 7.0); // 2*3+1
     }
 
@@ -2053,7 +2181,7 @@ mod tests {
         sim.f_registers[2] = 2.0;
         sim.f_registers[3] = 3.0;
         sim.f_registers[4] = 1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), -7.0); // -(2*3)-1
     }
 
@@ -2063,7 +2191,7 @@ mod tests {
         sim.f_registers[2] = 2.0;
         sim.f_registers[3] = 3.0;
         sim.f_registers[4] = 1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 5.0); // 2*3-1
     }
 
@@ -2073,7 +2201,7 @@ mod tests {
         sim.f_registers[2] = 2.0;
         sim.f_registers[3] = 3.0;
         sim.f_registers[4] = 1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 7.0); // 2*3+1
     }
 
@@ -2083,7 +2211,7 @@ mod tests {
         sim.f_registers[2] = 2.0;
         sim.f_registers[3] = 3.0;
         sim.f_registers[4] = 1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), -5.0); // -(2*3)+1
     }
 
@@ -2093,7 +2221,7 @@ mod tests {
         sim.f_registers[2] = 2.0;
         sim.f_registers[3] = 3.0;
         sim.f_registers[4] = 1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), -7.0); // -(2*3)-1
     }
 
@@ -2103,7 +2231,7 @@ mod tests {
         sim.f_registers[2] = 2.0;
         sim.f_registers[3] = 3.0;
         sim.f_registers[4] = 1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 5.0); // 2*3-1
     }
 
@@ -2113,7 +2241,7 @@ mod tests {
         sim.f_registers[2] = 2.0;
         sim.f_registers[3] = 3.0;
         sim.f_registers[4] = 1.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), -5.0); // -(2*3)+1
     }
 
@@ -2137,7 +2265,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_cmp_entry(InstructionKind::FeqS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 3.0;
         sim.f_registers[3] = 3.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1);
     }
 
@@ -2146,7 +2274,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_cmp_entry(InstructionKind::FltD, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 5.0;
         sim.f_registers[3] = 3.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0);
     }
 
@@ -2155,7 +2283,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_cmp_entry(InstructionKind::FeqS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = f64::NAN;
         sim.f_registers[3] = f64::NAN;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0);
     }
 
@@ -2164,7 +2292,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_cmp_entry(InstructionKind::FleS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 3.0;
         sim.f_registers[3] = 3.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1);
     }
 
@@ -2183,7 +2311,7 @@ mod tests {
     fn fclass_s_identifies_positive_normal() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 3.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1 << 6);
     }
 
@@ -2191,7 +2319,7 @@ mod tests {
     fn fclass_s_identifies_negative_infinity() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = f64::NEG_INFINITY;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1 << 0);
     }
 
@@ -2199,7 +2327,7 @@ mod tests {
     fn fclass_d_identifies_positive_zero() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassD, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 0.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1 << 4);
     }
 
@@ -2207,7 +2335,7 @@ mod tests {
     fn fclass_d_identifies_negative_zero() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassD, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = -0.0;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1 << 3);
     }
 
@@ -2215,7 +2343,7 @@ mod tests {
     fn fclass_d_identifies_a_quiet_nan() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassD, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = f64::NAN; // Rust's f64::NAN is a quiet NaN
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1 << 9);
     }
 
@@ -2223,7 +2351,7 @@ mod tests {
     fn fcvt_w_s_truncates_toward_zero() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FcvtWS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 3.9;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 3);
     }
 
@@ -2231,7 +2359,7 @@ mod tests {
     fn fcvt_w_d_converts_a_negative_value() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FcvtWD, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = -3.9;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFD); // -3 sign-extended within 32 bits, masked
     }
 
@@ -2247,7 +2375,7 @@ mod tests {
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
         sim.registers[2] = 0xFFFF_FFFF; // -1 under Rv32i
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), -1.0);
     }
 
@@ -2263,7 +2391,7 @@ mod tests {
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
         sim.registers[2] = 0xFFFF_FFFF; // 4294967295 unsigned under Rv32i
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 4294967295.0);
     }
 
@@ -2283,7 +2411,7 @@ mod tests {
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![entry]), mem());
         sim.registers[2] = 0x0000_0001_0000_0000;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 0.0);
     }
 
@@ -2301,7 +2429,7 @@ mod tests {
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![entry]), mem());
         sim.registers[2] = 0xFFFF_FFFF_0000_0005;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 5.0);
     }
 
@@ -2313,7 +2441,7 @@ mod tests {
         // back as all-ones in the upper 32 bits.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWuS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 4294967295.0; // 2^32 - 1: bit 31 of the 32-bit result is set
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF_FFFF_FFFF);
     }
 
@@ -2324,7 +2452,7 @@ mod tests {
         // as Rust's `as` cast would otherwise produce.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = f64::NAN;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0x7FFF_FFFF);
     }
 
@@ -2334,7 +2462,7 @@ mod tests {
         // convert to 2^32 - 1, sign-extended per finding #2's fix on Rv64i.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWuS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 0.0 / 0.0; // NaN
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF_FFFF_FFFF);
     }
 
@@ -2342,7 +2470,7 @@ mod tests {
     fn fmv_x_w_reinterprets_bits_not_the_numeric_value() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FmvXW, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 1.5;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1.5f32.to_bits() as u64);
     }
 
@@ -2358,7 +2486,7 @@ mod tests {
         };
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![entry]), mem());
         sim.registers[2] = 1.5f32.to_bits() as u64;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 1.5);
     }
 
@@ -2366,7 +2494,7 @@ mod tests {
     fn fcvt_s_d_narrows_to_single_precision() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r2_entry(InstructionKind::FcvtSD, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 1.0 / 3.0; // a value that differs between f32 and f64 precision
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), (1.0f64 / 3.0) as f32 as f64);
     }
 
@@ -2374,7 +2502,7 @@ mod tests {
     fn fcvt_d_s_widens_from_single_precision() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r2_entry(InstructionKind::FcvtDS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 2.5;
-        sim.step_action();
+        run_to_finished_action(&mut sim);
         assert_eq!(sim.fp_register(RegisterId(1)), 2.5);
     }
 

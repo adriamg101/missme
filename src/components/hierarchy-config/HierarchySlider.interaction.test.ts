@@ -14,12 +14,12 @@ describe("HierarchySlider interactions", () => {
     const { container, emitted } = render(HierarchySlider, { props: { hierarchy: [], isa: "RV32I" } });
     const slot = container.querySelectorAll("[data-slider-position]")[5];
     await fireEvent.click(slot!);
-    expect(emitted().create[0]).toEqual([6]);
+    expect(emitted().create[0]).toEqual([5]);
   });
 
   it("emits rejected-insert instead of create when clicking on an occupied position", async () => {
     const { container, emitted } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
-    const slot = container.querySelectorAll("[data-slider-position]")[9];
+    const slot = container.querySelectorAll("[data-slider-position]")[10];
     await fireEvent.click(slot!);
     expect(emitted().create).toBeUndefined();
     expect(emitted()["rejected-insert"][0]).toEqual([["a"]]);

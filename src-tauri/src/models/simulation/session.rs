@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::{Action, CpuSimulator};
+use super::{Action, CpuSimulator, RegisterId};
 
 pub struct SimulationSession {
     simulator: Box<dyn CpuSimulator + Send>,
@@ -18,6 +18,18 @@ impl SimulationSession {
 
     pub fn pc(&self) -> u64 {
         self.simulator.pc()
+    }
+
+    pub fn register(&self, id: RegisterId) -> u64 {
+        self.simulator.register(id)
+    }
+
+    pub fn fp_register(&self, id: RegisterId) -> f64 {
+        self.simulator.fp_register(id)
+    }
+
+    pub fn memory(&self) -> &super::memory::hierarchy::MemoryHierarchySimulator {
+        self.simulator.memory()
     }
 
     pub fn is_at_breakpoint(&self) -> bool {
@@ -69,8 +81,9 @@ mod tests {
     use crate::models::interpreter::riscv::Base;
     use crate::models::simulation::cpu::RiscvCpuSimulator;
     use crate::models::simulation::memory::backing_store::DataStore;
-    use crate::models::simulation::memory::config::{DiskConfig, HierarchyConfig, InclusionPolicy, RamConfig, TlbConfig, TlbReplacementPolicy};
+    use crate::models::simulation::memory::config::{DiskConfig, HierarchyConfig, RamConfig, TlbConfig, TlbReplacementPolicy};
     use crate::models::simulation::memory::hierarchy::MemoryHierarchySimulator;
+    use crate::models::simulation::RegisterId;
     use std::collections::{HashMap, HashSet};
 
     fn no_cache_hierarchy_config() -> HierarchyConfig {
@@ -81,11 +94,12 @@ mod tests {
             tlb: TlbConfig { page_size: 4096, page_table_levels: 1, page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
             disk: DiskConfig { latency: 10000 },
+            seed: None,
         }
     }
 
     fn mem() -> MemoryHierarchySimulator {
-        MemoryHierarchySimulator::new(no_cache_hierarchy_config(), DataStore::new(64), DataStore::new(64))
+        MemoryHierarchySimulator::new(no_cache_hierarchy_config(), DataStore::new(64), DataStore::new(64), 0)
     }
 
     fn add_entry(address: u32, line: usize) -> IrEntry {
@@ -120,8 +134,18 @@ mod tests {
     #[test]
     fn step_action_advances_and_returns_the_action() {
         let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
-        let action = session.step_action().unwrap();
-        assert!(action.instruction_complete);
+
+        // Every instruction now begins with its own Fetch access walking
+        // the memory hierarchy first — with a zero-level hierarchy that's
+        // one MemoryLevel action (not yet complete), then a second
+        // step_action() call finishes the fetch and executes the
+        // instruction itself.
+        let first = session.step_action().unwrap();
+        assert!(!first.instruction_complete);
+        assert!(!session.is_finished());
+
+        let second = session.step_action().unwrap();
+        assert!(second.instruction_complete);
         assert!(session.is_finished());
     }
 
@@ -144,10 +168,13 @@ mod tests {
     fn step_instruction_collects_every_action_for_one_instruction() {
         let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1), add_entry(0x1004, 2)]), HashSet::new());
         let actions = session.step_instruction();
-        assert_eq!(actions.len(), 1);
-        assert!(actions[0].instruction_complete);
+        // Fetch (its own MemoryLevel action) + the add's own completion —
+        // two actions per instruction now, with a zero-level hierarchy.
+        assert_eq!(actions.len(), 2);
+        assert!(!actions[0].instruction_complete);
+        assert!(actions[1].instruction_complete);
         assert!(!session.is_finished());
-        assert_eq!(session.step_instruction().len(), 1);
+        assert_eq!(session.step_instruction().len(), 2);
         assert!(session.is_finished());
     }
 
@@ -155,5 +182,25 @@ mod tests {
     fn step_instruction_on_a_finished_session_returns_an_empty_vec() {
         let mut session = SimulationSession::new(sim(vec![]), HashSet::new());
         assert_eq!(session.step_instruction(), vec![]);
+    }
+
+    #[test]
+    fn register_and_fp_register_read_through_to_the_simulator() {
+        let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
+        assert_eq!(session.register(RegisterId(0)), 0);
+        session.step_instruction();
+        // any register/fp_register call must not panic even before any
+        // write has happened to that register
+        let _ = session.register(RegisterId(31));
+        let _ = session.fp_register(RegisterId(31));
+    }
+
+    #[test]
+    fn memory_exposes_the_underlying_memory_simulator() {
+        let session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
+        // Any read-only call must succeed without panicking — proves the
+        // accessor actually reaches a live MemoryHierarchySimulator, not
+        // just that it type-checks.
+        assert!(session.memory().cache_level_info(0, crate::models::simulation::memory::hierarchy::CacheSide::Unified).is_none());
     }
 }

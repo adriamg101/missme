@@ -1,19 +1,35 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { onMounted, ref } from "vue";
 import GlobalConfigBar from "./GlobalConfigBar.vue";
 import LevelTabs from "./LevelTabs.vue";
 import IconButton from "../ui/IconButton.vue";
 import ConfirmModal from "../ui/ConfirmModal.vue";
+import SaveAsModal from "../ui/SaveAsModal.vue";
+import SelectField from "../ui/SelectField.vue";
 import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
+import { listSavedConfigNames, loadSavedConfig, renameConfig, saveConfig } from "../../lib/hierarchyConfigFiles";
 
 const store = useHierarchyConfigStore();
 
-type PendingAction = { kind: "new" } | { kind: "open" };
+type PendingAction = { kind: "new" } | { kind: "open"; name: string };
 
 const showConfirmModal = ref(false);
+const showSaveAsModal = ref(false);
+const showRenameModal = ref(false);
 const pendingAction = ref<PendingAction | null>(null);
+
+const savedNames = ref<string[]>([]);
+const selectedName = ref<string>("");
+
+async function refreshSavedNames() {
+  try {
+    savedNames.value = await listSavedConfigNames();
+  } catch (error) {
+    console.error("Failed to list saved hierarchy configs:", error);
+  }
+}
+
+onMounted(refreshSavedNames);
 
 function hasUnsavedContent(): boolean {
   return store.hierarchy.length > 0;
@@ -22,14 +38,13 @@ function hasUnsavedContent(): boolean {
 async function performAction(action: PendingAction) {
   if (action.kind === "new") {
     store.resetToDefaults();
+    selectedName.value = "";
     return;
   }
 
-  const path = await open({ multiple: false, filters: [{ name: "JSON", extensions: ["json"] }] });
-  if (!path || Array.isArray(path)) return;
-
-  const text = await readTextFile(path);
-  store.$patch(JSON.parse(text));
+  const state = await loadSavedConfig(action.name);
+  store.$patch(state as object);
+  selectedName.value = action.name;
 }
 
 function requestAction(action: PendingAction) {
@@ -51,8 +66,9 @@ function handleNewFileClick() {
   requestAction({ kind: "new" });
 }
 
-function handleOpenFileClick() {
-  requestAction({ kind: "open" });
+function handleSelectConfig(name: string) {
+  if (!name || name === selectedName.value) return;
+  requestAction({ kind: "open", name });
 }
 
 async function handleOverwrite() {
@@ -62,11 +78,7 @@ async function handleOverwrite() {
 }
 
 async function handleSaveThenLoad() {
-  let path = await save({ filters: [{ name: "JSON", extensions: ["json"] }] });
-  if (!path) return; // user cancelled the save dialog, abort the whole action
-
-  if (!path.toLowerCase().endsWith(".json")) path += ".json";
-  await writeTextFile(path, JSON.stringify(store.$state, null, 2));
+  await doSave(selectedName.value || undefined);
 
   const action = pendingAction.value;
   closeModal();
@@ -76,12 +88,53 @@ async function handleSaveThenLoad() {
 function handleCancel() {
   closeModal();
 }
+
+async function doSave(name: string | undefined) {
+  if (!name) return;
+  await saveConfig(name, store.$state);
+  selectedName.value = name;
+  await refreshSavedNames();
+}
+
+function handleSaveClick() {
+  if (selectedName.value) {
+    doSave(selectedName.value);
+    return;
+  }
+  showSaveAsModal.value = true;
+}
+
+async function handleSaveAsConfirm(name: string) {
+  showSaveAsModal.value = false;
+  await doSave(name);
+}
+
+function handleSaveAsCancel() {
+  showSaveAsModal.value = false;
+}
+
+function handleRenameClick() {
+  if (!selectedName.value) return;
+  showRenameModal.value = true;
+}
+
+async function handleRenameConfirm(newName: string) {
+  showRenameModal.value = false;
+  if (newName === selectedName.value) return;
+  await renameConfig(selectedName.value, newName);
+  selectedName.value = newName;
+  await refreshSavedNames();
+}
+
+function handleRenameCancel() {
+  showRenameModal.value = false;
+}
 </script>
 
 <template>
   <div class="hierarchy-config-panel">
     <div class="hierarchy-config-panel-header">
-      <IconButton class="hierarchy-config-panel-new-button" size="sm" ariaLabel="Nueva configuración" @click="handleNewFileClick">
+      <IconButton class="hierarchy-config-panel-new-button" size="sm" ariaLabel="New configuration" @click="handleNewFileClick">
         <svg viewBox="0 0 16 16" width="16" height="16">
           <path
             fill="currentColor"
@@ -94,14 +147,32 @@ function handleCancel() {
         </svg>
       </IconButton>
 
-      <IconButton size="sm" ariaLabel="Abrir configuración" @click="handleOpenFileClick">
+      <IconButton size="sm" ariaLabel="Save configuration" @click="handleSaveClick">
         <svg viewBox="0 0 16 16" width="16" height="16">
           <path
             fill="currentColor"
-            d="M1.5 3A1.5 1.5 0 0 1 3 1.5h3.379a1.5 1.5 0 0 1 1.06.44l1.122 1.12A1.5 1.5 0 0 0 9.62 3.5H13A1.5 1.5 0 0 1 14.5 5v7A1.5 1.5 0 0 1 13 13.5H3A1.5 1.5 0 0 1 1.5 12V3Z"
+            d="M3 1.5A1.5 1.5 0 0 0 1.5 3v10A1.5 1.5 0 0 0 3 14.5h10a1.5 1.5 0 0 0 1.5-1.5V5.12a1.5 1.5 0 0 0-.44-1.06l-2.12-2.12a1.5 1.5 0 0 0-1.06-.44H3Zm1 1h6v3H4v-3Zm5.5 12h-3v-4h3v4Z"
           />
         </svg>
       </IconButton>
+
+      <IconButton size="sm" ariaLabel="Rename configuration" :disabled="!selectedName" @click="handleRenameClick">
+        <svg viewBox="0 0 16 16" width="16" height="16">
+          <path
+            fill="currentColor"
+            d="M11.53 1.97a1.5 1.5 0 0 1 2.12 0l.38.38a1.5 1.5 0 0 1 0 2.12l-7.5 7.5a1 1 0 0 1-.39.25l-3 1a1 1 0 0 1-1.27-1.27l1-3a1 1 0 0 1 .25-.39l7.5-7.5-.09-.09Z"
+          />
+        </svg>
+      </IconButton>
+
+      <SelectField
+        class="hierarchy-config-panel-select"
+        size="sm"
+        aria-label="Saved configurations"
+        :model-value="selectedName"
+        :options="savedNames.map((name) => ({ value: name, label: name }))"
+        @update:model-value="handleSelectConfig"
+      />
     </div>
 
     <div class="hierarchy-config-panel-body">
@@ -112,10 +183,21 @@ function handleCancel() {
 
     <ConfirmModal
       v-if="showConfirmModal"
-      message="Hay una jerarquía sin guardar en la configuración. ¿Qué quieres hacer?"
+      message="There is an unsaved hierarchy in the configuration. What do you want to do?"
       @save="handleSaveThenLoad"
       @discard="handleOverwrite"
       @cancel="handleCancel"
+    />
+
+    <SaveAsModal v-if="showSaveAsModal" @save="handleSaveAsConfirm" @cancel="handleSaveAsCancel" />
+
+    <SaveAsModal
+      v-if="showRenameModal"
+      :suggested-name="selectedName"
+      prompt-text="Rename this configuration to:"
+      confirm-label="Rename"
+      @save="handleRenameConfirm"
+      @cancel="handleRenameCancel"
     />
   </div>
 </template>
@@ -147,6 +229,11 @@ function handleCancel() {
 
 .hierarchy-config-panel-new-button {
   margin-right: 0;
+}
+
+.hierarchy-config-panel-select {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .hierarchy-config-panel-body {

@@ -1,6 +1,8 @@
 use super::backing_store::DataStore;
 use super::cache::SetAssociativeCache;
 use super::config::{CacheConfig, CacheEntry, HierarchyConfig, Level, WritePolicy};
+use super::seeded_random;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessKind {
@@ -35,11 +37,63 @@ pub enum LevelOutcome {
 pub struct LevelResult {
     pub level: LevelId,
     pub outcome: LevelOutcome,
+    pub address: u64,
+    pub access_kind: AccessKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessResult {
     pub load_bytes: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheSide {
+    Unified,
+    Instruction,
+    Data,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheLevelInfo {
+    pub associativity: usize,
+    pub block_size: u32,
+    pub num_sets: u64,
+    pub words_per_line: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheWaySnapshot {
+    pub valid: bool,
+    pub dirty: bool,
+    pub tag: u64,
+    pub recency_rank: Option<usize>,
+    pub words: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheSetSnapshot {
+    pub set_index: u64,
+    pub ways: Vec<CacheWaySnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RamBlockSnapshot {
+    pub address: u64,
+    pub words: Vec<u32>,
+    pub populated: bool,
+    pub dirty: bool,
+}
+
+fn entry_slot_for_side(side: CacheSide) -> EntrySlot {
+    match side {
+        CacheSide::Unified => EntrySlot::Unified,
+        CacheSide::Instruction => EntrySlot::I,
+        CacheSide::Data => EntrySlot::D,
+    }
 }
 
 struct CacheLevelState {
@@ -48,14 +102,20 @@ struct CacheLevelState {
     d: Option<(CacheConfig, u32, SetAssociativeCache)>,
 }
 
-fn cache_state_for(level: &Level) -> CacheLevelState {
-    let build = |entry: &CacheEntry| {
-        (entry.config, entry.exp, SetAssociativeCache::new(entry.config.associativity.max(1) as usize))
+/// `side_tag` (0/1/2 for unified/i/d) keeps otherwise-identical level+side
+/// combinations from rolling identical phantom-dirty patterns — e.g. a
+/// harvard level's I-side and D-side get independent derived seeds even
+/// though they share the same `level_index`, config, and session `seed`.
+fn cache_state_for(level: &Level, level_index: usize, session_seed: u64) -> CacheLevelState {
+    let build = |entry: &CacheEntry, side_tag: u64| {
+        let seed = seeded_random::value(session_seed, &[5, level_index as u64, side_tag]);
+        let cache = SetAssociativeCache::with_dirty_seed(entry.config.associativity.max(1) as usize, entry.config.dirty_percent, seed);
+        (entry.config, entry.exp, cache)
     };
     CacheLevelState {
-        unified: level.unified.as_ref().map(build),
-        i: level.i.as_ref().map(build),
-        d: level.d.as_ref().map(build),
+        unified: level.unified.as_ref().map(|e| build(e, 0)),
+        i: level.i.as_ref().map(|e| build(e, 1)),
+        d: level.d.as_ref().map(|e| build(e, 2)),
     }
 }
 
@@ -87,6 +147,14 @@ impl CacheLevelState {
             EntrySlot::D => self.d.as_mut().expect("slot_for chose D because it is Some"),
         }
     }
+
+    fn entry(&self, slot: &EntrySlot) -> Option<&(CacheConfig, u32, SetAssociativeCache)> {
+        match slot {
+            EntrySlot::Unified => self.unified.as_ref(),
+            EntrySlot::I => self.i.as_ref(),
+            EntrySlot::D => self.d.as_ref(),
+        }
+    }
 }
 
 enum Cursor {
@@ -108,9 +176,14 @@ pub struct MemoryHierarchySimulator {
 }
 
 impl MemoryHierarchySimulator {
-    pub fn new(config: HierarchyConfig, ram: DataStore, disk: DataStore) -> Self {
+    /// `seed` is the already-resolved session seed (the user's chosen value,
+    /// or a freshly generated one if they left it blank — see
+    /// `seeded_random::generate_seed`) — resolved once by the caller so it
+    /// can also seed the `ram` `DataStore` passed in below, before this
+    /// constructor ever runs.
+    pub fn new(config: HierarchyConfig, ram: DataStore, disk: DataStore, seed: u64) -> Self {
         let tlb = SetAssociativeCache::new(config.tlb.associativity.max(1) as usize);
-        let levels = config.hierarchy.iter().map(cache_state_for).collect();
+        let levels = config.hierarchy.iter().enumerate().map(|(i, level)| cache_state_for(level, i, seed)).collect();
         Self {
             config,
             tlb,
@@ -152,6 +225,86 @@ impl MemoryHierarchySimulator {
         self.finished_result.take().expect("the access hasn't finished yet")
     }
 
+    pub fn cache_level_info(&self, level_index: usize, side: CacheSide) -> Option<CacheLevelInfo> {
+        let level_state = self.levels.get(level_index)?;
+        let slot = entry_slot_for_side(side);
+        let (cache_config, exp, cache) = level_state.entry(&slot)?;
+        let associativity = cache.associativity();
+        let num_sets = ((1u64 << *exp) / (associativity as u64).max(1)).max(1);
+        let words_per_line = (cache_config.block_size / 4).max(1);
+        Some(CacheLevelInfo { associativity, block_size: cache_config.block_size, num_sets, words_per_line })
+    }
+
+    fn cache_set_ways(&self, level_index: usize, side: CacheSide, set_index: u64, info: &CacheLevelInfo) -> Vec<CacheWaySnapshot> {
+        let level_state = &self.levels[level_index];
+        let slot = entry_slot_for_side(side);
+        let (_, _, cache) = level_state.entry(&slot).expect("caller already confirmed this side exists via cache_level_info");
+        cache
+            .snapshot_set(set_index)
+            .into_iter()
+            .map(|line| {
+                // Only a real line (one an actual access put there —
+                // `recency_rank` is only ever `Some` for those) reads its
+                // words from RAM. A phantom (dirty-seeded but never really
+                // accessed) line's tag is an arbitrary hash with no
+                // meaningful backing address, and showing its contents
+                // would reveal garbage the program hasn't touched yet — so
+                // it just reports no words; the frontend shows a dash.
+                let words = if line.valid && line.recency_rank.is_some() {
+                    let base_address = line.tag * info.block_size as u64;
+                    self.ram
+                        .read_block(base_address, info.block_size as usize)
+                        .chunks(4)
+                        .map(|chunk| {
+                            let mut bytes = [0u8; 4];
+                            bytes[..chunk.len()].copy_from_slice(chunk);
+                            u32::from_le_bytes(bytes)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                CacheWaySnapshot { valid: line.valid, dirty: line.dirty, tag: line.tag, recency_rank: line.recency_rank, words }
+            })
+            .collect()
+    }
+
+    /// Returns only `[start_set, start_set + count)` (clamped to the
+    /// level's actual `num_sets`), instead of every set at once. `num_sets`
+    /// can be astronomically large for a big, low-associativity cache (up
+    /// to 2^63), so the frontend must page through sets the same way it
+    /// pages through RAM blocks via `ram_blocks`, rather than ever
+    /// requesting a whole level in one call.
+    pub fn cache_sets(&self, level_index: usize, side: CacheSide, start_set: u64, count: u32) -> Option<Vec<CacheSetSnapshot>> {
+        let info = self.cache_level_info(level_index, side)?;
+        let end = start_set.saturating_add(count as u64).min(info.num_sets);
+        Some(
+            (start_set.min(info.num_sets)..end)
+                .map(|set_index| CacheSetSnapshot { set_index, ways: self.cache_set_ways(level_index, side, set_index, &info) })
+                .collect(),
+        )
+    }
+
+    pub fn ram_blocks(&self, start_address: u64, count: u32) -> Vec<RamBlockSnapshot> {
+        let block_size = self.ram.block_size() as u64;
+        (0..count as u64)
+            .map(|i| {
+                let address = start_address + i * block_size;
+                let words = self
+                    .ram
+                    .read_block(address, block_size as usize)
+                    .chunks(4)
+                    .map(|chunk| {
+                        let mut bytes = [0u8; 4];
+                        bytes[..chunk.len()].copy_from_slice(chunk);
+                        u32::from_le_bytes(bytes)
+                    })
+                    .collect();
+                RamBlockSnapshot { address, words, populated: self.ram.is_populated(address), dirty: self.ram.is_dirty(address) }
+            })
+            .collect()
+    }
+
     fn advance(&mut self) -> LevelResult {
         match self.cursor.take().expect("advance called without a cursor") {
             Cursor::Tlb => self.step_tlb(),
@@ -162,6 +315,8 @@ impl MemoryHierarchySimulator {
 
     fn step_tlb(&mut self) -> LevelResult {
         let access = self.in_progress.as_ref().unwrap();
+        let address = access.address;
+        let access_kind = access.kind;
         let page = access.address / self.config.tlb.page_size as u64;
         let outcome = match self.tlb.lookup(0, page) {
             super::cache::LookupOutcome::Hit => LevelOutcome::Hit,
@@ -171,15 +326,19 @@ impl MemoryHierarchySimulator {
             }
         };
         self.cursor = Some(Cursor::Cache(0));
-        LevelResult { level: LevelId::Tlb, outcome }
+        LevelResult { level: LevelId::Tlb, outcome, address, access_kind }
     }
 
     /// Reads the ground-truth bytes for a finished `Load`/`Fetch` straight
     /// from the backing `DataStore` — this engine only tracks which blocks
     /// are cached, never per-level byte contents, so RAM is always the
     /// source of truth for "what the bytes actually are", cache hit or not.
-    fn read_load_bytes(&self, address: u64, size: u8) -> Vec<u8> {
-        (0..size).map(|i| self.ram.read_byte(address + i as u64)).collect()
+    /// Uses `access_byte`, not the passive `read_byte`: a real Load is
+    /// exactly the moment a dirty-seeded-but-untouched cell actually gets
+    /// used, so this is what materializes it for good — the inspection
+    /// views never do this on their own.
+    fn read_load_bytes(&mut self, address: u64, size: u8) -> Vec<u8> {
+        (0..size).map(|i| self.ram.access_byte(address + i as u64)).collect()
     }
 
     fn finish_with_load(&mut self, access: &MemoryAccess) {
@@ -257,7 +416,7 @@ impl MemoryHierarchySimulator {
             }
         };
 
-        LevelResult { level: LevelId::Cache(index), outcome }
+        LevelResult { level: LevelId::Cache(index), outcome, address: access.address, access_kind: access.kind }
     }
 
     fn step_ram(&mut self) -> LevelResult {
@@ -271,7 +430,7 @@ impl MemoryHierarchySimulator {
                 self.finish_with_load(&access);
             }
         }
-        LevelResult { level: LevelId::Ram, outcome: LevelOutcome::Hit }
+        LevelResult { level: LevelId::Ram, outcome: LevelOutcome::Hit, address: access.address, access_kind: access.kind }
     }
 }
 
@@ -320,6 +479,7 @@ mod tests {
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
             disk: DiskConfig { latency: 10000 },
+            seed: None,
         }
     }
 
@@ -335,8 +495,13 @@ mod tests {
         MemoryAccess { kind: AccessKind::Store, address, size: bytes.len() as u8, store_bytes: Some(bytes) }
     }
 
+    fn fetch(address: u64) -> MemoryAccess {
+        MemoryAccess { kind: AccessKind::Fetch, address, size: 4, store_bytes: None }
+    }
+
     fn sim(config: HierarchyConfig) -> MemoryHierarchySimulator {
-        MemoryHierarchySimulator::new(config, DataStore::new(4), DataStore::new(4))
+        let ram = DataStore::with_dirty_percent_seeded(4, config.ram.dirty_percent, 0);
+        MemoryHierarchySimulator::new(config, ram, DataStore::new(4), 0)
     }
 
     #[test]
@@ -470,6 +635,81 @@ mod tests {
     }
 
     #[test]
+    fn fetch_walks_the_hierarchy_with_the_same_shape_as_an_equivalent_load() {
+        // A fresh Fetch to an address must miss at L1 then hit at RAM,
+        // exactly like a fresh Load to the same address would — the
+        // hierarchy doesn't special-case instruction fetches beyond the
+        // AccessKind tag it carries through the LevelResult.
+        let mut fetch_mem = sim(one_level_config(false));
+        let fetch_first = fetch_mem.begin_access(fetch(0x10000000));
+        assert_eq!(fetch_first.level, LevelId::Cache(0));
+        assert_eq!(fetch_first.outcome, LevelOutcome::Miss);
+        assert_eq!(fetch_first.access_kind, AccessKind::Fetch);
+        let fetch_second = fetch_mem.step();
+        assert_eq!(fetch_second.level, LevelId::Ram);
+        assert_eq!(fetch_second.outcome, LevelOutcome::Hit);
+        assert!(fetch_mem.is_access_finished());
+
+        let mut load_mem = sim(one_level_config(false));
+        let load_first = load_mem.begin_access(load(0x10000000));
+        assert_eq!(load_first.level, fetch_first.level);
+        assert_eq!(load_first.outcome, fetch_first.outcome);
+        let load_second = load_mem.step();
+        assert_eq!(load_second.level, fetch_second.level);
+        assert_eq!(load_second.outcome, fetch_second.outcome);
+    }
+
+    fn harvard_d_only_then_unified_hierarchy_config() -> HierarchyConfig {
+        HierarchyConfig {
+            isa: Base::Rv32i,
+            vm_enabled: false,
+            hierarchy: vec![
+                Level {
+                    id: "l1".into(),
+                    harvard: true,
+                    unified: None,
+                    i: None,
+                    d: Some(CacheEntry { exp: 1, config: cache_config() }),
+                    inclusion: InclusionPolicy::Nine,
+                    bus_width: 32,
+                },
+                Level {
+                    id: "l2".into(),
+                    harvard: false,
+                    unified: Some(CacheEntry { exp: 1, config: cache_config() }),
+                    i: None,
+                    d: None,
+                    inclusion: InclusionPolicy::Nine,
+                    bus_width: 32,
+                },
+            ],
+            tlb: TlbConfig {
+                page_size: 4096,
+                page_table_levels: 1,
+                page_walk_start: "RAM".into(),
+                entries: 4,
+                associativity: 4,
+                replacement: TlbReplacementPolicy::Lru,
+            },
+            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
+            disk: DiskConfig { latency: 10000 },
+            seed: None,
+        }
+    }
+
+    #[test]
+    fn fetch_skips_a_harvard_level_with_no_instruction_side_configured() {
+        // L1 is Harvard with only `d` configured (no `i`) — a Fetch access
+        // must skip straight past it to L2 without producing a LevelResult
+        // of its own for L1, the same way a Store already skips a
+        // write_allocate-less miss's absent slot.
+        let mut mem = sim(harvard_d_only_then_unified_hierarchy_config());
+        let first = mem.begin_access(fetch(0x10000000));
+        assert_eq!(first.level, LevelId::Cache(1), "L1 (d-only) must be skipped entirely for a fetch");
+        assert_eq!(first.outcome, LevelOutcome::Miss);
+    }
+
+    #[test]
     #[should_panic]
     fn step_before_begin_access_panics() {
         let mut mem = sim(one_level_config(false));
@@ -490,5 +730,154 @@ mod tests {
         let mut mem = sim(one_level_config(false));
         mem.begin_access(load(0x10000000));
         mem.take_result();
+    }
+
+    #[test]
+    fn cache_level_info_reports_derived_sizing() {
+        let mem = sim(one_level_config(false)); // 1 level, exp: 1, associativity: 1, block_size: 4 -> 2 sets
+        let info = mem.cache_level_info(0, CacheSide::Unified).unwrap();
+        assert_eq!(info.associativity, 1);
+        assert_eq!(info.block_size, 4);
+        assert_eq!(info.num_sets, 2);
+        assert_eq!(info.words_per_line, 1); // 4 bytes / 4-byte words
+    }
+
+    #[test]
+    fn cache_level_info_is_none_for_a_side_the_level_does_not_have() {
+        let mem = sim(one_level_config(false)); // unified only
+        assert!(mem.cache_level_info(0, CacheSide::Instruction).is_none());
+        assert!(mem.cache_level_info(5, CacheSide::Unified).is_none()); // out of range
+    }
+
+    #[test]
+    fn cache_sets_reflects_a_stored_line_and_its_words() {
+        let mut mem = sim(one_level_config(false));
+        mem.begin_access(store(0x10000000, vec![0x11, 0x22, 0x33, 0x44]));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let info = mem.cache_level_info(0, CacheSide::Unified).unwrap();
+        assert_eq!(info.associativity, 1);
+        assert_eq!(info.num_sets, 2);
+
+        let sets = mem.cache_sets(0, CacheSide::Unified, 0, info.num_sets as u32).unwrap();
+        assert_eq!(sets.len(), 2);
+
+        // address 0x10000000 / block_size 4 -> tag 0x4000000, set_index = tag % 2 = 0
+        let set0 = sets.iter().find(|s| s.set_index == 0).unwrap();
+        let way = set0.ways.iter().find(|w| w.valid).expect("the stored line must be present");
+        assert_eq!(way.tag, 0x10000000 / 4);
+        assert_eq!(way.words, vec![u32::from_le_bytes([0x11, 0x22, 0x33, 0x44])]);
+    }
+
+    #[test]
+    fn cache_sets_does_not_overflow_reconstructing_words_for_a_dirty_seeded_phantom_line() {
+        // A phantom line's tag is an arbitrary 64-bit hash, not a real
+        // address / block_size — reconstructing its words used to multiply
+        // that huge tag by block_size directly, overflowing u64 and
+        // panicking (crashing the whole app) the moment a cache view with
+        // any dirtyPercent was opened on an untouched set.
+        let mut cfg = cache_config();
+        cfg.dirty_percent = 100;
+        let mem = sim(one_level_config_with(false, cfg));
+
+        let info = mem.cache_level_info(0, CacheSide::Unified).unwrap();
+        let sets = mem.cache_sets(0, CacheSide::Unified, 0, info.num_sets as u32).unwrap();
+
+        assert!(sets.iter().any(|s| s.ways.iter().any(|w| w.valid && w.dirty)));
+    }
+
+    #[test]
+    fn cache_level_info_is_none_out_of_range_too() {
+        let mem = sim(one_level_config(false));
+        assert!(mem.cache_level_info(9, CacheSide::Unified).is_none());
+        assert!(mem.cache_sets(9, CacheSide::Unified, 0, 10).is_none());
+    }
+
+    #[test]
+    fn cache_sets_pages_a_window_instead_of_the_whole_level() {
+        let mut mem = sim(one_level_config(false));
+        mem.begin_access(store(0x10000000, vec![0x11, 0x22, 0x33, 0x44]));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let sets = mem.cache_sets(0, CacheSide::Unified, 1, 1).unwrap();
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0].set_index, 1);
+    }
+
+    #[test]
+    fn ram_blocks_does_not_reveal_a_dirty_seeded_block_that_was_never_really_accessed() {
+        let mut cfg = one_level_config(false);
+        cfg.ram.dirty_percent = 100;
+        let mem = sim(cfg);
+
+        let blocks = mem.ram_blocks(0x10000000, 1);
+        assert!(!blocks[0].populated);
+        assert!(blocks[0].dirty);
+        assert_eq!(blocks[0].words, vec![0]); // no garbage leaked through a passive peek
+    }
+
+    #[test]
+    fn a_real_load_reveals_a_dirty_seeded_block_from_then_on() {
+        let mut cfg = one_level_config(false);
+        cfg.ram.dirty_percent = 100;
+        let mut mem = sim(cfg);
+
+        mem.begin_access(load(0x10000000));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        let loaded = mem.take_result().load_bytes.unwrap();
+
+        let blocks = mem.ram_blocks(0x10000000, 1);
+        assert!(blocks[0].populated);
+        assert!(!blocks[0].dirty);
+        // What the program actually read matches what the display now shows.
+        assert_eq!(blocks[0].words[0].to_le_bytes()[..4], loaded[..4]);
+    }
+
+    #[test]
+    fn ram_blocks_reports_populated_and_empty_blocks() {
+        let mut mem = sim(one_level_config(false));
+        mem.begin_access(store(0x10000000, vec![0xDE, 0xAD, 0xBE, 0xEF]));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let blocks = mem.ram_blocks(0x10000000, 3);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].address, 0x10000000);
+        assert!(blocks[0].populated);
+        assert_eq!(blocks[0].words, vec![u32::from_le_bytes([0xDE, 0xAD, 0xBE, 0xEF])]);
+        assert!(!blocks[1].populated);
+        assert_eq!(blocks[1].words, vec![0]);
+    }
+
+    #[test]
+    fn ram_blocks_returns_zero_length_for_zero_count() {
+        let mem = sim(one_level_config(false));
+        assert_eq!(mem.ram_blocks(0x10000000, 0).len(), 0);
+    }
+
+    #[test]
+    fn ram_blocks_word_matches_the_value_a_little_endian_sw_would_store() {
+        // A real `sw` storing the 32-bit value 0x12345678 lays out its bytes
+        // little-endian: LSB first. The snapshot's `words` should reconstruct
+        // the exact same value the CPU stored, not a byte-swapped one.
+        let mut mem = sim(one_level_config(false));
+        mem.begin_access(store(0x10000000, vec![0x78, 0x56, 0x34, 0x12]));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let blocks = mem.ram_blocks(0x10000000, 1);
+        assert_eq!(blocks[0].words, vec![0x12345678]);
     }
 }

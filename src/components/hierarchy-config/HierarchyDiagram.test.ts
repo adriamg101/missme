@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/vue";
+import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import HierarchyDiagram from "./HierarchyDiagram.vue";
 import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
@@ -54,11 +55,11 @@ describe("HierarchyDiagram — click animation", () => {
     expect(cpu.classList.contains("pressed")).toBe(false);
   });
 
-  it("does not add a pressed class when RAM (terminal, no VM) is clicked", async () => {
+  it("adds a pressed class when RAM (terminal, no VM) is clicked", async () => {
     const { container } = render(HierarchyDiagram);
     const ram = container.querySelector('[data-box-id="ram"]')!;
     await fireEvent.click(ram);
-    expect(ram.classList.contains("pressed")).toBe(false);
+    expect(ram.classList.contains("pressed")).toBe(true);
   });
 });
 
@@ -85,5 +86,66 @@ describe("HierarchyDiagram — box colors", () => {
     const cacheGroup = screen.getByText("L1").closest("g")!;
     expect(cacheGroup.style.getPropertyValue("--box-hue")).toBe("45");
     expect(cacheGroup.style.getPropertyValue("--box-chroma")).toBe("0.09");
+  });
+});
+
+describe("HierarchyDiagram — status line", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("shows no status message until setStatusMessage is called", () => {
+    render(HierarchyDiagram);
+    expect(screen.queryByText(/Reading|Writing|Fetching/)).toBeNull();
+  });
+
+  it("shows a general read/write/fetch message with the hex address", async () => {
+    const wrapper = mount(HierarchyDiagram);
+    (wrapper.vm as unknown as { setStatusMessage: (kind: string, address: number) => void }).setStatusMessage("load", 0x1000);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("Reading data at 0x1000");
+  });
+
+  it("clears the status message on clearAccessStates", async () => {
+    const wrapper = mount(HierarchyDiagram);
+    const vm = wrapper.vm as unknown as { setStatusMessage: (kind: string, address: number) => void; clearAccessStates: () => void };
+    vm.setStatusMessage("store", 0x2000);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("Writing data at 0x2000");
+
+    vm.clearAccessStates();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).not.toContain("Writing data at 0x2000");
+  });
+
+  it("shows a fetch message", async () => {
+    const wrapper = mount(HierarchyDiagram);
+    (wrapper.vm as unknown as { setStatusMessage: (kind: string, address: number) => void }).setStatusMessage("fetch", 0x3000);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.text()).toContain("Fetching instruction at 0x3000");
+  });
+});
+
+describe("HierarchyDiagram — boxClick emit", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("emits boxClick with the clicked box when it is clickable", async () => {
+    const { container, emitted } = render(HierarchyDiagram);
+    const clickableBox = container.querySelector('[data-box-id="reg"]');
+    expect(clickableBox).toBeTruthy();
+    await fireEvent.click(clickableBox!);
+    const events = emitted().boxClick;
+    expect(events).toBeTruthy();
+    expect(((events![0] as unknown[])[0] as unknown as { id: string }).id).toBe("reg");
+  });
+
+  it("does not emit boxClick for a non-clickable box", async () => {
+    const { container, emitted } = render(HierarchyDiagram);
+    const cpuBox = container.querySelector('[data-box-id="cpu"]');
+    expect(cpuBox).toBeTruthy();
+    await fireEvent.click(cpuBox!);
+    expect(emitted().boxClick).toBeFalsy();
   });
 });

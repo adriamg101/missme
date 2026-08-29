@@ -4,7 +4,7 @@ withDefaults(defineProps<{ ariaLabel: string; size?: "sm" | "md" | "lg" }>(), { 
 </script>
 
 <template>
-  <button type="button" class="icon-button" :class="`size-${size}`" :aria-label="ariaLabel">
+  <button type="button" class="icon-button" :class="`size-${size}`" :aria-label="ariaLabel" :title="ariaLabel">
     <slot />
   </button>
 </template>

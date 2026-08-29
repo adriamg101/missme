@@ -24,7 +24,7 @@ describe("Editor compile configuration", () => {
     render(Editor);
     useCompileConfigStore().setDataBase(0x20000000);
 
-    await fireEvent.click(screen.getByLabelText("Compilar"));
+    await fireEvent.click(screen.getByLabelText("Compile"));
 
     expect(invokeMock).toHaveBeenCalledWith("compile", {
       source: "",

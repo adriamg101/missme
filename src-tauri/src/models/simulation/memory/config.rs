@@ -121,6 +121,10 @@ pub struct HierarchyConfig {
     pub tlb: TlbConfig,
     pub ram: RamConfig,
     pub disk: DiskConfig,
+    /// The user's chosen seed for dirty-line pre-seeding, or `None` to draw
+    /// a fresh random one each time a session is built — see
+    /// `seeded_random` for why nothing here is ever a fixed constant.
+    pub seed: Option<u64>,
 }
 
 #[cfg(test)]
@@ -164,6 +168,7 @@ mod tests {
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
             disk: DiskConfig { latency: 10000 },
+            seed: Some(42),
         };
 
         let json: serde_json::Value = serde_json::to_value(&config).unwrap();
@@ -195,6 +200,7 @@ mod tests {
         assert_eq!(json["ram"]["size"], 1024);
         assert_eq!(json["ram"]["dirtyPercent"], 0);
         assert_eq!(json["disk"]["latency"], 10000);
+        assert_eq!(json["seed"], 42);
 
         let back: HierarchyConfig = serde_json::from_value(json).unwrap();
         assert_eq!(back, config);
@@ -257,12 +263,13 @@ mod tests {
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
             disk: DiskConfig { latency: 10000 },
+            seed: None,
         };
 
         let json: serde_json::Value = serde_json::to_value(&config).unwrap();
         let obj = json.as_object().expect("HierarchyConfig must serialize to a JSON object");
 
-        let expected_keys = vec!["isa", "vmEnabled", "hierarchy", "tlb", "ram", "disk"];
+        let expected_keys = vec!["isa", "vmEnabled", "hierarchy", "tlb", "ram", "disk", "seed"];
         let actual_keys: Vec<&String> = obj.keys().collect();
 
         assert_eq!(

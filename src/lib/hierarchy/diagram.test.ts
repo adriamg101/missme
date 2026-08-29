@@ -74,29 +74,38 @@ const tlb: TlbConfig = {
 };
 
 describe("computeLayout — base chain", () => {
-  it("without VM: CPU, REG, RAM only — RAM is terminal so it has no Size line and isn't clickable", () => {
+  it("without VM: CPU, RAM, REG only — RAM is terminal, has no Size line, but stays clickable", () => {
     const layout = computeLayout([], defaultRamConfig(), defaultDiskConfig(), tlb, false);
-    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "reg", "ram"]);
+    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "ram", "reg"]);
 
     const cpu = layout.boxes.find((b) => b.id === "cpu")!;
     expect(cpu.label).toBe("CPU");
     expect(cpu.subLabels).toEqual([]);
     expect(cpu.clickable).toBe(false);
 
+    const ram = layout.boxes.find((b) => b.id === "ram")!;
+    expect(ram.subLabels).toEqual(["Latency: 100 cy"]);
+    expect(ram.clickable).toBe(true);
+
+    // REG nests inside the CPU box rather than sitting in the main chain,
+    // so it's fully contained within CPU's rect.
     const reg = layout.boxes.find((b) => b.id === "reg")!;
     expect(reg.label).toBe("REG");
     expect(reg.subLabels).toEqual([]);
     expect(reg.clickable).toBe(true);
     expect(reg.targetTabId).toBeNull();
+    expect(reg.x).toBeGreaterThanOrEqual(cpu.x);
+    expect(reg.x + reg.width).toBeLessThanOrEqual(cpu.x + cpu.width);
+    expect(reg.y).toBeGreaterThanOrEqual(cpu.y);
+    expect(reg.y + reg.height).toBeLessThanOrEqual(cpu.y + cpu.height);
 
-    const ram = layout.boxes.find((b) => b.id === "ram")!;
-    expect(ram.subLabels).toEqual(["Latency: 100 cy"]);
-    expect(ram.clickable).toBe(false);
+    // No separate CPU<->REG connector — REG has no wire of its own.
+    expect(layout.connectors.some((c) => c.id.includes("reg"))).toBe(false);
   });
 
   it("with VM: adds TLB (branch, below CPU) and DISK (terminal); RAM shows Size and is clickable", () => {
     const layout = computeLayout([], defaultRamConfig(), defaultDiskConfig(), tlb, true);
-    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "reg", "ram", "disk", "tlb"]);
+    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "ram", "disk", "tlb", "reg"]);
 
     const ram = layout.boxes.find((b) => b.id === "ram")!;
     expect(ram.subLabels).toEqual(["Size: 1 KB", "Latency: 100 cy"]);
@@ -119,9 +128,55 @@ describe("computeLayout — base chain", () => {
     expect(tlbBox.y).toBeGreaterThan(cpu.y + cpu.height);
 
     // One connector links CPU to TLB, one links each pair in the main chain
-    // (cpu-reg, reg-ram, ram-disk) = 4 total.
+    // (cpu-ram, ram-disk), and one routes TLB down to the page-walk target
+    // (default "RAM") = 4 total.
     expect(layout.connectors).toHaveLength(4);
     expect(layout.connectors.some((c) => c.id === "cpu-tlb")).toBe(true);
+    expect(layout.connectors.some((c) => c.id === "pagewalk-ram")).toBe(true);
+  });
+
+  it("routes TLB -> page-walk target through a shared lane below the main chain, all at right angles", () => {
+    const hierarchy = [unifiedLevel("l1", 10, 64, 1), unifiedLevel("l2", 13, 64, 10)];
+    const customTlb: TlbConfig = { ...tlb, pageWalkStart: "l2" };
+    const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), customTlb, true);
+
+    const pageWalkConnector = layout.connectors.find((c) => c.id === "pagewalk-l2")!;
+    expect(pageWalkConnector).toBeTruthy();
+    // Every "L x y" pair in the path shares either its x or its y with the
+    // previous point — i.e. no diagonal segments.
+    const points = pageWalkConnector.path
+      .split(/[ML]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((pair) => pair.split(" ").map(Number));
+    for (let i = 1; i < points.length; i++) {
+      const [x1, y1] = points[i - 1];
+      const [x2, y2] = points[i];
+      expect(x1 === x2 || y1 === y2).toBe(true);
+    }
+
+    // No connector in the whole diagram should be diagonal.
+    layout.connectors.forEach((connector) => {
+      const pts = connector.path
+        .split(/[ML]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((pair) => pair.split(" ").map(Number));
+      for (let i = 1; i < pts.length; i++) {
+        const [x1, y1] = pts[i - 1];
+        const [x2, y2] = pts[i];
+        expect(x1 === x2 || y1 === y2).toBe(true);
+      }
+    });
+  });
+
+  it("fans a page-walk target out to both boxes when it's a Harvard-split level", () => {
+    const hierarchy = [harvardLevel("l1", 10, 11, 64)];
+    const customTlb: TlbConfig = { ...tlb, pageWalkStart: "l1" };
+    const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), customTlb, true);
+
+    expect(layout.connectors.some((c) => c.id === "pagewalk-l1-i")).toBe(true);
+    expect(layout.connectors.some((c) => c.id === "pagewalk-l1-d")).toBe(true);
   });
 });
 
@@ -139,11 +194,11 @@ function unifiedLevel(id: string, exp: number, blockSize: number, hitTime: numbe
 }
 
 describe("computeLayout — unified cache levels", () => {
-  it("inserts one box per unified level, in order, between REG and RAM", () => {
+  it("inserts one box per unified level, in order, between CPU and RAM", () => {
     const hierarchy = [unifiedLevel("l1", 10, 64, 1), unifiedLevel("l2", 13, 64, 10)];
     const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), tlb, false);
 
-    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "reg", "l1", "l2", "ram"]);
+    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "l1", "l2", "ram", "reg"]);
 
     const l1 = layout.boxes.find((b) => b.id === "l1")!;
     expect(l1.label).toBe("L1");
@@ -181,7 +236,7 @@ describe("computeLayout — Harvard-split cache levels", () => {
     const hierarchy = [harvardLevel("l1", 10, 11, 64)];
     const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), tlb, false);
 
-    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "reg", "l1-i", "l1-d", "ram"]);
+    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "l1-i", "l1-d", "ram", "reg"]);
 
     const li = layout.boxes.find((b) => b.id === "l1-i")!;
     const ld = layout.boxes.find((b) => b.id === "l1-d")!;
@@ -196,10 +251,10 @@ describe("computeLayout — Harvard-split cache levels", () => {
     expect(li.x).toBe(ld.x);
     expect(li.y).toBeLessThan(ld.y);
 
-    // The connector arriving from REG forks into two paths (one per box);
+    // The connector arriving from CPU forks into two paths (one per box);
     // the connector leaving toward RAM merges back into two paths as well.
-    const forkPaths = layout.connectors.filter((c) => c.id.startsWith("link-1-"));
-    const mergePaths = layout.connectors.filter((c) => c.id.startsWith("link-2-"));
+    const forkPaths = layout.connectors.filter((c) => c.id.startsWith("link-0-"));
+    const mergePaths = layout.connectors.filter((c) => c.id.startsWith("link-1-"));
     expect(forkPaths).toHaveLength(2);
     expect(mergePaths).toHaveLength(2);
   });
