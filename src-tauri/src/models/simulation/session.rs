@@ -39,10 +39,10 @@ impl SimulationSession {
         }
     }
 
-    /// The source line of the instruction about to run (the same value
-    /// `is_at_breakpoint()` reads internally), exposed so the controller
-    /// can remember "the line we paused at" and use it to decide when to
-    /// re-arm the breakpoint check after a resume.
+    /// The source line of the instruction about to run (the same thing
+    /// `is_at_breakpoint()` checks internally). This is exposed so the
+    /// caller can remember which line the simulation paused at and use that
+    /// to decide when to start checking breakpoints again after resuming.
     pub fn current_source_line(&self) -> Option<usize> {
         self.simulator.current_source_line()
     }
@@ -135,11 +135,10 @@ mod tests {
     fn step_action_advances_and_returns_the_action() {
         let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
 
-        // Every instruction now begins with its own Fetch access walking
-        // the memory hierarchy first — with a zero-level hierarchy that's
-        // one MemoryLevel action (not yet complete), then a second
-        // step_action() call finishes the fetch and executes the
-        // instruction itself.
+        // Every instruction now starts by fetching it from memory first. With
+        // no cache levels configured that's one memory action that isn't the
+        // final step yet, then a second call finishes the fetch and actually
+        // runs the instruction.
         let first = session.step_action().unwrap();
         assert!(!first.instruction_complete);
         assert!(!session.is_finished());
@@ -168,8 +167,8 @@ mod tests {
     fn step_instruction_collects_every_action_for_one_instruction() {
         let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1), add_entry(0x1004, 2)]), HashSet::new());
         let actions = session.step_instruction();
-        // Fetch (its own MemoryLevel action) + the add's own completion —
-        // two actions per instruction now, with a zero-level hierarchy.
+        // Fetching the instruction plus actually running it makes two steps
+        // per instruction here, since no cache levels are configured.
         assert_eq!(actions.len(), 2);
         assert!(!actions[0].instruction_complete);
         assert!(actions[1].instruction_complete);
@@ -189,8 +188,8 @@ mod tests {
         let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
         assert_eq!(session.register(RegisterId(0)), 0);
         session.step_instruction();
-        // any register/fp_register call must not panic even before any
-        // write has happened to that register
+        // reading a register before anything was ever written to it should
+        // not crash
         let _ = session.register(RegisterId(31));
         let _ = session.fp_register(RegisterId(31));
     }
@@ -198,9 +197,9 @@ mod tests {
     #[test]
     fn memory_exposes_the_underlying_memory_simulator() {
         let session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
-        // Any read-only call must succeed without panicking — proves the
-        // accessor actually reaches a live MemoryHierarchySimulator, not
-        // just that it type-checks.
+        // This read-only call should succeed without crashing, showing this
+        // method really reaches a working memory simulator underneath, not
+        // just that the code compiles.
         assert!(session.memory().cache_level_info(0, crate::models::simulation::memory::hierarchy::CacheSide::Unified).is_none());
     }
 }

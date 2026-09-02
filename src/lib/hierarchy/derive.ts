@@ -33,8 +33,8 @@ export function chainLabel(hierarchy: Hierarchy, index: number, chain: "i" | "d"
   return chain === "i" ? `${base}i` : `${base}d`;
 }
 
-// The slider counts entries (tags), not bytes — no "B" suffix. K/M/G/... only
-// kick in once the raw count would otherwise be unreadably large.
+// The slider counts entries (tags), not bytes, so there's no "B" suffix.
+// K/M/G and so on only show up once the plain number would be too big to read easily.
 const SIZE_UNITS = ["", "K", "M", "G", "T", "P", "E"];
 
 export function sizeLabel(exp: number): string {
@@ -114,10 +114,11 @@ export function pageWalkTargets(hierarchy: Hierarchy): PageWalkTarget[] {
   return targets;
 }
 
-// The largest cache size (in bytes/entries, not the exponent) currently
-// configured anywhere in the hierarchy, across both chains. 1 (2^0) if the
-// hierarchy is empty, so a caller computing "the next power of two above
-// this" never divides by zero or works from a negative exponent.
+// The size of the biggest cache (as an entry count, not the exponent)
+// anywhere in the hierarchy, across both the instruction and data sides.
+// Returns 1 (2^0) if the hierarchy is empty, so code that wants "the next
+// power of two above this" never has to worry about dividing by zero or
+// starting from a negative exponent.
 export function maxCacheSize(hierarchy: Hierarchy): number {
   let maxExp = 0;
   hierarchy.forEach((level) => {
@@ -130,11 +131,11 @@ export function maxCacheSize(hierarchy: Hierarchy): number {
   return 2 ** maxExp;
 }
 
-// The largest cache CAPACITY IN BYTES (entries * block size) currently
-// configured anywhere in the hierarchy, across both chains. 1 if the
-// hierarchy is empty. Distinct from maxCacheSize, which returns the largest
-// entry COUNT (2^exp) — this returns real bytes, matching RamConfig.size's
-// own convention (RamConfig.size is bytes, same as CacheConfig.blockSize).
+// The biggest cache capacity in bytes (entries times block size) anywhere in
+// the hierarchy, across both the instruction and data sides. Returns 1 if
+// the hierarchy is empty. This is different from maxCacheSize, which returns
+// the entry count, not bytes: this one returns real bytes, matching how
+// RamConfig.size and CacheConfig.blockSize are also measured in bytes.
 export function maxCacheByteCapacity(hierarchy: Hierarchy): number {
   let maxBytes = 1;
   hierarchy.forEach((level) => {

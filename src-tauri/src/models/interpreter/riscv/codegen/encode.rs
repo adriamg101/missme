@@ -279,10 +279,9 @@ pub(super) fn encode(kind: InstructionKind, operands: &[Operand]) -> u32 {
     }
 }
 
-/// Precision field (bits 26:25 of a floating-point R-type/R4-type
-/// instruction's funct7): S=00, D=01, Q=11. Derived from the mnemonic
-/// suffix, since `InstructionKind` encodes precision in the variant name
-/// rather than as a separate field.
+/// Works out the precision code (single=00, double=01, quad=11) used inside
+/// the encoded floating-point instruction word, based on which precision
+/// the instruction name ends with.
 fn fmt_of(kind: InstructionKind) -> u32 {
     use InstructionKind::*;
     match kind {
@@ -311,16 +310,16 @@ mod tests {
 
     #[test]
     fn encodes_add_x1_x2_x3() {
-        // R-type: funct7=0000000 rs2=00011 rs1=00010 funct3=000 rd=00001 opcode=0110011
-        // 0000000 00011 00010 000 00001 0110011 = 0x003100B3
+        // Working out the expected bit pattern for "add x1, x2, x3" by hand,
+        // which comes out to 0x003100B3.
         let ops = vec![x(1), x(2), x(3)];
         assert_eq!(encode(InstructionKind::Add, &ops), 0x003100B3);
     }
 
     #[test]
     fn encodes_addi_x1_x0_5() {
-        // I-type: imm=000000000101 rs1=00000 funct3=000 rd=00001 opcode=0010011
-        // 000000000101 00000 000 00001 0010011 = 0x00500093
+        // Working out the expected bit pattern for "addi x1, x0, 5" by hand,
+        // which comes out to 0x00500093.
         let ops = vec![x(1), x(0), Operand::Immediate(5)];
         assert_eq!(encode(InstructionKind::Addi, &ops), 0x00500093);
     }
@@ -328,35 +327,35 @@ mod tests {
     #[test]
     fn encodes_sub_x1_x2_x3() {
         let ops = vec![x(1), x(2), x(3)];
-        // funct7=0100000
+        // "sub" uses a different bit pattern for its operation code than "add"
         assert_eq!(encode(InstructionKind::Sub, &ops), 0x403100B3);
     }
 
     #[test]
     fn encodes_lw_offset() {
         let ops = vec![x(5), Operand::Offset { imm: 4, base: RegisterKind::X(2) }];
-        // I-type: imm=000000000100 rs1=00010 funct3=010 rd=00101 opcode=0000011
+        // Expected bit pattern for "lw x5, 4(x2)"
         assert_eq!(encode(InstructionKind::Lw, &ops), 0x00412283);
     }
 
     #[test]
     fn encodes_sw_offset() {
         let ops = vec![x(5), Operand::Offset { imm: 4, base: RegisterKind::X(2) }];
-        // S-type: imm[11:5]=0000000 rs2=00101 rs1=00010 funct3=010 imm[4:0]=00100 opcode=0100011
+        // Expected bit pattern for "sw x5, 4(x2)"
         assert_eq!(encode(InstructionKind::Sw, &ops), 0x00512223);
     }
 
     #[test]
     fn encodes_beq() {
         let ops = vec![x(1), x(2), Operand::Immediate(8)];
-        // B-type: bit12=0 bits10_5=000000 rs2=00010 rs1=00001 funct3=000 bits4_1=0100 bit11=0 opcode=1100011
+        // Expected bit pattern for "beq x1, x2, 8"
         assert_eq!(encode(InstructionKind::Beq, &ops), 0x00208463);
     }
 
     #[test]
     fn encodes_jal() {
         let ops = vec![x(1), Operand::Immediate(16)];
-        // J-type: bit20=0 bits10_1=0000001000 bit11=0 bits19_12=00000000 rd=00001 opcode=1101111
+        // Expected bit pattern for "jal x1, 16"
         assert_eq!(encode(InstructionKind::Jal, &ops), 0x010000EF);
     }
 
@@ -369,7 +368,7 @@ mod tests {
     #[test]
     fn encodes_mul() {
         let ops = vec![x(1), x(2), x(3)];
-        // funct7=0000001
+        // "mul" uses a different bit pattern for its operation code than "add"
         assert_eq!(encode(InstructionKind::Mul, &ops), 0x023100B3);
     }
 
@@ -393,51 +392,54 @@ mod tests {
 
     #[test]
     fn encodes_fadd_s_f1_f2_f3() {
-        // OP-FP: funct7 = funct5(00000)<<2 | fmt(00) = 0000000, rs2=00011 rs1=00010 rm=000 rd=00001 opcode=1010011
-        // 0000000 00011 00010 000 00001 1010011 = 0x003100D3
+        // Working out the expected bit pattern for "fadd.s f1, f2, f3" by
+        // hand, which comes out to 0x003100D3.
         let ops = vec![f(1), f(2), f(3)];
         assert_eq!(encode(InstructionKind::FaddS, &ops), 0x003100D3);
     }
 
     #[test]
     fn encodes_fsqrt_s() {
-        // funct5=01011, rs2=00000, rm=000: matches the primitive directly,
-        // pinning down the funct5/rs2 choice for this family.
+        // Checks the exact bit values this instruction family should produce.
         let ops = vec![f(1), f(2)];
         assert_eq!(encode(InstructionKind::FsqrtS, &ops), op_fp(0b00, 0b01011, 0, 2, 0b000, 1));
     }
 
     #[test]
     fn encodes_feq_s() {
-        // funct5=10100, rm=010 selects FEQ (000=FLE, 001=FLT, 010=FEQ).
+        // The specific bit code chosen here picks the "equal" comparison out
+        // of this family of compare instructions.
         let ops = vec![x(1), f(2), f(3)];
         assert_eq!(encode(InstructionKind::FeqS, &ops), op_fp(0b00, 0b10100, 3, 2, 0b010, 1));
     }
 
     #[test]
     fn encodes_fclass_s() {
-        // Same funct5 as FMV.X.W (11100), distinguished by rm=001.
+        // Shares the same base code as FMV.X.W but is told apart by a
+        // different mode bit.
         let ops = vec![x(1), f(2)];
         assert_eq!(encode(InstructionKind::FclassS, &ops), op_fp(0b00, 0b11100, 0, 2, 0b001, 1));
     }
 
     #[test]
     fn encodes_fcvt_w_s() {
-        // funct5=11000, rs2=00000 selects W (00001 would select WU).
+        // The chosen bit code selects converting to a signed integer (a
+        // different code would select unsigned).
         let ops = vec![x(1), f(2)];
         assert_eq!(encode(InstructionKind::FcvtWS, &ops), op_fp(0b00, 0b11000, 0, 2, 0b000, 1));
     }
 
     #[test]
     fn encodes_fcvt_s_w() {
-        // funct5=11010, rs2=00000 selects W.
+        // The chosen bit code selects converting from a signed integer.
         let ops = vec![f(1), x(2)];
         assert_eq!(encode(InstructionKind::FcvtSW, &ops), op_fp(0b00, 0b11010, 0, 2, 0b000, 1));
     }
 
     #[test]
     fn encodes_fmv_x_w() {
-        // Same funct5 as FCLASS.S (11100), distinguished by rm=000.
+        // Shares the same base code as FCLASS.S but is told apart by a
+        // different mode bit.
         let ops = vec![x(1), f(2)];
         assert_eq!(encode(InstructionKind::FmvXW, &ops), op_fp(0b00, 0b11100, 0, 2, 0b000, 1));
     }
@@ -450,7 +452,8 @@ mod tests {
 
     #[test]
     fn encodes_fmadd_s() {
-        // R4-type: rs3=00100(f4) fmt=00 rs2=00011(f3) rs1=00010(f2) rm=000 rd=00001(f1) opcode=1000011
+        // Checks the fields land in the right spots for a four-operand
+        // floating-point instruction like "fmadd.s".
         let ops = vec![f(1), f(2), f(3), f(4)];
         assert_eq!(encode(InstructionKind::FmaddS, &ops), r4_type(0b1000011, 0b00, 4, 3, 2, 0b000, 1));
     }
@@ -466,7 +469,8 @@ mod tests {
     fn encodes_fcvt_s_d() {
         let ops = vec![f(1), f(2)];
         let word = encode(InstructionKind::FcvtSD, &ops);
-        // fmt (target) = 00 (S), funct5 = 01000, rs2 (source) = 00001 (D)
+        // Converting from double to single precision: target format is
+        // single, source format is double.
         let expected = op_fp(0b00, 0b01000, 0b00001, 2, 0b000, 1);
         assert_eq!(word, expected);
     }

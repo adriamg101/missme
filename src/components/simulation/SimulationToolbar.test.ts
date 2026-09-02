@@ -52,14 +52,14 @@ describe("SimulationToolbar", () => {
 
   it("shows the default speed (100ms) at the geometric midpoint of the log-scaled slider", () => {
     render(SimulationToolbar);
-    // 10ms and 1000ms are the two ends of the log scale; 100ms is their
-    // geometric mean, landing exactly at slider position 50 (of 0..100).
+    // 10ms and 1000ms are the two ends of the scale; 100ms sits right in the
+    // middle of that range, landing exactly at slider position 50 (out of 0 to 100).
     expect(screen.getByLabelText("Delay (ms)")).toHaveValue("50");
   });
 
   it("changing the speed slider maps its log-scaled position to ms before calling set_speed", async () => {
     render(SimulationToolbar);
-    // Position 50 -> sqrt(10 * 1000) = 100ms (see the geometric-midpoint test above).
+    // Position 50 should map to 100ms, the middle of the range (see the test above).
     await fireEvent.update(screen.getByLabelText("Delay (ms)"), "50");
     expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 100 });
   });

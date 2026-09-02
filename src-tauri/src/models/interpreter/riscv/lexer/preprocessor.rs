@@ -58,9 +58,9 @@ fn process_line(
             if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '/' {
                 block.active = false;
                 i += 2;
-                // Insert a separating space so tokens on either side of the
-                // removed block comment do not get accidentally merged
-                // (e.g. `a/*c*/b` becoming `ab` instead of `a b`).
+                // Insert a space so the words on either side of the removed
+                // comment don't accidentally get joined together (so
+                // `a/*c*/b` becomes `a b`, not `ab`).
                 kept.push(' ');
                 continue;
             }
@@ -120,11 +120,11 @@ fn process_line(
     normalize_whitespace_outside_strings(&kept)
 }
 
-/// Collapses interior whitespace runs down to a single space, while:
-/// - preserving the exact length of the line's leading whitespace run (so
-///   tokenizer columns still line up with what the user sees in the editor)
-/// - leaving whitespace inside `"..."` string literals untouched (so string
-///   contents are not corrupted).
+/// Collapses runs of spaces in the middle of a line down to a single space.
+/// The leading whitespace at the start of the line is kept exactly as-is
+/// (so error positions still line up with what the user sees in the
+/// editor), and whitespace inside `"..."` text is left untouched so string
+/// contents aren't changed.
 fn normalize_whitespace_outside_strings(s: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     let leading_len = chars.iter().take_while(|c| c.is_whitespace()).count();
@@ -207,12 +207,11 @@ mod tests {
         let (output, errors) = run_preprocess(
             "add x1, x2, x3 /* start\nstill inside\nend */ sub x4, x5, x6\n",
         );
-        // The closing `*/` on line 3 is immediately followed by the space
-        // that separated it from `sub`; the synthetic separating space
-        // inserted at the comment boundary (fix #5) becomes part of that
-        // line's leading run since nothing precedes it in `kept` (the
-        // removed `end ` text was inside the comment), so two leading
-        // spaces are preserved rather than stripped (fix #2).
+        // The closing `*/` on line 3 is right next to the space that
+        // separated it from `sub`. The extra space we insert to avoid
+        // merging words ends up counted as leading whitespace on that line,
+        // since everything before it was inside the comment, so two leading
+        // spaces end up kept instead of being trimmed away.
         assert_eq!(output, "add x1, x2, x3\n\n  sub x4, x5, x6\n");
         assert!(errors.is_empty());
     }

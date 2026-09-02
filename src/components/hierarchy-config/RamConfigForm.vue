@@ -11,20 +11,20 @@ import { maxCacheByteCapacity } from "../../lib/hierarchy/derive";
 const props = defineProps<{ config: RamConfig; hierarchy: Hierarchy; vmEnabled: boolean; isa: ISA }>();
 const emit = defineEmits<{ update: [patch: Partial<RamConfig>] }>();
 
-// RAM must always be a power of two strictly larger than the largest cache
-// level's actual byte capacity currently configured (e.g. up to L3 → RAM is
-// the next power of two above L3's real size in bytes, not its entry count).
-// Doubling maxCacheByteCapacity (already a power of two, since entries and
-// blockSize both are) gives exactly that next power of two.
+// RAM must always be a power of two, and strictly bigger than the biggest
+// cache level's actual byte capacity currently configured (for example, if
+// L3 is the biggest, RAM is the next power of two above L3's real size in
+// bytes, not its entry count). Doubling maxCacheByteCapacity, which is
+// already a power of two, gives exactly that next power of two.
 const minSize = computed(() => maxCacheByteCapacity(props.hierarchy) * 2);
 
-// RAM can't exceed the address space the ISA can actually reach (2^32 for
-// RV32I, 2^64 for RV64I).
+// RAM can't be bigger than the address space the ISA can actually reach
+// (2^32 for RV32I, 2^64 for RV64I).
 const maxSize = computed(() => 2 ** maxPositions(props.isa));
 
-// Defends against a config persisted before RamConfig gained `size`/kept
-// `latency` in this shape (e.g. localStorage saved by an older version of
-// this app) — without this, an undefined value here renders as NaN.
+// Protects against a saved config from before RamConfig had `size` in this
+// shape (for example, data saved by an older version of the app). Without
+// this, a missing value here would show up as "NaN" instead of a number.
 const safeSize = computed(() => (Number.isFinite(props.config.size) ? props.config.size : defaultRamConfig().size));
 const safeLatency = computed(() =>
   Number.isFinite(props.config.latency) ? props.config.latency : defaultRamConfig().latency,

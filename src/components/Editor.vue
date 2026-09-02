@@ -14,17 +14,17 @@ import { useCompileConfigStore } from "../stores/compileConfig";
 import SimulationToolbar from "./simulation/SimulationToolbar.vue";
 import { useSimulationStore } from "../stores/simulation";
 
-// TODO: in the future this list should come from the backend
+// TODO: in the future this list should come from the backend instead of being hardcoded here
 const languages = ["RISC-V"];
 const languageOptions = languages.map((lang) => ({ value: lang, label: lang }));
 
 const selectedLanguage = ref(languages[0]);
 const code = ref("");
 
-// Keep in sync with the languages CompileConfigForm actually knows how to
-// render a form for (currently only RISC-V). Prevents an empty bordered
-// strip from showing up once a second language is added without a
-// compile-config form of its own yet.
+// Keep this in sync with the languages CompileConfigForm actually knows how
+// to show a form for (currently only RISC-V). This stops an empty bordered
+// box from showing up if a second language is added before it has its own
+// compile-config form.
 const languagesWithCompileConfig = new Set(["RISC-V"]);
 const languageHasCompileConfig = computed(() => languagesWithCompileConfig.has(selectedLanguage.value));
 
@@ -81,7 +81,7 @@ function syncScroll() {
 const lineHeightPx = ref(20);
 
 // Matches the top padding set on .editor-textarea (0.5rem) so the highlight
-// overlay lines up with the text instead of the top of .editor-body.
+// lines up with the text instead of the top of .editor-body.
 const TEXTAREA_TOP_PADDING_PX = 8;
 
 function measureLineHeight() {
@@ -209,8 +209,8 @@ async function handleStartClick() {
     errorOutput.value = result.error_output;
 
     if (result.error_count === 0 && result.codegen) {
-      // Each instruction is a fixed 4-byte word in this engine — see the
-      // S4 plan's rulings — so .text's real size is just entry count * 4.
+      // Every instruction is a fixed 4-byte word in this engine (see the
+      // S4 plan's rulings), so the real size of .text is just entry count * 4.
       compileConfigStore.setCompiledSizes(result.codegen.entries.length * 4, result.codegen.layout.initial_data.length);
       await simulationStore.start(
         riscvBase.value,
@@ -244,7 +244,7 @@ async function handleOverwrite() {
 
 async function handleSaveThenLoad() {
   const path = await save();
-  if (!path) return; // user cancelled the save dialog, abort the whole load
+  if (!path) return; // the user cancelled the save dialog, so cancel the whole load too
 
   await writeTextFile(path, code.value);
 
@@ -278,9 +278,10 @@ async function handleDroppedPath(path: string) {
 
 onMounted(async () => {
   document.addEventListener("click", handleDocumentClick);
-  // Tauri intercepts OS-level file drag & drop before it reaches the DOM
-  // (dataTransfer.files stays empty for files dragged from a file manager),
-  // so this uses Tauri's own drag & drop event instead of native HTML5 drop events.
+  // Tauri catches file drag and drop from the operating system before it
+  // reaches the web page (the file list stays empty for files dragged from
+  // a file manager), so this listens to Tauri's own drag and drop event
+  // instead of the browser's normal drop event.
   unlistenDragDrop = await getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === "drop") {
       isDragOver.value = false;
@@ -308,9 +309,9 @@ onBeforeUnmount(() => {
   unlistenSimEvents?.();
 });
 
-// Exposed for tests only: `languages` currently has a single entry, so
-// there's no UI path to select an "unsupported" language yet — this lets
-// tests exercise the languageHasCompileConfig gating (finding #5) directly.
+// Exposed for tests only: `languages` currently has just one entry, so there
+// is no way in the app itself to pick an "unsupported" language yet. This
+// lets tests check the languageHasCompileConfig behavior directly.
 defineExpose({ selectedLanguage });
 </script>
 

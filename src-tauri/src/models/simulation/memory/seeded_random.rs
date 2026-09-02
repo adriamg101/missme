@@ -1,32 +1,33 @@
-//! Deterministic pseudo-random values derived from an explicit `seed` plus
-//! whatever coordinates identify a cell (a RAM block address, a cache
-//! set/way pair). Nothing here is ever stored: a value is recomputed fresh
-//! every time it's needed (a set/block being displayed, or touched by a
-//! real access), which is what lets "some percentage of cells start
-//! pre-loaded with garbage" work even over an address space far too large
-//! to ever materialize eagerly.
+//! Predictable random-looking values built from a seed plus whatever
+//! coordinates identify a cell, such as a RAM block address or a cache
+//! set/way pair. Nothing here is ever saved: a value is worked out fresh
+//! every time it's needed, whether that's for showing a set or block on
+//! screen, or for a real access touching it. This is what lets "some
+//! percentage of cells start out pre-loaded with garbage" work even over an
+//! address space far too big to fill in ahead of time.
 //!
-//! No seed is ever entered by the user, so production code never hardcodes
-//! one — it draws a fresh one from `generate_seed()` once, when a RAM store
-//! or cache is built, and keeps it fixed for that instance's whole
-//! lifetime. That's what "always the same" actually means here: stable for
-//! the life of one simulation run, not identical across different runs.
-//! `hash`/`percent_roll`/`byte`/`value` take the seed as an explicit
-//! parameter (rather than a global constant) precisely so tests can pin it
-//! down and assert on specific outcomes.
+//! The user never enters a seed themselves, so the real app code never uses
+//! a fixed one. Instead it draws a fresh one from `generate_seed()` once,
+//! when a RAM store or cache is created, and keeps using that same seed for
+//! the whole life of that store or cache. So "always the same" here means
+//! stable for one simulation run, not the same across different runs.
+//! `hash`, `percent_roll`, `byte`, and `value` all take the seed as an
+//! argument rather than baking it in, so tests can fix it and check
+//! specific results.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 
-/// A fresh, unpredictable seed drawn from the OS's own entropy source
-/// (via `std`'s hashmap-randomization mechanism) — not cryptographic, but
-/// exactly as random as `HashMap`'s own DoS-resistant hashing, which is
-/// plenty for "don't show the same garbage pattern every run".
+/// A fresh, unpredictable seed drawn from the operating system's own
+/// randomness (through the same mechanism Rust's hash maps use to randomize
+/// themselves). It's not meant to be cryptographically secure, but it's
+/// random enough that the garbage pattern won't look the same every run.
 pub fn generate_seed() -> u64 {
     RandomState::new().build_hasher().finish()
 }
 
-/// splitmix64's finalizer — cheap and well-distributed, not cryptographic.
+/// A cheap way to spread out a number's bits so the result looks well
+/// mixed. Not cryptographically secure, just good enough for our purposes.
 fn mix(mut x: u64) -> u64 {
     x ^= x >> 30;
     x = x.wrapping_mul(0xbf58476d1ce4e5b9);
@@ -36,10 +37,10 @@ fn mix(mut x: u64) -> u64 {
     x
 }
 
-/// Folds a seed and a list of coordinates into one deterministic 64-bit
-/// value. Callers should lead `coords` with a domain tag (a small constant
-/// unique to that call site) so unrelated uses of this module never roll
-/// the same sequence for the same underlying coordinates.
+/// Combines a seed and a list of coordinates into one repeatable 64-bit
+/// value. Callers should start `coords` with a small tag number unique to
+/// that call site, so different features using this module never end up
+/// with the same result for the same coordinates.
 fn hash(seed: u64, coords: &[u64]) -> u64 {
     let mut h = seed;
     for &c in coords {
@@ -48,20 +49,20 @@ fn hash(seed: u64, coords: &[u64]) -> u64 {
     h
 }
 
-/// A deterministic roll in `[0, 100)`, used to decide whether a not-yet-
-/// touched cell counts as dirty for a given `dirty_percent` threshold.
+/// A repeatable roll between 0 and 99, used to decide whether an untouched
+/// cell counts as dirty for a given dirty percent setting.
 pub fn percent_roll(seed: u64, coords: &[u64]) -> u8 {
     (hash(seed, coords) % 100) as u8
 }
 
-/// A deterministic pseudo-random byte, used to fill in garbage content for
-/// a dirty-seeded RAM cell.
+/// A repeatable random-looking byte, used to fill in garbage content for a
+/// pre-loaded dirty RAM cell.
 pub fn byte(seed: u64, coords: &[u64]) -> u8 {
     (hash(seed, coords) & 0xff) as u8
 }
 
-/// A deterministic pseudo-random 64-bit value, used e.g. as a fake tag for
-/// a dirty-seeded phantom cache line.
+/// A repeatable random-looking 64-bit value, used for example as a fake tag
+/// for a pre-loaded dirty cache line.
 pub fn value(seed: u64, coords: &[u64]) -> u64 {
     hash(seed, coords)
 }
@@ -84,9 +85,9 @@ mod tests {
 
     #[test]
     fn different_coordinates_usually_roll_different_values() {
-        // Not a hard guarantee for a hash function, but true for these
-        // specific inputs — regressing this would indicate `hash` stopped
-        // actually mixing its inputs.
+        // This isn't guaranteed for every possible input, but it holds for
+        // these specific ones, and failing it would mean the mixing
+        // function stopped actually mixing its inputs.
         assert_ne!(value(9, &[1, 1]), value(9, &[1, 2]));
         assert_ne!(value(9, &[1, 1]), value(9, &[2, 1]));
     }
@@ -100,17 +101,17 @@ mod tests {
 
     #[test]
     fn percent_roll_distribution_roughly_matches_the_requested_threshold() {
-        // Sanity check, not a statistical proof: across many coordinates, a
-        // dirty_percent-style threshold should select roughly that
-        // proportion, not something wildly skewed.
+        // Just a sanity check, not rigorous proof: across many coordinates,
+        // a dirty-percent style threshold should select roughly that
+        // proportion, not something wildly off.
         let hits = (0..10_000u64).filter(|&i| percent_roll(9, &[9, i]) < 30).count();
         assert!((2_500..3_500).contains(&hits), "expected roughly 30% hits, got {hits}");
     }
 
     #[test]
     fn generate_seed_does_not_reliably_repeat() {
-        // Not a hard guarantee, but a fixed constant (the bug being fixed
-        // here) would fail this immediately, every time.
+        // Not a hard guarantee, but if the seed were a fixed constant (the
+        // bug this test guards against) it would fail every single time.
         let seeds: std::collections::HashSet<u64> = (0..8).map(|_| generate_seed()).collect();
         assert!(seeds.len() > 1, "generate_seed() looks fixed, not random");
     }

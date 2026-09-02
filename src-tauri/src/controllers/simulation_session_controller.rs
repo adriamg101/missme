@@ -1,9 +1,9 @@
-// Session lifecycle (start/pause/resume/step/stop/set_speed) and the
-// `sim:event` stream (`SimEvent`/`action_to_sim_event`) that drives
-// `HierarchyDiagram.vue`'s hit/miss/read/write animations. Split out of the
-// former single `simulation_controller.rs` so this event-stream/lifecycle
-// concern lives apart from the memory-contents-inspection commands (see
-// `memory_contents_controller.rs`) and the future stats controller.
+// This file handles the simulation session lifecycle (start, pause, resume,
+// step, stop, set speed) and sends out the `sim:event` stream that drives
+// the hit/miss/read/write animations in `HierarchyDiagram.vue`. It used to
+// be part of one big `simulation_controller.rs` file, split out so this
+// event stream and lifecycle logic stays separate from the memory contents
+// commands (see `memory_contents_controller.rs`) and the future stats code.
 use serde::Serialize;
 use tauri::Manager;
 
@@ -21,8 +21,9 @@ use crate::models::simulation::session::SimulationSession;
 use crate::models::simulation::{Action, ActionKind};
 
 pub struct SessionState {
-    // pub(crate): memory_contents_controller.rs's snapshot_* helpers lock
-    // this directly, the same way the commands in this file do.
+    // Kept accessible within the crate because the snapshot helpers in
+    // memory_contents_controller.rs lock this directly too, just like the
+    // commands in this file.
     pub(crate) session: Mutex<Option<SimulationSession>>,
     running: Arc<AtomicBool>,
     speed_ms: Arc<AtomicU32>,
@@ -41,12 +42,12 @@ impl Default for SessionState {
 }
 
 impl SessionState {
-    /// Atomically starts a new "run": bumps the generation counter and marks
-    /// `running` true, returning the new generation value. Any previously
-    /// spawned `run_auto_step_loop` thread compares its own (now stale)
-    /// generation against `self.generation` and exits on its next iteration,
-    /// so at most one auto-run loop is ever actually stepping the session at
-    /// a time, no matter how `start_simulation`/`resume_simulation` race.
+    /// Starts a new run: increases the run counter and marks the session as
+    /// running, then returns the new counter value. Any older stepping loop
+    /// still running in the background will notice its counter is out of
+    /// date and stop itself on its next iteration, so only one loop is ever
+    /// actually stepping the session at a time, even if start and resume get
+    /// called close together.
     fn begin_run(&self) -> u64 {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.running.store(true, Ordering::SeqCst);
@@ -63,10 +64,9 @@ pub(crate) fn build_session(
     breakpoints: Vec<usize>,
 ) -> SimulationSession {
     let ram_dirty_percent = hierarchy.ram.dirty_percent;
-    // The user's chosen seed (if any) lives on the config only as a raw
-    // preference — resolve it here, once, into the concrete value this
-    // whole session actually uses, since it has to seed both the RAM store
-    // built right below and every cache the simulator builds internally.
+    // If the user picked a seed, use it. Otherwise generate one here, once,
+    // so it can be reused for both the RAM store below and every cache the
+    // simulator builds internally.
     let seed = hierarchy.seed.unwrap_or_else(seeded_random::generate_seed);
     let memory = MemoryHierarchySimulator::new(
         hierarchy,
@@ -88,27 +88,26 @@ pub fn start_simulation(
     hierarchy: HierarchyConfig,
     breakpoints: Vec<usize>,
 ) -> Result<(), String> {
-    // Block size for the RAM/disk backing stores: this branch doesn't yet
-    // plumb a dedicated frontend field for it, so a fixed 32-byte block is
-    // used as a reasonable default — must match RAM_BLOCK_SIZE in
-    // src/components/simulation/RamView.vue, which independently assumes
-    // this same stride when laying out the RAM inspection grid.
+    // There is no frontend setting yet for the RAM/disk block size, so use a
+    // fixed 32-byte block as a sensible default. This number must match
+    // RAM_BLOCK_SIZE in src/components/simulation/RamView.vue, which assumes
+    // the same size when drawing the RAM inspection grid.
     const DEFAULT_BLOCK_SIZE: usize = 32;
     let session = build_session(base, codegen, hierarchy, DEFAULT_BLOCK_SIZE, DEFAULT_BLOCK_SIZE, breakpoints);
 
-    // Bump the generation (and mark `running`) BEFORE installing the new
-    // session, not after: a stale auto-run thread from a previous run may
-    // already be blocked waiting on `state.session.lock()`. If we installed
-    // the session first, releasing the lock would let that stale thread
-    // acquire it and step the brand-new session under its OLD generation,
-    // racing the freshly-spawned thread below. Bumping the generation first
-    // means the stale thread's generation check fails before it can ever
-    // reach the lock holding the new session.
+    // Increase the run counter (and mark it running) before installing the
+    // new session, not after. An old stepping thread from a previous run
+    // might already be waiting to access the session. If we installed the
+    // session first, that old thread could grab it and start stepping the
+    // new session under its outdated counter, racing the new thread started
+    // below. Bumping the counter first makes sure the old thread notices it
+    // is outdated and stops before it can touch the new session.
     let generation = state.begin_run();
-    // A poisoned lock here must not leave `running` stuck at `true` with no
-    // session installed and no thread running: reset it before returning
-    // the error, mirroring the poisoned-lock recovery already done inside
-    // `run_auto_step_loop`.
+    // If something goes wrong accessing the session here, make sure
+    // "running" gets reset to false before returning the error, so the app
+    // doesn't get stuck thinking a simulation is running when nothing
+    // actually is. This matches the same recovery done in
+    // run_auto_step_loop.
     let mut guard = match state.session.lock() {
         Ok(guard) => guard,
         Err(e) => {
@@ -134,23 +133,20 @@ pub fn stop_simulation(state: tauri::State<SessionState>) -> Result<(), String> 
     Ok(())
 }
 
-/// Decides whether `run_auto_step_loop` should check `is_at_breakpoint()`
-/// on the current iteration. Extracted as a small pure function so the
-/// "skip while still on the paused line" semantics used by
-/// `resume_simulation` are unit-testable without needing an `AppHandle` to
-/// exercise the full loop.
+/// Decides whether the stepping loop should check for a breakpoint on this
+/// step. This is a small standalone function so the "keep going while
+/// still on the line we resumed from" behavior used by resume_simulation
+/// can be tested on its own, without needing to run the whole loop.
 ///
-/// `skip_while_line` is the source line the session was paused at when
-/// resumed (or `None` for a fresh `start_simulation`, which always
-/// checks). `current_line` is what `session.current_source_line()` reports
-/// for the iteration about to run. The check is skipped only while both
-/// are `Some` and equal — i.e. the loop hasn't yet moved past the line it
-/// resumed from. This covers any number of atomic `Action`s within one
-/// instruction (loads/stores touching multiple memory levels) and any
-/// number of instructions sharing a source line (pseudo-instruction
-/// expansions like `li`), uniformly: `current_line` only changes once `pc`
-/// actually advances past the whole instruction (or run of instructions)
-/// that shares that line.
+/// `skip_while_line` is the line the session was paused on when it
+/// resumed (or none for a fresh start, which always checks). `current_line`
+/// is the line the next step is about to run. The check is skipped only
+/// when both are set and match, meaning the loop hasn't moved past the
+/// line it resumed from yet. This works correctly whether one instruction
+/// takes several steps (like a load or store touching multiple memory
+/// levels) or several instructions share the same line (like an expanded
+/// pseudo-instruction), because the current line only changes once
+/// execution has actually moved past all of them.
 fn should_check_breakpoint(skip_while_line: Option<usize>, current_line: Option<usize>) -> bool {
     !(skip_while_line.is_some() && skip_while_line == current_line)
 }
@@ -158,22 +154,21 @@ fn should_check_breakpoint(skip_while_line: Option<usize>, current_line: Option<
 fn run_auto_step_loop(app: tauri::AppHandle, my_generation: u64, skip_breakpoint_check_while_line: Option<usize>) {
     use tauri::Emitter;
 
-    // Local, mutable copy: once the current source line moves past the
-    // remembered "paused at" line, this is permanently cleared to `None`
-    // for the rest of this thread's life (see the comment below), so a
-    // later real loop in the user's program that revisits the same source
-    // line does not spuriously re-skip its breakpoint.
+    // A local copy that can change. Once execution moves past the line we
+    // paused on, this gets cleared to none for good (see below), so that if
+    // the simulated program later loops back to that same line, its
+    // breakpoint isn't skipped by mistake.
     let mut skip_while_line = skip_breakpoint_check_while_line;
 
     loop {
         let state = app.state::<SessionState>();
 
-        // A newer generation means a fresher `start_simulation`/`resume_simulation`
-        // call has since taken ownership of this session (this can happen even
-        // if this thread never observed `running` flip to false, e.g. it was
-        // asleep during a pause/resume double-click). This thread is stale:
-        // exit without touching the session at all — no lock, no emit — since
-        // the newer thread is the sole owner now.
+        // If the run counter has moved on, a newer start or resume call has
+        // taken over the session (this can happen even if this thread never
+        // saw "running" turn false, for example if it was asleep during a
+        // quick pause/resume). This thread is now outdated, so stop here
+        // without touching the session or sending any events, since the
+        // newer thread owns it now.
         if state.generation.load(Ordering::SeqCst) != my_generation {
             return;
         }
@@ -185,9 +180,10 @@ fn run_auto_step_loop(app: tauri::AppHandle, my_generation: u64, skip_breakpoint
         let mut guard = match state.session.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                // The lock is poisoned; there's no way to safely keep stepping.
-                // Reset `running` so a future resume/start isn't permanently
-                // locked out believing an auto-run loop is still alive.
+                // Something went wrong accessing the session, so it's not
+                // safe to keep stepping. Reset "running" so a future resume
+                // or start isn't blocked thinking a stepping loop is still
+                // active.
                 state.running.store(false, Ordering::SeqCst);
                 return;
             }
@@ -195,12 +191,11 @@ fn run_auto_step_loop(app: tauri::AppHandle, my_generation: u64, skip_breakpoint
         let session = match guard.as_mut() {
             Some(session) => session,
             None => {
-                // `stop_simulation` cleared the session between this
-                // thread's generation/running checks and its lock
-                // acquisition above. Nothing is running any more, but
-                // `running` was never reset for this path — do so here so
-                // a future start/resume isn't blocked believing an
-                // auto-run loop is still alive.
+                // stop_simulation cleared the session in between this
+                // thread's checks above and now. Nothing is running any
+                // more, but "running" was never reset for this case, so
+                // reset it here so a future start or resume isn't blocked
+                // thinking a stepping loop is still active.
                 state.running.store(false, Ordering::SeqCst);
                 return;
             }
@@ -213,10 +208,10 @@ fn run_auto_step_loop(app: tauri::AppHandle, my_generation: u64, skip_breakpoint
             return;
         }
 
-        // Re-arm "skip" permanently once we've moved past the remembered
-        // line: this must happen before computing `should_check_breakpoint`
-        // below so the un-arm takes effect on the very iteration the line
-        // changes, not one iteration later.
+        // Turn off the skip for good once we've moved past the remembered
+        // line. This has to happen before the check below so the skip
+        // actually turns off on the same step the line changes, not one
+        // step late.
         let current_line = session.current_source_line();
         if skip_while_line.is_some() && skip_while_line != current_line {
             skip_while_line = None;
@@ -229,14 +224,12 @@ fn run_auto_step_loop(app: tauri::AppHandle, my_generation: u64, skip_breakpoint
             return;
         }
 
-        // Capture `pc` BEFORE stepping: the underlying simulator already
-        // advances its internal pc to the NEXT instruction as part of
-        // completing the current one, so reading it after `step_action()`
-        // would give the address of the instruction that's about to run
-        // next rather than the one that just completed. Reading it here,
-        // alongside the other pre-step state and still under the guard,
-        // keeps `pc` consistent with `source_line`'s existing meaning: both
-        // describe the instruction that's completing on this call.
+        // Read the program counter before stepping. The simulator already
+        // moves it forward to the next instruction as part of finishing the
+        // current one, so reading it after stepping would give the address
+        // of the next instruction instead of the one that just completed.
+        // Reading it here keeps it consistent with the source line, both
+        // describing the instruction that is finishing on this call.
         let pc = session.pc();
         let action = session.step_action().expect("just checked is_finished() is false");
         drop(guard);
@@ -257,11 +250,10 @@ pub fn pause_simulation(state: tauri::State<SessionState>) -> Result<(), String>
     Ok(())
 }
 
-/// Returns `Err("no active simulation session")` if no session is
-/// currently installed, `Ok(())` otherwise. Extracted from
-/// `resume_simulation` so the guard condition (mirroring the
-/// `guard.as_mut().ok_or(...)` pattern `step_action`/`step_instruction`
-/// already use) is unit-testable without an `AppHandle`.
+/// Returns an error if there is no active simulation session, or success
+/// otherwise. Pulled out of resume_simulation so this check (the same
+/// idea used by step_action and step_instruction) can be tested on its
+/// own without needing a full app handle.
 fn require_active_session(state: &SessionState) -> Result<(), String> {
     if state.session.lock().map_err(|e| e.to_string())?.is_some() {
         Ok(())
@@ -272,26 +264,24 @@ fn require_active_session(state: &SessionState) -> Result<(), String> {
 
 #[tauri::command]
 pub fn resume_simulation(app: tauri::AppHandle, state: tauri::State<SessionState>) -> Result<(), String> {
-    // Same "no active session" guard as `step_action`/`step_instruction`:
-    // without it, resuming with no session would still call `begin_run()`
-    // (setting `running = true`) and spawn a thread whose first iteration
-    // finds no session and returns without resetting `running`, leaving it
-    // permanently stuck true with nothing actually running.
+    // Same "no active session" check used by step_action and
+    // step_instruction. Without it, resuming with no session would still
+    // start a run (marking it as running) and spawn a thread that finds no
+    // session on its first step and quits without resetting "running",
+    // leaving it stuck as true even though nothing is actually running.
     require_active_session(&state)?;
 
-    // Resuming from a pause must skip the breakpoint check while the
-    // session is still sitting on the line it paused at: `is_at_breakpoint()`
-    // checks the instruction about to run, which is still that line
-    // (pausing doesn't advance `pc`). Without the skip, the very first
-    // iteration would immediately re-detect the same breakpoint and pause
-    // again without ever stepping, making resume a permanent no-op. A flat
-    // "skip exactly one iteration" isn't enough though: a load/store
-    // produces multiple `Action`s (one per memory level) before `pc`
-    // actually moves, and a pseudo-instruction expansion can share its
-    // source line across several instructions — so what's remembered here
-    // is the LINE, and the loop keeps skipping the check for as long as
-    // it's still on that line (see `should_check_breakpoint`), not just
-    // for one step.
+    // When resuming from a pause, the breakpoint check must be skipped
+    // while the session is still sitting on the line it paused at, because
+    // pausing doesn't move the program counter, so the check would
+    // immediately see the same breakpoint again and pause right away,
+    // making resume never actually run anything. Skipping just one step
+    // isn't enough either: a load or store can take several steps (one per
+    // memory level) before the program counter moves, and a
+    // pseudo-instruction can expand into several real instructions sharing
+    // one source line. So what gets remembered here is the whole line, and
+    // the loop keeps skipping the check for as long as it's still on that
+    // line (see should_check_breakpoint), not just for one step.
     let skip_while_line = {
         let guard = state.session.lock().map_err(|e| e.to_string())?;
         guard.as_ref().and_then(|session| session.current_source_line())
@@ -312,16 +302,16 @@ pub fn step_action(app: tauri::AppHandle, state: tauri::State<SessionState>) -> 
     let mut guard = state.session.lock().map_err(|e| e.to_string())?;
     let session = guard.as_mut().ok_or("no active simulation session")?;
 
-    // Capture `pc` BEFORE stepping, same as `run_auto_step_loop`: the
-    // underlying simulator advances its internal pc to the NEXT instruction
-    // as part of completing the current one, so reading it after
-    // `step_action()` would give the wrong (next) instruction's address.
+    // Read the program counter before stepping, same reason as in the
+    // stepping loop: the simulator already moves it to the next instruction
+    // as part of completing the current one, so reading it after stepping
+    // would give the wrong address.
     let pc = session.pc();
     if let Some(action) = session.step_action() {
-        // Check whether this step left the session finished while still
-        // holding the guard (cheap, no emit here), then drop the guard
-        // before emitting anything — same lock-drop-before-emit discipline
-        // as `run_auto_step_loop` and the rest of this file.
+        // Check whether this step finished the session while we still have
+        // access to it, then release access before sending any events.
+        // This matches the same pattern used elsewhere in this file: never
+        // send events while still holding onto the session.
         let finished = session.is_finished();
         drop(guard);
         let _ = app.emit("sim:event", action_to_sim_event(&action));
@@ -342,11 +332,11 @@ pub fn step_instruction(app: tauri::AppHandle, state: tauri::State<SessionState>
     let mut guard = state.session.lock().map_err(|e| e.to_string())?;
     let session = guard.as_mut().ok_or("no active simulation session")?;
 
-    // Same pre-step pc capture as `run_auto_step_loop` and `step_action`.
+    // Same reason as elsewhere: read the program counter before stepping.
     let pc = session.pc();
     let actions = session.step_instruction();
-    // Check finished status while still holding the guard (no emit here),
-    // same lock-drop-before-emit discipline as `step_action`.
+    // Check whether the session finished while we still have access to it,
+    // same pattern as step_action: release access before sending events.
     let finished = session.is_finished();
     drop(guard);
 
@@ -563,7 +553,7 @@ mod tests {
     #[test]
     fn build_session_creates_a_session_ready_to_step() {
         let mut session = build_session(Base::Rv32i, empty_codegen(), empty_hierarchy_config(), 64, 64, vec![]);
-        assert!(session.is_finished()); // empty program
+        assert!(session.is_finished()); // the program has no instructions
         assert!(session.step_action().is_none());
     }
 
@@ -589,8 +579,8 @@ mod tests {
 
     #[test]
     fn no_seed_still_builds_a_working_session_with_ram_dirty_seeding_enabled() {
-        // No explicit seed — build_session must fall back to a randomly
-        // generated one instead of panicking or leaving dirty-seeding off.
+        // No seed given here, so build_session must generate one on its own
+        // instead of crashing or leaving dirty seeding turned off.
         let session = build_session(Base::Rv32i, empty_codegen(), hierarchy_config_with(None, 100), 64, 64, vec![]);
         assert!(session.memory().ram_blocks(0x10000000, 1)[0].dirty);
     }
@@ -600,11 +590,10 @@ mod tests {
         let state = SessionState::default();
         let g1 = state.begin_run();
         let g2 = state.begin_run();
-        // Every call to begin_run represents a new logical "run" — whether
-        // it's resume_simulation after a pause or a fresh start_simulation —
-        // so any earlier auto-run thread (still holding the old generation)
-        // can recognize it's stale and exit, even if it never observed
-        // `running` flip to false in between.
+        // Every call to begin_run represents a new run, whether it's
+        // resuming after a pause or starting fresh, so any earlier stepping
+        // thread still holding the old counter can tell it's outdated and
+        // stop, even if it never saw "running" turn false in between.
         assert_ne!(g1, g2);
     }
 
@@ -618,11 +607,11 @@ mod tests {
 
     #[test]
     fn instruction_complete_pc_should_be_captured_before_stepping_not_after() {
-        // Mirrors the exact ordering `run_auto_step_loop` now uses: read
-        // `session.pc()` BEFORE `step_action()`, not after. The underlying
-        // simulator already advances its internal pc to the NEXT
-        // instruction as part of completing the current one, so reading pc
-        // after stepping would give the wrong (next) instruction's address.
+        // Matches the same order used in run_auto_step_loop: read the
+        // program counter before stepping, not after. The simulator already
+        // moves it to the next instruction as part of completing the
+        // current one, so reading it after stepping would give the wrong
+        // address.
         let entries = vec![
             IrEntry {
                 address: 0x1000,
@@ -656,17 +645,19 @@ mod tests {
         let mut session = build_session(Base::Rv32i, codegen, empty_hierarchy_config(), 64, 64, vec![]);
 
         let pc_before_first_step = session.pc();
-        // Every instruction now begins with its own Fetch access walking
-        // the hierarchy first — with an empty hierarchy that's one
-        // MemoryLevel action (not complete), then the completing action.
+        // Every instruction starts with its own fetch access going through
+        // the memory hierarchy first. With an empty hierarchy that's one
+        // memory level action (not yet complete), followed by the action
+        // that finishes the instruction.
         let fetch_action = session.step_action().unwrap();
         assert!(!fetch_action.instruction_complete);
         let action = session.step_action().unwrap();
         assert!(action.instruction_complete);
 
-        // The FIRST InstructionComplete event's pc must equal the program's
-        // text_base (the instruction that just completed), not text_base+4
-        // (the instruction the simulator has already advanced to).
+        // The first "instruction complete" event's program counter must be
+        // the program's starting address (the instruction that just
+        // finished), not the next address (the instruction the simulator
+        // has already moved on to).
         assert_eq!(pc_before_first_step, 0x1000);
         assert_eq!(session.pc(), 0x1004, "simulator should already have advanced pc to the next instruction");
         assert_ne!(pc_before_first_step, session.pc());
@@ -679,7 +670,7 @@ mod tests {
         assert_eq!(state.speed_ms.load(Ordering::SeqCst), 999);
     }
 
-    // --- Finding 1 / round-2 finding 5: resume-from-breakpoint skip semantics ---
+    // --- Resuming from a breakpoint: skipping the breakpoint check correctly ---
 
     #[test]
     fn should_check_breakpoint_skips_only_while_current_line_matches_the_remembered_line() {
@@ -687,23 +678,22 @@ mod tests {
         assert!(!should_check_breakpoint(Some(1), Some(1)));
         // Moved to a different line: check resumes.
         assert!(should_check_breakpoint(Some(1), Some(2)));
-        // Session finished (no current line) while a skip was still armed:
-        // check resumes (there's nothing left to spuriously re-pause on,
-        // and `is_finished()` is handled separately anyway).
+        // If the session finished (no current line) while a skip was still
+        // active, checking resumes since there's nothing left to wrongly
+        // pause on, and finishing is handled separately anyway.
         assert!(should_check_breakpoint(Some(1), None));
-        // A fresh start (`skip_while_line == None`) always checks, no
-        // matter what the current line is, matching standard debugger
-        // behavior.
+        // A fresh start (no remembered line) always checks, no matter what
+        // the current line is, just like a normal debugger.
         assert!(should_check_breakpoint(None, Some(1)));
         assert!(should_check_breakpoint(None, None));
     }
 
     #[test]
     fn stepping_past_a_breakpoint_while_the_skip_line_matches_still_executes_the_action() {
-        // Two instructions; breakpoint on the first. This mirrors exactly
-        // what run_auto_step_loop observes right after pausing at a
-        // breakpoint: pc hasn't moved, so is_at_breakpoint() alone (without
-        // stepping) is still true.
+        // Two instructions, with a breakpoint on the first. This matches
+        // what run_auto_step_loop sees right after pausing at a breakpoint:
+        // the program counter hasn't moved, so checking for a breakpoint
+        // without stepping still reports true.
         let entries = vec![
             IrEntry {
                 address: 0x1000,
@@ -736,16 +726,16 @@ mod tests {
         };
         let mut session = build_session(Base::Rv32i, codegen, empty_hierarchy_config(), 64, 64, vec![1]);
 
-        // Confirm the session is sitting exactly at the breakpoint, the way
-        // run_auto_step_loop would see it immediately after pausing.
+        // Confirm the session is sitting right at the breakpoint, the way
+        // run_auto_step_loop would see it right after pausing.
         assert!(session.is_at_breakpoint(), "checking is_at_breakpoint() alone (without stepping) must still report true");
 
         let skip_while_line = session.current_source_line();
         assert_eq!(skip_while_line, Some(1));
 
-        // should_check_breakpoint(Some(1), Some(1)) is false: the loop-level
-        // fix means this iteration does NOT re-check is_at_breakpoint() and
-        // goes ahead and steps instead.
+        // should_check_breakpoint returns false here, meaning this step
+        // does not re-check for a breakpoint and instead just goes ahead
+        // and steps.
         assert!(!should_check_breakpoint(skip_while_line, session.current_source_line()));
         let action = session.step_action();
         assert!(action.is_some(), "the skip iteration must actually execute the instruction it paused on, not pause again");
@@ -753,14 +743,14 @@ mod tests {
 
     #[test]
     fn resuming_on_a_multi_action_load_or_store_line_completes_the_whole_instruction_before_any_recheck() {
-        // Round-2 finding 5 regression test: a `lw` against a zero-level
-        // hierarchy (straight to RAM) produces TWO actions — a
-        // `MemoryLevel` action, then the completing `RegisterWrite` — with
-        // `pc` (and so `current_source_line()`) unchanged between them.
-        // resume_simulation's remembered skip line must survive across
-        // BOTH actions, not just the first, or the loop would spuriously
-        // re-pause after only the memory-level action, before the
-        // instruction (and its register write / pc advance) completes.
+        // Regression test: a load instruction against a hierarchy with no
+        // cache levels (going straight to RAM) produces two actions, a
+        // memory access action and then the register write that completes
+        // it, with the program counter (and so the current line) unchanged
+        // in between. resume_simulation's remembered line must be
+        // respected across both actions, not just the first, or the loop
+        // would wrongly pause again after only the memory access, before
+        // the instruction actually finishes.
         let entries = vec![
             IrEntry {
                 address: 0x1000,
@@ -792,15 +782,16 @@ mod tests {
         };
         let mut session = build_session(Base::Rv32i, codegen, empty_hierarchy_config(), 64, 64, vec![1]);
 
-        // Mirrors resume_simulation: remember the line we're paused at.
+        // Matches resume_simulation: remember the line we're paused at.
         let mut skip_while_line = session.current_source_line();
         assert_eq!(skip_while_line, Some(1));
         assert!(session.is_at_breakpoint());
 
-        // Iteration 0: the instruction's own Fetch access, walking the
-        // hierarchy first — with a zero-level hierarchy that's one
-        // MemoryLevel action (not complete), same skip requirement as any
-        // other mid-instruction action.
+        // Step 1: the instruction's own fetch access, going through the
+        // memory hierarchy first. With a hierarchy with no cache levels
+        // that's one memory access action (not yet complete), with the
+        // same skip requirement as any other action in the middle of an
+        // instruction.
         let current_line = session.current_source_line();
         if skip_while_line.is_some() && skip_while_line != current_line {
             skip_while_line = None;
@@ -811,9 +802,9 @@ mod tests {
         assert!(!fetch_action.instruction_complete, "the fetch access resolves in one memory-level step against a zero-level hierarchy");
         assert_eq!(session.current_source_line(), Some(1), "pc must not have advanced yet — the instruction isn't complete");
 
-        // Iteration 1: the load's own memory-level action, begun once the
-        // fetch above finished. Must be skipped (not re-paused) and
-        // pc/source line must NOT have moved yet.
+        // Step 2: the load's own memory access action, started once the
+        // fetch above finished. This must be skipped, not paused on again,
+        // and the program counter/source line must not have moved yet.
         let current_line = session.current_source_line();
         if skip_while_line.is_some() && skip_while_line != current_line {
             skip_while_line = None;
@@ -824,11 +815,12 @@ mod tests {
         assert!(!first.instruction_complete, "lw against RAM-only hierarchy resolves in one memory-level step");
         assert_eq!(session.current_source_line(), Some(1), "pc must not have advanced yet — the instruction isn't complete");
 
-        // Iteration 2: the completing RegisterWrite action, STILL on the
-        // same source line (pc only advances as part of THIS action).
-        // This is exactly the case round 1's "skip exactly one iteration"
-        // mechanism got wrong: it would have already re-armed the check
-        // here and spuriously paused again before this action ran.
+        // Step 3: the register write action that completes the instruction,
+        // still on the same source line, since the program counter only
+        // moves forward as part of this action. This is exactly the case
+        // where an earlier, simpler "skip just one step" approach got it
+        // wrong: it would have turned the check back on here and wrongly
+        // paused again before this action ran.
         let current_line = session.current_source_line();
         if skip_while_line.is_some() && skip_while_line != current_line {
             skip_while_line = None;
@@ -842,8 +834,8 @@ mod tests {
         assert!(second.instruction_complete, "the whole lw instruction must now be complete");
         assert_eq!(session.current_source_line(), Some(2), "pc has now advanced past the breakpoint line");
 
-        // Iteration 3: now on a new line — the skip must have permanently
-        // un-armed, so normal breakpoint checking resumes.
+        // Step 4: now on a new line, so the skip must have turned off for
+        // good and normal breakpoint checking resumes.
         let current_line = session.current_source_line();
         if skip_while_line.is_some() && skip_while_line != current_line {
             skip_while_line = None;
@@ -852,7 +844,7 @@ mod tests {
         assert!(should_check_breakpoint(skip_while_line, current_line), "normal breakpoint checking must resume once past the original line");
     }
 
-    // --- Finding 4: resume_simulation with no active session ---
+    // --- Resuming with no active session ---
 
     #[test]
     fn require_active_session_errors_when_no_session_is_installed() {
@@ -868,16 +860,15 @@ mod tests {
         assert!(require_active_session(&state).is_ok());
     }
 
-    // --- Finding 3: manual stepping to the end of a program ---
+    // --- Manually stepping to the end of a program ---
 
     #[test]
     fn step_action_leaves_a_finished_session_detectable_after_the_final_step() {
-        // A single-instruction program: stepping it once completes the
-        // program. The controller command (not exercised directly here
-        // since it needs an AppHandle) checks `session.is_finished()`
-        // right after this step, still under the guard, and emits
-        // SimulationPaused{reason:"end"} once dropped — this test proves
-        // the underlying condition it relies on.
+        // A single-instruction program: stepping it once finishes the
+        // program. The actual command (not tested directly here since it
+        // needs a full app handle) checks whether the session is finished
+        // right after this step, then sends a "simulation paused, reason:
+        // end" event. This test proves the condition that check relies on.
         let entries = vec![IrEntry {
             address: 0x1000,
             kind: InstructionKind::Add,
@@ -897,9 +888,10 @@ mod tests {
         let mut session = build_session(Base::Rv32i, codegen, empty_hierarchy_config(), 64, 64, vec![]);
 
         assert!(!session.is_finished());
-        // Every instruction now begins with its own Fetch access walking
-        // the hierarchy first — with an empty hierarchy that's one
-        // MemoryLevel action (not complete), then the completing action.
+        // Every instruction starts with its own fetch access going through
+        // the memory hierarchy first. With an empty hierarchy that's one
+        // memory level action (not yet complete), followed by the action
+        // that finishes the instruction.
         let fetch_action = session.step_action();
         assert!(fetch_action.is_some());
         assert!(!session.is_finished(), "the fetch access alone must not finish the program");
@@ -907,7 +899,7 @@ mod tests {
         assert!(action.is_some(), "the step that completes the program must still return the action");
         assert!(session.is_finished(), "the session must report finished immediately after the step that completed it");
 
-        // The event the controller is expected to emit as a result.
+        // The event the command is expected to send as a result.
         let expected_event = SimEvent::SimulationPaused { reason: "end".to_string() };
         let json = serde_json::to_value(&expected_event).unwrap();
         assert_eq!(json["kind"], "simulation_paused");

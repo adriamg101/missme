@@ -38,9 +38,9 @@ describe("Editor compile configuration", () => {
       global: { plugins: [createPinia()] },
     });
 
-    // Today `languages` only contains "RISC-V", so there's no UI path to
-    // reach this state yet — simulate the day a second, unsupported
-    // language is added by forcing selectedLanguage directly.
+    // Right now the language list only has "RISC-V", so there's no way to
+    // reach this state through the UI yet. This simulates what happens once
+    // a second, unsupported language is added, by setting selectedLanguage directly.
     (wrapper.vm as unknown as { selectedLanguage: string }).selectedLanguage = "x86";
     await wrapper.vm.$nextTick();
 

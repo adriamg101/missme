@@ -10,43 +10,38 @@ import { touchAndPrune } from "../../lib/lruCache";
 const store = useHierarchyConfigStore();
 const compileConfigStore = useCompileConfigStore();
 
-// Must match DEFAULT_BLOCK_SIZE in src-tauri/src/controllers/simulation_controller.rs,
-// which independently assumes this same stride when stepping between blocks.
+// This number must match DEFAULT_BLOCK_SIZE in src-tauri/src/controllers/simulation_controller.rs,
+// which also expects blocks to be this size when it steps through memory.
 const RAM_BLOCK_SIZE = 32;
 const ROW_HEIGHT = 26;
 const MAX_CACHED_BLOCKS = 4000;
 
-// One grid, one scrollbar — but it can't literally span the whole address
-// space as a single proportional scrollbar: the gap between .text and
-// .data alone is ~252MB, which at any usable row height blows past the
-// browser's max element height (~33.5M px in Chromium). So instead the
-// scrollbar represents a sliding WINDOW_ROWS-row window anchored at
-// `baseAddress`; scrolling near either edge of that window silently
-// re-anchors it (adjusting scrollTop by the same amount so nothing visibly
-// jumps), so the user can keep scrolling indefinitely in either direction
-// without ever hitting a dead end — this is what makes it feel unified
-// rather than capped at whatever `ram.size` happens to be.
-// Kept much smaller than "safely under the browser's max element height"
-// would allow (that limit is ~33.5M px) — at multi-million-px scrollTop
-// values, browsers lose floating-point precision recomputing `position:
-// sticky` on every scroll frame, causing a visible 1px jitter ("vibration")
-// while actively scrolling that disappears at rest. Staying in the low
-// hundreds-of-thousands of px avoids that entirely, at the cost of
-// re-anchoring more often during a long scroll (cheap, invisible either way).
-const WINDOW_ROWS = 20_000; // 20_000 * ROW_HEIGHT = 520,000px
-const RECENTER_MARGIN_ROWS = 500; // trigger a re-anchor well before the literal edge, so it's never visible
+// We show one grid with one scrollbar, but it can't cover the whole address space directly:
+// the gap between .text and .data alone is about 252MB, and no matter how short we make
+// each row, that's too tall for a browser to handle as a single element. So instead the
+// scrollbar only shows a smaller window of WINDOW_ROWS rows, anchored at `baseAddress`.
+// When the user scrolls near the top or bottom edge of that window, we quietly move the
+// window to a new position without changing what's on screen, so scrolling still feels
+// endless in either direction instead of stopping at some arbitrary limit.
+// The window is kept much smaller than the browser would technically allow, because at
+// very large scroll positions the browser starts losing precision when it redraws sticky
+// elements, causing a small visible flicker while scrolling. Keeping the window in the low
+// hundreds of thousands of pixels avoids that, even though it means we have to reposition
+// the window more often during a long scroll (which is cheap and invisible to the user).
+const WINDOW_ROWS = 20_000; // 20,000 rows * ROW_HEIGHT = 520,000px window height
+const RECENTER_MARGIN_ROWS = 500; // reposition the window before the user reaches its edge, so it's never visible
 const totalBlocks = WINDOW_ROWS;
 
 function absoluteRow(address: number): number {
   return Math.floor(address / RAM_BLOCK_SIZE);
 }
 
-// Centers `targetRow` in the window, clamped so the window never anchors
-// below address 0. Shared by the initial mount position and every jump, so
-// both leave equal room to scroll either direction — a naive `baseAddress
-// = targetAddress` (row 0 of the window) would leave NO room above,
-// making maybeRecenter's nearTop condition true almost immediately on the
-// very next scroll tick.
+// Places `targetRow` in the middle of the window, but never lets the window
+// start below address 0. This is used both when the view first opens and
+// whenever we jump somewhere, so there's always equal room to scroll up or
+// down from that point. If we simply put the target row at the very top of
+// the window instead, there would be no room to scroll up, and the view
+// would immediately reposition itself again on the next scroll.
 function centeredBaseRow(targetRow: number): number {
   return Math.max(0, targetRow - Math.floor(WINDOW_ROWS / 2));
 }
@@ -63,12 +58,11 @@ interface RamBlock {
   dirty: boolean;
 }
 
-// Keyed by absolute row number (address / RAM_BLOCK_SIZE), NOT by
-// window-relative row index — so cached blocks stay valid across a
-// re-anchor (only which rows are currently in view changes, not what a
-// given address's cached content is). touchAndPrune's LRU eviction is what
-// actually keeps memory bounded as the window slides: rows far outside the
-// current view stop being touched and eventually get pruned.
+// Blocks are stored using the row's real address, not its position within
+// the window, so previously loaded blocks stay valid even after the window
+// moves. touchAndPrune keeps memory from growing without bound: blocks that
+// haven't been needed in a while, because the window moved away from them,
+// eventually get removed.
 const blocks = reactive(new Map<number, RamBlock>());
 const containerRef = ref<HTMLDivElement | null>(null);
 const scrollTop = ref((initialTargetRow - initialBaseRow) * ROW_HEIGHT);
@@ -97,13 +91,12 @@ async function fetchVisibleWindow() {
   }
 }
 
-// Writing to a DOM element's scrollTop dispatches its own native 'scroll'
-// event asynchronously — without this guard, that synthetic event would
-// feed back into onScroll, which could re-run maybeRecenter and jitter
-// the window back and forth on every real scroll tick near an edge (the
-// "vibration"). The one scroll event caused by our own assignment is
-// swallowed here; scrollTop.value/baseAddress are already correct because
-// the caller set them itself before touching the DOM.
+// When we move the scroll position in code, the browser fires its own
+// scroll event for it a moment later. Without this flag, that extra event
+// would trigger our scroll handling again and could make the view jitter
+// back and forth near an edge. So we mark that the next scroll event was
+// caused by us and should be ignored; our own values are already correct
+// by the time we touch the DOM.
 let ignoreNextScrollEvent = false;
 
 function setContainerScrollTop(value: number) {
@@ -114,9 +107,9 @@ function setContainerScrollTop(value: number) {
   }
 }
 
-// Re-anchors the window so the row currently at the top of the viewport
-// ends up roughly in the middle, giving equal room to keep scrolling in
-// either direction. Never anchors below address 0.
+// Moves the window so the row that's currently at the top of the screen
+// ends up roughly in the middle instead, leaving equal room to keep
+// scrolling either way. Never moves the window below address 0.
 function recenterOn(topAbsoluteRow: number) {
   const newBaseRow = centeredBaseRow(topAbsoluteRow);
   const deltaRows = newBaseRow - baseRow.value;
@@ -133,15 +126,12 @@ function maybeRecenter() {
   recenterOn(topAbsoluteRow);
 }
 
-// A fractional scrollTop (e.g. from trackpad/smooth-scroll momentum, or a
-// non-integer devicePixelRatio) puts the viewport at a non-whole-pixel
-// offset while every row's own `top` is an integer — the browser then has
-// to round each bordered cell's edges independently against that
-// fractional origin, and can round adjacent cells differently, showing up
-// as flickering hairline gaps between them while scrolling settles. Once
-// scrolling stops, snap straight to a whole pixel (always floor — which
-// direction doesn't matter, only that it's deterministic) so there's
-// nothing left to round inconsistently.
+// Smooth trackpad scrolling (or certain screens) can leave the scroll
+// position sitting between whole pixels, even though every row is placed
+// at a whole-pixel position. When that happens, the browser rounds each
+// cell's border slightly differently, and you see thin flickering gaps
+// between cells while scrolling settles. Once scrolling stops, we snap
+// back to a whole pixel so there's nothing left to round inconsistently.
 let scrollEndTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function snapScrollToWholePixel() {
@@ -164,9 +154,9 @@ function onScroll(event: Event) {
   scrollEndTimeout = setTimeout(snapScrollToWholePixel, 100);
 }
 
-// Unlike recenterOn (which preserves whatever's currently visible while
-// sliding the window), a jump deliberately moves the viewport: the target
-// address ends up at the vertical middle of the window, with equal room to
+// Unlike recenterOn, which keeps whatever is currently on screen while
+// quietly sliding the window, this deliberately moves the view: the target
+// address ends up right in the middle of the window, with equal room to
 // scroll either direction from there.
 function jumpToAddress(address: number) {
   const targetRow = absoluteRow(Math.max(0, address));
@@ -202,18 +192,18 @@ function hex(value: number): string {
   return (value >>> 0).toString(16);
 }
 
-// Words are always the full 4-byte range even when the stored value is
-// small (e.g. only the low byte was ever written) — zero-pad to 8 hex
-// digits so that stays visually obvious, unlike the block address, which
-// doesn't have a fixed width and is left unpadded.
+// A word is always 4 bytes, even if the value stored in it is small (say,
+// only the lowest byte was ever written), so we pad it to 8 hex digits to
+// make that clear. The block address, on the other hand, doesn't have a
+// fixed width and is left unpadded.
 function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
-// Word size is fixed at 4 bytes across this engine (see the S4 plan's
-// rulings), so a word-column's byte offset is always wordIndex * 4, and the
-// architecture's native word size (4 on RV32I, 8 on RV64I) is expressed as a
-// number of word-columns to group together.
+// A word is always 4 bytes in this simulator, so a word column's byte
+// offset is always wordIndex * 4. The processor's own natural word size (4
+// bytes on RV32I, 8 bytes on RV64I) is expressed here as how many word
+// columns should be grouped together.
 const WORD_SIZE = 4;
 const wordsPerGroup = computed(() => (store.isa === "RV32I" ? 1 : 2));
 
@@ -221,8 +211,8 @@ function offsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * WORD_SIZE).toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
-// Only meaningful when a group spans more than one word-column (RV64I) — a
-// dashed left border marking where the next native-word group starts.
+// Only matters when a group covers more than one word column (RV64I): adds
+// a dashed left border marking where the next group starts.
 function isGroupStart(wordIndex: number): boolean {
   return wordsPerGroup.value > 1 && wordIndex > 0 && wordIndex % wordsPerGroup.value === 0;
 }
@@ -240,8 +230,8 @@ let disposed = false;
 onMounted(async () => {
   if (containerRef.value) {
     viewportHeight.value = containerRef.value.clientHeight;
-    // The DOM element itself always starts at scrollTop 0 — sync it to the
-    // pre-centered initial position computed above.
+    // The element always starts scrolled to the top, so we move it to
+    // match the already-centered starting position computed above.
     containerRef.value.scrollTop = scrollTop.value;
   }
   await fetchVisibleWindow();
@@ -366,14 +356,13 @@ onBeforeUnmount(() => {
   border-color: var(--diagram-miss-color);
 }
 
-/* Horizontal scroll only — vertical is handled by .simulation-ram-body
-   below, deliberately NOT combined into one scroll container. A single
-   scroller with a `position: sticky` header was the previous approach,
-   but browsers recompute a sticky element's position every scroll frame,
-   and at the tall (many-thousand-row) heights this grid can reach, that
-   recomputation is prone to visible 1px rounding jitter. Splitting the
-   header out into normal (non-sticky, non-scrolling-vertically) flow
-   avoids that class of bug entirely, not just mitigates it. */
+/* This handles horizontal scrolling only. Vertical scrolling is handled
+   separately by .simulation-ram-body below, on purpose. We used to have
+   one scroll area with a header that stayed stuck to the top while
+   scrolling, but with a grid this tall (many thousands of rows), that
+   caused a visible flicker as the browser kept recalculating the header's
+   position. Keeping the header out of the scrolling area entirely avoids
+   that problem completely. */
 .simulation-ram-outer {
   flex: 1 1 auto;
   min-height: 0;

@@ -31,7 +31,7 @@ function handleBoxClick(box: DiagramBox) {
   } else if (box.kind === "ram") {
     simulationStore.openView({ kind: "ram" })
   }
-  // tlb/disk: no dedicated view this epic, deliberate no-op.
+  // tlb/disk: there's no dedicated view for these yet, so clicking them does nothing on purpose.
 }
 
 function boxIdsForLevel(levelIndex: number): string[] {
@@ -70,11 +70,12 @@ function handleSimEvent(event: { payload: Record<string, unknown> }) {
   }
 }
 
-// The last hit/miss colors and status message otherwise only clear right
-// before the *next* step's event arrives (see pendingClear above) — which
-// never happens once a simulation ends (Stop, or the program running out
-// of instructions), leaving the diagram permanently showing the final
-// step's state. Watching isActive directly catches that case too.
+// Without this, the last hit/miss colors and status message would only get
+// cleared right before the next step's event arrives (see pendingClear
+// above). That never happens once a simulation ends, whether by pressing
+// Stop or by the program running out of instructions, so the diagram would
+// keep showing the final step's state forever. Watching isActive directly
+// catches that case too.
 watch(
   () => simulationStore.isActive,
   (active) => {

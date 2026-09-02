@@ -37,19 +37,19 @@ const containerRef = ref<HTMLDivElement | null>(null);
 const scrollTop = ref(0);
 const viewportHeight = ref(0);
 
-// Each set occupies one row per way, stacked vertically (not side by
-// side) — associativity is constant across a level, so every set's block
-// is the same height, letting the virtual-scroll math treat "one set" as
-// a single uniform-height unit the same way it already treats "one row".
+// Each set takes up one row per way, stacked on top of each other rather
+// than side by side. Since associativity doesn't change within a level,
+// every set's block is the same height, so we can treat "one set" as a
+// single unit of a fixed size, the same way we'd treat "one row".
 const setBlockHeight = computed(() => Math.max(1, levelInfo.value?.associativity ?? 1) * ROW_HEIGHT);
 
-// numSets can be astronomically large (up to 2^63 for a big,
-// low-associativity cache) — nowhere near renderable as one continuous
-// scrollbar (see RamView.vue's WINDOW_ROWS for the same browser-max-
-// element-height problem). So, same fix: a sliding window of at most
-// MAX_WINDOW_HEIGHT_PX worth of sets, anchored at `baseSet`, re-anchoring
-// near either edge as the user scrolls rather than ever trying to
-// represent the whole level as one scrollbar.
+// The number of sets can be enormous (up into the billions of billions for
+// a large, low-associativity cache), far too many to show as one
+// continuous scrollbar (the same problem RamView.vue solves with
+// WINDOW_ROWS). We use the same fix here: show only a smaller window of
+// sets, at most MAX_WINDOW_HEIGHT_PX worth, anchored at `baseSet`, and
+// quietly move that window as the user scrolls near either edge instead of
+// trying to represent the whole cache at once.
 const MAX_WINDOW_HEIGHT_PX = 520_000;
 const windowSets = computed(() => {
   const capped = Math.max(100, Math.floor(MAX_WINDOW_HEIGHT_PX / setBlockHeight.value));
@@ -60,10 +60,10 @@ const recenterMarginSets = computed(() => Math.max(5, Math.floor(windowSets.valu
 
 const baseSet = ref(0);
 
-// Keyed by absolute set index (not window-relative), so cached sets stay
-// valid across a re-anchor — see RamView.vue's `blocks` map for the same
-// reasoning. touchAndPrune's LRU eviction keeps memory bounded as the
-// window slides.
+// Sets are stored by their real index, not their position within the
+// window, so cached sets stay valid even after the window moves, the same
+// reasoning as RamView.vue's block cache. touchAndPrune keeps memory from
+// growing without bound as the window slides.
 const sets = reactive(new Map<number, CacheSet>());
 
 const range = computed(() => computeVirtualRange(scrollTop.value, viewportHeight.value, setBlockHeight.value, windowSets.value));
@@ -95,10 +95,10 @@ async function fetchVisibleWindow() {
   }
 }
 
-// Writing to a DOM element's scrollTop dispatches its own native 'scroll'
-// event asynchronously — without this guard, that synthetic event would
-// feed back into onScroll, re-running maybeRecenter and jittering the
-// window back and forth on every real scroll tick near an edge.
+// When we move the scroll position in code, the browser fires its own
+// scroll event for it a moment later. Without this flag, that extra event
+// would trigger our scroll handling again and could make the view jitter
+// back and forth near an edge.
 let ignoreNextScrollEvent = false;
 
 function setContainerScrollTop(value: number) {
@@ -109,9 +109,9 @@ function setContainerScrollTop(value: number) {
   }
 }
 
-// Re-anchors the window so the set currently at the top of the viewport
-// ends up roughly in the middle, giving equal room to keep scrolling in
-// either direction. Never anchors below set 0.
+// Moves the window so the set that's currently at the top of the screen
+// ends up roughly in the middle instead, leaving equal room to keep
+// scrolling either way. Never moves the window below set 0.
 function recenterOn(topAbsoluteSet: number) {
   const newBaseSet = Math.max(0, topAbsoluteSet - Math.floor(windowSets.value / 2));
   const deltaSets = newBaseSet - baseSet.value;
@@ -128,15 +128,12 @@ function maybeRecenter() {
   recenterOn(topAbsoluteSet);
 }
 
-// A fractional scrollTop (e.g. from trackpad/smooth-scroll momentum, or a
-// non-integer devicePixelRatio) puts the viewport at a non-whole-pixel
-// offset while every set's own `top` is an integer — the browser then has
-// to round each bordered cell's edges independently against that
-// fractional origin, and can round adjacent cells differently, showing up
-// as flickering hairline gaps between them while scrolling settles. Once
-// scrolling stops, snap straight to a whole pixel (always floor — which
-// direction doesn't matter, only that it's deterministic) so there's
-// nothing left to round inconsistently.
+// Smooth trackpad scrolling (or certain screens) can leave the scroll
+// position sitting between whole pixels, even though every set is placed
+// at a whole-pixel position. When that happens, the browser rounds each
+// cell's border slightly differently, and you see thin flickering gaps
+// between cells while scrolling settles. Once scrolling stops, we snap
+// back to a whole pixel so there's nothing left to round inconsistently.
 let scrollEndTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function snapScrollToWholePixel() {
@@ -160,8 +157,8 @@ function onScroll(event: Event) {
 }
 
 // Jumps straight to a set, centering it in the window with equal room to
-// scroll either direction from there — same idea as RamView.vue's
-// jumpToAddress, just in "set index" units instead of bytes.
+// scroll either direction from there, the same idea as RamView.vue's
+// jumpToAddress, just counting sets instead of bytes.
 function jumpToSet(targetSet: number) {
   const maxSet = Math.max(0, (levelInfo.value?.numSets ?? 1) - 1);
   const clamped = Math.max(0, Math.min(targetSet, maxSet));
@@ -184,17 +181,17 @@ function jumpToInputSet() {
   jumpToSet(Number(trimmed));
 }
 
-// Word size is fixed at 4 bytes across this engine, regardless of bus width
-// (see the S4 plan's rulings) — so a word-column's byte offset is always
-// wordIndex * 4, and the architecture's native word size (4 on RV32I, 8 on
-// RV64I) is expressed as a number of word-columns to group together.
+// A word is always 4 bytes in this simulator, no matter the bus width, so a
+// word column's byte offset is always wordIndex * 4. The processor's own
+// natural word size (4 bytes on RV32I, 8 bytes on RV64I) is expressed here
+// as how many word columns should be grouped together.
 const WORD_SIZE = 4;
 const wordsPerGroup = computed(() => (hierarchyStore.isa === "RV32I" ? 1 : 2));
 
-// Words and Tag are always the full 4-byte range even when the stored
-// value is small (e.g. only the low byte was ever written) — zero-pad to 8
-// hex digits so that stays visually obvious, unlike addresses which don't
-// have a fixed width and are left unpadded.
+// Words and the Tag are always 4 bytes, even if the value stored is small
+// (say, only the lowest byte was ever written), so we pad them to 8 hex
+// digits to make that clear. Addresses, on the other hand, don't have a
+// fixed width and are left unpadded.
 function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
@@ -203,18 +200,18 @@ function offsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * WORD_SIZE).toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
-// Only meaningful when a group spans more than one word-column (RV64I) — a
-// dashed left border marking where the next native-word group starts.
+// Only matters when a group covers more than one word column (RV64I): adds
+// a dashed left border marking where the next group starts.
 function isGroupStart(wordIndex: number): boolean {
   return wordsPerGroup.value > 1 && wordIndex > 0 && wordIndex % wordsPerGroup.value === 0;
 }
 
-// One shared column layout for the header AND every set block: Set, then
-// D/LRU/Tag/words — a set's ways no longer sit side by side in their own
-// sub-grid, they stack as additional rows sharing these same columns
-// (Set spans all of them via grid-row, see setGridStyle below). Tag is
-// zero-padded to 8 hex digits (see hexWord), same as words, so its column
-// can just be a fixed width instead of measuring content.
+// The header and every set block share the same column layout: Set, then
+// D/LRU/Tag/words. A set's ways are stacked as extra rows sharing these
+// same columns rather than sitting side by side (Set spans all those rows,
+// see setGridStyle below). Tag is padded to 8 hex digits (see hexWord),
+// same as words, so its column can just have a fixed width instead of
+// needing to measure the content.
 const wayColumnCount = computed(() => 3 + (levelInfo.value?.wordsPerLine ?? 0));
 const columnsStyle = computed(
   () =>
@@ -231,9 +228,9 @@ const setGridStyle = computed(() => ({
   gridAutoRows: `${ROW_HEIGHT}px`,
 }));
 
-// Resets the window back to the top of the level — used on mount and
-// whenever the level/side changes, since a previous window's baseSet/
-// cached sets are meaningless for a different level.
+// Resets the window back to the top of the level. Used when the view first
+// loads and whenever the level or side changes, since a previous window's
+// position and cached sets don't mean anything for a different level.
 function resetWindow() {
   baseSet.value = 0;
   sets.clear();
@@ -249,11 +246,11 @@ async function loadLevelInfo() {
   try {
     levelInfo.value = await invoke<CacheLevelInfo>("get_cache_level_info", { levelIndex: levelIndex.value, side: props.side });
     resetWindow();
-    // .simulation-cache-body only exists once levelInfo is truthy (it's
-    // behind a v-if) — containerRef is still null at the point levelInfo
-    // was just assigned above, so measuring before this tick would always
-    // read 0, capping the visible window to just the overscan rows
-    // regardless of how tall the card actually is.
+    // .simulation-cache-body only appears in the page once levelInfo has a
+    // value, so the reference to it isn't ready right after we just set
+    // levelInfo above. We wait one tick for the page to catch up before
+    // measuring it, otherwise we'd always measure 0 and only show a
+    // handful of rows no matter how tall the card actually is.
     await nextTick();
     if (containerRef.value) viewportHeight.value = containerRef.value.clientHeight;
     await fetchVisibleWindow();
@@ -271,9 +268,9 @@ onMounted(async () => {
   const stopListening = await listen<Record<string, unknown>>("sim:event", (event) => {
     if (event.payload.kind !== "cache_access") return;
     if (event.payload.levelIndex !== levelIndex.value) return;
-    // Only the currently-visible window can have changed — no need to
-    // re-fetch level info (associativity/blockSize/numSets are constant
-    // for the lifetime of a running simulation).
+    // Only what's currently on screen could have changed, so there's no
+    // need to reload the level's overall info (associativity, block size,
+    // and number of sets never change while a simulation is running).
     fetchVisibleWindow();
   });
   if (disposed) stopListening();
@@ -329,21 +326,19 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
               >
                 <template v-if="sets.get(setIndex)">
                   <!--
-                    Set is placed first and spans every way-row of this block via
-                    grid-row, occupying column 1 for the whole block. Every
-                    subsequent cell below is left unpositioned (no explicit
-                    grid-row/grid-column) — CSS Grid's default sparse auto-flow
-                    places them left-to-right, top-to-bottom, automatically
-                    skipping the column Set already occupies, so way 0's cells
-                    fill row 1's remaining columns, way 1's fill row 2's, and so
-                    on. This only works because each way contributes exactly
-                    wayColumnCount cells — matching the columns available per row
-                    once Set's column is excluded — so every way lands on its own
-                    row with nothing left over to spill into the next one.
+                    The Set number is placed first and stretches down to cover
+                    every way's row in this block, taking up the first column
+                    for the whole block. Every cell after that is left to fall
+                    into place on its own: the grid naturally fills them in
+                    left-to-right, top-to-bottom, skipping the column the Set
+                    number already fills, so way 0's cells fill the rest of row
+                    1, way 1's fill row 2, and so on. This only works because
+                    each way has exactly the right number of cells to fill out
+                    one row, so nothing spills over into the next one.
                   -->
                   <span class="simulation-cache-cell simulation-cache-set-index" :style="{ gridColumn: 1, gridRow: `1 / span ${sets.get(setIndex)!.ways.length}` }">{{ setIndex }}</span>
                   <template v-for="(way, wi) in sets.get(setIndex)!.ways" :key="wi">
-                    <!-- A real line: one an actual access put there. -->
+                    <!-- A real line: one that an actual access put there. -->
                     <template v-if="way.valid && way.recencyRank !== null">
                       <span class="simulation-cache-cell">{{ way.dirty ? "1" : "0" }}</span>
                       <span class="simulation-cache-cell">{{ way.recencyRank }}</span>
@@ -355,9 +350,10 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
                         :class="{ 'simulation-cache-group-start': isGroupStart(wj) }"
                       >{{ hexWord(word) }}</span>
                     </template>
-                    <!-- A phantom (dirty-seeded but never really accessed)
-                         line: the dirty bit is real, but its tag/data are
-                         never shown — the program hasn't touched it yet. -->
+                    <!-- A phantom line: it was marked dirty from the start but
+                         never actually accessed. The dirty bit is real, but
+                         its tag and data are never shown since the program
+                         hasn't touched it yet. -->
                     <template v-else-if="way.valid">
                       <span class="simulation-cache-cell">1</span>
                       <span v-for="n in wayColumnCount - 1" :key="n" class="simulation-cache-cell simulation-cache-cell-empty">-</span>
@@ -377,16 +373,14 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
 </template>
 
 <style scoped>
-/* .simulation-cache-outer handles horizontal scroll only — vertical is
-   handled by .simulation-cache-body below, deliberately NOT combined into
-   one scroll container. A single scroller with a `position: sticky` header
-   was the previous approach, but browsers recompute a sticky element's
-   position every scroll frame, and at the heights this grid can reach with
-   many sets, that recomputation is prone to visible 1px rounding jitter.
-   Splitting the header out into normal (non-sticky, non-scrolling-
-   vertically) flow avoids that class of bug entirely, not just mitigates
-   it — see RamView.vue, which had the exact same issue with the exact
-   same fix. */
+/* .simulation-cache-outer handles horizontal scrolling only. Vertical
+   scrolling is handled separately by .simulation-cache-body below, on
+   purpose. We used to have one scroll area with a header that stayed stuck
+   to the top while scrolling, but with a grid this tall (many sets), that
+   caused a visible flicker as the browser kept recalculating the header's
+   position. Keeping the header out of the scrolling area entirely avoids
+   that problem completely. RamView.vue has the exact same setup for the
+   exact same reason. */
 .simulation-cache-level-view {
   display: flex;
   flex-direction: column;

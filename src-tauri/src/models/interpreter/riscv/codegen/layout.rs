@@ -52,14 +52,13 @@ pub(super) fn build(program: &Program, config: &CodegenConfig) -> Result<LayoutR
                     errors.push(CodegenError::new(*line, *column, "instruction found in .data section"));
                     continue;
                 }
-                // Semantic analysis normally guarantees a valid operand
-                // shape before codegen ever sees this node, but codegen
-                // always runs even when semantic analysis already reported
-                // errors elsewhere (every stage always runs). expand()
-                // assumes a valid shape and may panic on one that isn't —
-                // skip just this instruction rather than let one malformed
-                // line crash the whole build; its real error is already
-                // reported by semantic analysis.
+                // The earlier checking step normally makes sure an instruction is
+                // shaped correctly before this step ever sees it, but this step
+                // still runs even after that step already found errors elsewhere.
+                // Expanding the instruction assumes a valid shape and could crash
+                // on one that isn't, so we skip just this instruction instead of
+                // letting one bad line crash the whole build. Its real error was
+                // already reported earlier.
                 let expanded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| expand(node)));
                 if let Ok(expanded) = expanded {
                     for instr in expanded {
@@ -72,11 +71,10 @@ pub(super) fn build(program: &Program, config: &CodegenConfig) -> Result<LayoutR
                 const DATA_DIRECTIVES: [&str; 6] =
                     [".word", ".byte", ".half", ".string", ".asciz", ".ascii"];
                 if !DATA_DIRECTIVES.contains(&name.as_str()) {
-                    // Not a section marker, not a known data directive:
-                    // either it's benign (unrecognized-but-harmless) or
-                    // semantic analysis already reported it as an unknown
-                    // directive — either way, layout has nothing to place
-                    // and no section-placement opinion to add here.
+                    // This isn't a section marker or a known data directive.
+                    // Either it's harmless and unrecognized, or an earlier step
+                    // already reported it as unknown. Either way there's nothing
+                    // to place here and nothing more to say about it.
                     continue;
                 }
                 if section == Section::Text {
@@ -146,9 +144,8 @@ pub(super) fn build(program: &Program, config: &CodegenConfig) -> Result<LayoutR
     }
 
     for (offset, label, width) in patches {
-        // Falls back to 0 for a label semantic analysis already reported
-        // as undefined elsewhere (see the doc comment on
-        // codegen::label_address for why this doesn't panic).
+        // Falls back to address 0 for a label that was already reported as
+        // undefined earlier, instead of crashing here.
         let addr = labels.get(&label).copied().unwrap_or(0);
         match width {
             PatchWidth::Word => {

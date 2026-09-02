@@ -25,14 +25,15 @@ const hasFloatExtension = computed(
   () => simulationStore.activeExtensions.includes("F") || simulationStore.activeExtensions.includes("D"),
 );
 
-// Integer registers are the ISA's native width (32 or 64 bits) — pad to
-// match so the hex always reads as a full register, not a truncated one.
+// Integer registers are as wide as the processor's native size (32 or 64
+// bits), so pad the hex text to match, otherwise it would look shorter
+// than a full register.
 const intHexDigits = computed(() => (hierarchyStore.isa === "RV64I" ? 16 : 8));
 function hexInt(value: number): string {
-  // Register values arrive as an already-unsigned u64 from the backend —
-  // unlike the memory-inspection views, this must NOT go through `>>> 0`
-  // (that coerces to a 32-bit int and would truncate RV64I values above
-  // 2^32).
+  // Register values come from the backend already as a positive 64-bit
+  // number. Unlike the memory-inspection views, this must not be forced
+  // into a 32-bit number here, since that would cut off RV64I values above
+  // 2^32.
   return `0x${value.toString(16).toUpperCase().padStart(intHexDigits.value, "0")}`;
 }
 

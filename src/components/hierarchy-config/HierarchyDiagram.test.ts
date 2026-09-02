@@ -81,8 +81,8 @@ describe("HierarchyDiagram — box colors", () => {
     const ram = container.querySelector('[data-box-id="ram"]') as HTMLElement;
     expect(ram.style.getPropertyValue("--box-hue")).toBe("255");
 
-    // Cache level ids are randomly generated (crypto.randomUUID()), so we
-    // locate the L1 box by its label text rather than by a hardcoded id.
+    // Cache level ids are randomly generated, so find the L1 box by its
+    // visible label text instead of by a fixed id.
     const cacheGroup = screen.getByText("L1").closest("g")!;
     expect(cacheGroup.style.getPropertyValue("--box-hue")).toBe("45");
     expect(cacheGroup.style.getPropertyValue("--box-chroma")).toBe("0.09");

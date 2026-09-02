@@ -21,7 +21,7 @@ describe("Editor ISA selection", () => {
     const store = useHierarchyConfigStore();
     store.setIsa("RV64I");
     render(Editor);
-    // active option must already be RV64I on mount
+    // RV64I must already be the selected option as soon as the page loads
     expect(store.isa).toBe("RV64I");
   });
 });

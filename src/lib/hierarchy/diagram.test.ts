@@ -87,8 +87,8 @@ describe("computeLayout — base chain", () => {
     expect(ram.subLabels).toEqual(["Latency: 100 cy"]);
     expect(ram.clickable).toBe(true);
 
-    // REG nests inside the CPU box rather than sitting in the main chain,
-    // so it's fully contained within CPU's rect.
+    // REG sits inside the CPU box instead of being part of the main chain,
+    // so it stays fully inside the CPU box's rectangle.
     const reg = layout.boxes.find((b) => b.id === "reg")!;
     expect(reg.label).toBe("REG");
     expect(reg.subLabels).toEqual([]);
@@ -99,7 +99,7 @@ describe("computeLayout — base chain", () => {
     expect(reg.y).toBeGreaterThanOrEqual(cpu.y);
     expect(reg.y + reg.height).toBeLessThanOrEqual(cpu.y + cpu.height);
 
-    // No separate CPU<->REG connector — REG has no wire of its own.
+    // There's no separate line connecting CPU and REG, since REG doesn't have its own wire.
     expect(layout.connectors.some((c) => c.id.includes("reg"))).toBe(false);
   });
 
@@ -123,13 +123,13 @@ describe("computeLayout — base chain", () => {
     expect(tlbBox.clickable).toBe(true);
     expect(tlbBox.targetTabId).toBe("tlb");
 
-    // TLB sits below CPU, not in the main horizontal chain.
+    // The TLB box sits below CPU, not in the main left-to-right chain.
     const cpu = layout.boxes.find((b) => b.id === "cpu")!;
     expect(tlbBox.y).toBeGreaterThan(cpu.y + cpu.height);
 
-    // One connector links CPU to TLB, one links each pair in the main chain
-    // (cpu-ram, ram-disk), and one routes TLB down to the page-walk target
-    // (default "RAM") = 4 total.
+    // One line connects CPU to TLB, one line connects each pair in the main
+    // chain (cpu to ram, ram to disk), and one line routes from TLB down to
+    // the page-walk target (RAM by default), for 4 total.
     expect(layout.connectors).toHaveLength(4);
     expect(layout.connectors.some((c) => c.id === "cpu-tlb")).toBe(true);
     expect(layout.connectors.some((c) => c.id === "pagewalk-ram")).toBe(true);
@@ -142,8 +142,8 @@ describe("computeLayout — base chain", () => {
 
     const pageWalkConnector = layout.connectors.find((c) => c.id === "pagewalk-l2")!;
     expect(pageWalkConnector).toBeTruthy();
-    // Every "L x y" pair in the path shares either its x or its y with the
-    // previous point — i.e. no diagonal segments.
+    // Each point in the path shares either its x or its y with the point
+    // before it, meaning there are no diagonal segments.
     const points = pageWalkConnector.path
       .split(/[ML]/)
       .map((s) => s.trim())
@@ -155,7 +155,7 @@ describe("computeLayout — base chain", () => {
       expect(x1 === x2 || y1 === y2).toBe(true);
     }
 
-    // No connector in the whole diagram should be diagonal.
+    // No line anywhere in the diagram should be diagonal.
     layout.connectors.forEach((connector) => {
       const pts = connector.path
         .split(/[ML]/)
@@ -202,17 +202,17 @@ describe("computeLayout — unified cache levels", () => {
 
     const l1 = layout.boxes.find((b) => b.id === "l1")!;
     expect(l1.label).toBe("L1");
-    // 2^10 entries * 64 bytes/entry = 65536 bytes = 64 KB
+    // 2^10 entries times 64 bytes each = 65536 bytes = 64 KB
     expect(l1.subLabels).toEqual(["Size: 64 KB", "Latency: 1 cy"]);
     expect(l1.clickable).toBe(true);
     expect(l1.targetTabId).toBe("l1");
 
     const l2 = layout.boxes.find((b) => b.id === "l2")!;
     expect(l2.label).toBe("L2");
-    // 2^13 entries * 64 bytes/entry = 524288 bytes = 512 KB
+    // 2^13 entries times 64 bytes each = 524288 bytes = 512 KB
     expect(l2.subLabels).toEqual(["Size: 512 KB", "Latency: 10 cy"]);
 
-    // Boxes are laid out left-to-right in slot order.
+    // Boxes are placed left to right in the same order as their slots.
     expect(l1.x).toBeLessThan(l2.x);
     const ram = layout.boxes.find((b) => b.id === "ram")!;
     expect(l2.x).toBeLessThan(ram.x);
@@ -247,12 +247,12 @@ describe("computeLayout — Harvard-split cache levels", () => {
     expect(li.targetTabId).toBe("l1-i");
     expect(ld.targetTabId).toBe("l1-d");
 
-    // Stacked: same x, i above d.
+    // Stacked: same x position, instruction box above the data box.
     expect(li.x).toBe(ld.x);
     expect(li.y).toBeLessThan(ld.y);
 
-    // The connector arriving from CPU forks into two paths (one per box);
-    // the connector leaving toward RAM merges back into two paths as well.
+    // The line coming from CPU splits into two paths, one for each box, and
+    // the line going toward RAM merges back into two paths as well.
     const forkPaths = layout.connectors.filter((c) => c.id.startsWith("link-0-"));
     const mergePaths = layout.connectors.filter((c) => c.id.startsWith("link-1-"));
     expect(forkPaths).toHaveLength(2);

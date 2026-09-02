@@ -24,7 +24,7 @@ describe("HexField", () => {
     const { emitted } = render(HexField, { props: { modelValue: "", ariaLabel: "field" } });
     const input = screen.getByLabelText("field") as HTMLInputElement;
 
-    await fireEvent.update(input, "FFFFFFFFF"); // 9 hex digits
+    await fireEvent.update(input, "FFFFFFFFF"); // this is 9 hex digits, one too many
 
     expect(emitted("update:modelValue")?.[0]).toEqual(["FFFFFFFF"]);
     expect(input.value).toBe("FFFFFFFF");
@@ -46,22 +46,22 @@ describe("HexField", () => {
   });
 
   it("corrects the visible DOM value when sanitized input round-trips to the same modelValue prop", async () => {
-    // Regression for the controlled-input desync: when the sanitized
-    // string equals the modelValue the prop already held, Vue's :value
-    // binding never rewrites the DOM (no prop change), so the raw text
-    // the user typed could otherwise stay stuck on screen.
+    // This checks a bug fix: when the cleaned-up text matches the value
+    // already held outside the field, the field would never get its
+    // display updated, so the raw text the user typed could stay stuck
+    // on screen.
     const { rerender } = render(HexField, { props: { modelValue: "1A2B3C4D", ariaLabel: "field" } });
     const input = screen.getByLabelText("field") as HTMLInputElement;
 
-    // Simulate typing an invalid trailing character; the sanitized value
-    // is identical to the modelValue prop already bound.
+    // Simulate typing an invalid trailing character; the cleaned-up value
+    // ends up identical to the value already bound to the field.
     await fireEvent.update(input, "1A2B3C4Dz");
 
     expect(input.value).toBe("1A2B3C4D");
 
-    // Even if the parent doesn't change modelValue (because the emitted
-    // value already matches it), the DOM must not keep showing the raw,
-    // un-sanitized text.
+    // Even if the value outside the field doesn't change (because the
+    // emitted value already matches it), the field must not keep showing
+    // the raw, uncleaned text.
     await rerender({ modelValue: "1A2B3C4D" });
     expect(input.value).toBe("1A2B3C4D");
   });

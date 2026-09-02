@@ -102,10 +102,11 @@ struct CacheLevelState {
     d: Option<(CacheConfig, u32, SetAssociativeCache)>,
 }
 
-/// `side_tag` (0/1/2 for unified/i/d) keeps otherwise-identical level+side
-/// combinations from rolling identical phantom-dirty patterns — e.g. a
-/// harvard level's I-side and D-side get independent derived seeds even
-/// though they share the same `level_index`, config, and session `seed`.
+/// `side_tag` (0/1/2 for unified/instruction/data) makes sure two sides of
+/// the same level don't end up with the same pre-loaded dirty pattern. For
+/// example a level with separate instruction and data caches gets a
+/// different starting pattern for each side, even though they share the
+/// same level number, settings, and overall session seed.
 fn cache_state_for(level: &Level, level_index: usize, session_seed: u64) -> CacheLevelState {
     let build = |entry: &CacheEntry, side_tag: u64| {
         let seed = seeded_random::value(session_seed, &[5, level_index as u64, side_tag]);
@@ -119,9 +120,9 @@ fn cache_state_for(level: &Level, level_index: usize, session_seed: u64) -> Cach
     }
 }
 
-/// Which cache entry (of a level's `unified`/`i`/`d`) a given access kind
-/// resolves to, so the borrow of `self.levels[index]` needed to answer that
-/// question can end before the entry itself is borrowed again.
+/// Says which cache entry (unified, instruction, or data) a given access
+/// belongs to, so we can look that up and then use the entry separately
+/// afterward.
 enum EntrySlot {
     Unified,
     I,
@@ -168,7 +169,7 @@ pub struct MemoryHierarchySimulator {
     tlb: SetAssociativeCache,
     levels: Vec<CacheLevelState>,
     ram: DataStore,
-    #[allow(dead_code)] // wired for TT4.3's future disk-level modeling; unreachable this branch, see design notes
+    #[allow(dead_code)] // set up for future disk-level modeling in TT4.3; not used yet in this branch, see design notes
     disk: DataStore,
     in_progress: Option<MemoryAccess>,
     cursor: Option<Cursor>,
@@ -176,11 +177,11 @@ pub struct MemoryHierarchySimulator {
 }
 
 impl MemoryHierarchySimulator {
-    /// `seed` is the already-resolved session seed (the user's chosen value,
-    /// or a freshly generated one if they left it blank — see
-    /// `seeded_random::generate_seed`) — resolved once by the caller so it
-    /// can also seed the `ram` `DataStore` passed in below, before this
-    /// constructor ever runs.
+    /// `seed` is the session's seed, already decided by the caller (either
+    /// what the user chose, or a randomly generated one if they left it
+    /// blank, see `seeded_random::generate_seed`). It's resolved before this
+    /// function runs so the same seed can also be used for the `ram` data
+    /// store passed in below.
     pub fn new(config: HierarchyConfig, ram: DataStore, disk: DataStore, seed: u64) -> Self {
         let tlb = SetAssociativeCache::new(config.tlb.associativity.max(1) as usize);
         let levels = config.hierarchy.iter().enumerate().map(|(i, level)| cache_state_for(level, i, seed)).collect();
@@ -243,13 +244,13 @@ impl MemoryHierarchySimulator {
             .snapshot_set(set_index)
             .into_iter()
             .map(|line| {
-                // Only a real line (one an actual access put there —
-                // `recency_rank` is only ever `Some` for those) reads its
-                // words from RAM. A phantom (dirty-seeded but never really
-                // accessed) line's tag is an arbitrary hash with no
-                // meaningful backing address, and showing its contents
-                // would reveal garbage the program hasn't touched yet — so
-                // it just reports no words; the frontend shows a dash.
+                // Only a line that a real access actually put there (it has
+                // a recency rank) reads its words from RAM. A pre-loaded
+                // dirty line that was never really accessed has a tag that's
+                // just a random number, not a real address, so showing its
+                // contents would reveal garbage the program never touched.
+                // We report no words for it instead, and the frontend shows
+                // a dash.
                 let words = if line.valid && line.recency_rank.is_some() {
                     let base_address = line.tag * info.block_size as u64;
                     self.ram
@@ -269,12 +270,12 @@ impl MemoryHierarchySimulator {
             .collect()
     }
 
-    /// Returns only `[start_set, start_set + count)` (clamped to the
-    /// level's actual `num_sets`), instead of every set at once. `num_sets`
-    /// can be astronomically large for a big, low-associativity cache (up
-    /// to 2^63), so the frontend must page through sets the same way it
-    /// pages through RAM blocks via `ram_blocks`, rather than ever
-    /// requesting a whole level in one call.
+    /// Returns only the requested range of sets (clamped to how many sets
+    /// the level actually has), instead of every set at once. The number of
+    /// sets can be huge for a big, low-associativity cache, so the frontend
+    /// has to page through sets in chunks, the same way it pages through
+    /// RAM blocks with `ram_blocks`, rather than asking for a whole level
+    /// in one go.
     pub fn cache_sets(&self, level_index: usize, side: CacheSide, start_set: u64, count: u32) -> Option<Vec<CacheSetSnapshot>> {
         let info = self.cache_level_info(level_index, side)?;
         let end = start_set.saturating_add(count as u64).min(info.num_sets);
@@ -329,14 +330,14 @@ impl MemoryHierarchySimulator {
         LevelResult { level: LevelId::Tlb, outcome, address, access_kind }
     }
 
-    /// Reads the ground-truth bytes for a finished `Load`/`Fetch` straight
-    /// from the backing `DataStore` — this engine only tracks which blocks
-    /// are cached, never per-level byte contents, so RAM is always the
-    /// source of truth for "what the bytes actually are", cache hit or not.
-    /// Uses `access_byte`, not the passive `read_byte`: a real Load is
-    /// exactly the moment a dirty-seeded-but-untouched cell actually gets
-    /// used, so this is what materializes it for good — the inspection
-    /// views never do this on their own.
+    /// Reads the actual bytes for a finished Load or Fetch straight from the
+    /// backing data store. This simulator only tracks which blocks are
+    /// cached, not the byte contents at each level, so RAM is always the
+    /// real source of the data, whether it was a hit or a miss. This uses
+    /// `access_byte` rather than the passive `read_byte`, because a real
+    /// Load is exactly the moment an untouched pre-loaded cell should
+    /// actually become real data. The inspection views never trigger that
+    /// on their own.
     fn read_load_bytes(&mut self, address: u64, size: u8) -> Vec<u8> {
         (0..size).map(|i| self.ram.access_byte(address + i as u64)).collect()
     }
@@ -366,9 +367,9 @@ impl MemoryHierarchySimulator {
         let is_fetch = access.kind == AccessKind::Fetch;
 
         let Some(slot) = self.levels[index].slot_for(is_fetch) else {
-            // This level has no entry for this access's kind (e.g. a harvard
-            // level whose `i` was never configured) — skip it, it produces
-            // no LevelResult, move straight to the next level.
+            // This level doesn't have a cache for this kind of access (for
+            // example a split level with no instruction cache configured),
+            // so skip it entirely and move straight to the next level.
             self.cursor = Some(Cursor::Cache(index + 1));
             return self.step_cache(index + 1);
         };
@@ -385,19 +386,19 @@ impl MemoryHierarchySimulator {
             super::cache::LookupOutcome::Hit => {
                 match access.kind {
                     AccessKind::Store if write_policy == WritePolicy::WriteBack => {
-                        // Write-back hit: mark the line dirty and stop the
-                        // walk here. Per this branch's storage model (no
-                        // per-level byte contents), the write still lands in
-                        // the DataStore immediately since the walk will never
-                        // reach RAM for this access.
+                        // Write-back hit: mark the line dirty and stop here.
+                        // Since this model doesn't keep separate byte
+                        // contents per level, the write still lands in the
+                        // data store right away, because the walk down to
+                        // RAM will never happen for this access.
                         cache.mark_dirty(set_index, tag);
                         self.write_store_bytes(&access);
                         self.finished_result = Some(AccessResult { load_bytes: None });
                     }
                     AccessKind::Store => {
-                        // Write-through hit: propagate down through the
-                        // remaining levels to RAM, where the write is
-                        // actually applied.
+                        // Write-through hit: keep going down through the
+                        // remaining levels to RAM, where the write actually
+                        // happens.
                         self.cursor = Some(Cursor::Cache(index + 1));
                     }
                     AccessKind::Load | AccessKind::Fetch => {
@@ -463,7 +464,7 @@ mod tests {
             hierarchy: vec![Level {
                 id: "l1".into(),
                 harvard: false,
-                unified: Some(CacheEntry { exp: 1, config: cache_cfg }), // 2 lines / 1 way = 2 sets
+                unified: Some(CacheEntry { exp: 1, config: cache_cfg }), // 2 lines, 1 way each, so 2 sets
                 i: None,
                 d: None,
                 inclusion: InclusionPolicy::Nine,
@@ -553,26 +554,26 @@ mod tests {
     fn write_back_store_hit_terminates_the_access_immediately() {
         let mut mem = sim(one_level_config(false));
 
-        // Prime the line: first store misses, allocates, and (since there's
-        // no lower cache level) eventually writes through to RAM.
+        // Prime the line: the first store misses, gets added to the cache,
+        // and since there's no lower cache level, ends up written to RAM.
         mem.begin_access(store(0x10000000, vec![0x11, 0x22, 0x33, 0x44]));
         while !mem.is_access_finished() {
             mem.step();
         }
         mem.take_result();
 
-        // Second store to the same address now hits at L1. A write-back hit
-        // must terminate the access right there: one LevelResult, no need
-        // to step further to reach RAM.
+        // A second store to the same address now hits at L1. A write-back
+        // hit must finish the access right there, with just one result, no
+        // need to keep going down to RAM.
         let result = mem.begin_access(store(0x10000000, vec![0xAA, 0xBB, 0xCC, 0xDD]));
         assert_eq!(result.level, LevelId::Cache(0));
         assert_eq!(result.outcome, LevelOutcome::Hit);
         assert!(mem.is_access_finished());
         mem.take_result();
 
-        // The write-back hit must still have applied the write to the
-        // backing store immediately (this engine has no per-level byte
-        // contents, so RAM is where a write-back hit's data actually lands).
+        // The write-back hit must still have applied the write straight to
+        // RAM (this simulator has no separate byte contents per level, so
+        // RAM is where a write-back hit's data actually ends up).
         let load_result = mem.begin_access(load(0x10000000));
         assert_eq!(load_result.level, LevelId::Cache(0));
         assert_eq!(load_result.outcome, LevelOutcome::Hit);
@@ -585,16 +586,17 @@ mod tests {
     fn write_through_store_hit_does_not_terminate_and_reaches_ram() {
         let mut mem = sim(one_level_config_with(false, write_through_cache_config()));
 
-        // Prime the line: first store misses, allocates (not dirty, since
-        // write-through never leaves a line dirty), and writes to RAM.
+        // Prime the line: the first store misses, gets added to the cache
+        // (not dirty, since write-through never leaves a line dirty), and
+        // writes to RAM.
         mem.begin_access(store(0x10000000, vec![0x11, 0x22, 0x33, 0x44]));
         while !mem.is_access_finished() {
             mem.step();
         }
         mem.take_result();
 
-        // Second store to the same address hits at L1, but a write-through
-        // hit must NOT terminate the access: it keeps walking down to RAM,
+        // A second store to the same address hits at L1, but a write-through
+        // hit must NOT finish the access there: it keeps going down to RAM,
         // where write-through always applies the write.
         let first = mem.begin_access(store(0x10000000, vec![0xAA, 0xBB, 0xCC, 0xDD]));
         assert_eq!(first.level, LevelId::Cache(0));
@@ -636,10 +638,10 @@ mod tests {
 
     #[test]
     fn fetch_walks_the_hierarchy_with_the_same_shape_as_an_equivalent_load() {
-        // A fresh Fetch to an address must miss at L1 then hit at RAM,
-        // exactly like a fresh Load to the same address would — the
-        // hierarchy doesn't special-case instruction fetches beyond the
-        // AccessKind tag it carries through the LevelResult.
+        // A fresh Fetch to an address must miss at L1 then hit at RAM, just
+        // like a fresh Load to the same address would. The hierarchy
+        // doesn't treat instruction fetches specially, beyond labeling the
+        // result with the right access kind.
         let mut fetch_mem = sim(one_level_config(false));
         let fetch_first = fetch_mem.begin_access(fetch(0x10000000));
         assert_eq!(fetch_first.level, LevelId::Cache(0));
@@ -699,10 +701,10 @@ mod tests {
 
     #[test]
     fn fetch_skips_a_harvard_level_with_no_instruction_side_configured() {
-        // L1 is Harvard with only `d` configured (no `i`) — a Fetch access
-        // must skip straight past it to L2 without producing a LevelResult
-        // of its own for L1, the same way a Store already skips a
-        // write_allocate-less miss's absent slot.
+        // L1 is split with only a data cache configured, no instruction
+        // cache. A Fetch access must skip straight past it to L2 without
+        // producing a result of its own for L1, the same way a Store skips
+        // a level that has no matching cache for it.
         let mut mem = sim(harvard_d_only_then_unified_hierarchy_config());
         let first = mem.begin_access(fetch(0x10000000));
         assert_eq!(first.level, LevelId::Cache(1), "L1 (d-only) must be skipped entirely for a fetch");
@@ -734,19 +736,19 @@ mod tests {
 
     #[test]
     fn cache_level_info_reports_derived_sizing() {
-        let mem = sim(one_level_config(false)); // 1 level, exp: 1, associativity: 1, block_size: 4 -> 2 sets
+        let mem = sim(one_level_config(false)); // 1 level, exp 1, associativity 1, block size 4, so 2 sets
         let info = mem.cache_level_info(0, CacheSide::Unified).unwrap();
         assert_eq!(info.associativity, 1);
         assert_eq!(info.block_size, 4);
         assert_eq!(info.num_sets, 2);
-        assert_eq!(info.words_per_line, 1); // 4 bytes / 4-byte words
+        assert_eq!(info.words_per_line, 1); // 4 bytes makes one 4-byte word
     }
 
     #[test]
     fn cache_level_info_is_none_for_a_side_the_level_does_not_have() {
         let mem = sim(one_level_config(false)); // unified only
         assert!(mem.cache_level_info(0, CacheSide::Instruction).is_none());
-        assert!(mem.cache_level_info(5, CacheSide::Unified).is_none()); // out of range
+        assert!(mem.cache_level_info(5, CacheSide::Unified).is_none()); // level number too high
     }
 
     #[test]
@@ -765,7 +767,7 @@ mod tests {
         let sets = mem.cache_sets(0, CacheSide::Unified, 0, info.num_sets as u32).unwrap();
         assert_eq!(sets.len(), 2);
 
-        // address 0x10000000 / block_size 4 -> tag 0x4000000, set_index = tag % 2 = 0
+        // address 0x10000000 with block size 4 gives tag 0x4000000, and set index tag % 2 = 0
         let set0 = sets.iter().find(|s| s.set_index == 0).unwrap();
         let way = set0.ways.iter().find(|w| w.valid).expect("the stored line must be present");
         assert_eq!(way.tag, 0x10000000 / 4);
@@ -774,11 +776,11 @@ mod tests {
 
     #[test]
     fn cache_sets_does_not_overflow_reconstructing_words_for_a_dirty_seeded_phantom_line() {
-        // A phantom line's tag is an arbitrary 64-bit hash, not a real
-        // address / block_size — reconstructing its words used to multiply
-        // that huge tag by block_size directly, overflowing u64 and
-        // panicking (crashing the whole app) the moment a cache view with
-        // any dirtyPercent was opened on an untouched set.
+        // A pre-loaded dirty line's tag is just a random large number, not a
+        // real address divided by the block size. Rebuilding its words used
+        // to multiply that huge tag by the block size directly, which
+        // overflowed and crashed the whole app the moment a cache view with
+        // any dirty percent was opened on an untouched set.
         let mut cfg = cache_config();
         cfg.dirty_percent = 100;
         let mem = sim(one_level_config_with(false, cfg));
@@ -819,7 +821,7 @@ mod tests {
         let blocks = mem.ram_blocks(0x10000000, 1);
         assert!(!blocks[0].populated);
         assert!(blocks[0].dirty);
-        assert_eq!(blocks[0].words, vec![0]); // no garbage leaked through a passive peek
+        assert_eq!(blocks[0].words, vec![0]); // no garbage leaked through a plain look
     }
 
     #[test]
@@ -867,9 +869,10 @@ mod tests {
 
     #[test]
     fn ram_blocks_word_matches_the_value_a_little_endian_sw_would_store() {
-        // A real `sw` storing the 32-bit value 0x12345678 lays out its bytes
-        // little-endian: LSB first. The snapshot's `words` should reconstruct
-        // the exact same value the CPU stored, not a byte-swapped one.
+        // A real store of the 32-bit value 0x12345678 lays out its bytes
+        // with the smallest byte first. The snapshot's words should
+        // rebuild the exact same value the CPU stored, not one with the
+        // bytes swapped around.
         let mut mem = sim(one_level_config(false));
         mem.begin_access(store(0x10000000, vec![0x78, 0x56, 0x34, 0x12]));
         while !mem.is_access_finished() {

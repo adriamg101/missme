@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::interpreter::riscv::Base;
 
-/// Frontend strings are "LRU"/"FIFO"/"Random"/"LFU"/"PLRU" — a mix of
-/// all-caps acronyms and one capitalized word, not a uniform casing
-/// convention, so each variant is renamed explicitly rather than trusting
-/// a blanket `rename_all` to get every one right.
+/// The interface sends these as the exact strings "LRU", "FIFO", "Random",
+/// "LFU", "PLRU". They're a mix of all-caps short names and one regular
+/// capitalized word, so each one is spelled out here by hand instead of
+/// relying on an automatic casing rule to get them all right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReplacementPolicy {
     #[serde(rename = "LRU")]
@@ -39,8 +39,9 @@ pub enum WritePolicy {
     WriteBack,
 }
 
-/// Frontend strings are "inclusive"/"exclusive"/"NINE" (Non-Inclusive
-/// Non-Exclusive) — again mixed casing, explicit renames.
+/// The interface sends these as "inclusive", "exclusive", or "NINE"
+/// (short for Non-Inclusive Non-Exclusive). Mixed casing again, so each
+/// one is spelled out here by hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InclusionPolicy {
     #[serde(rename = "inclusive")]
@@ -121,9 +122,9 @@ pub struct HierarchyConfig {
     pub tlb: TlbConfig,
     pub ram: RamConfig,
     pub disk: DiskConfig,
-    /// The user's chosen seed for dirty-line pre-seeding, or `None` to draw
-    /// a fresh random one each time a session is built — see
-    /// `seeded_random` for why nothing here is ever a fixed constant.
+    /// The seed the user chose for randomly pre-marking some cache lines as
+    /// dirty, or `None` to pick a fresh random one each time a session
+    /// starts.
     pub seed: Option<u64>,
 }
 

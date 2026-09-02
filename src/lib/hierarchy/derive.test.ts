@@ -160,13 +160,13 @@ describe("maxCacheByteCapacity", () => {
 
   it("returns the largest unified level's byte capacity (entries * block size)", () => {
     const h: Hierarchy = [unifiedLevel("a", 5), unifiedLevel("b", 10)];
-    // 2^10 entries * 64 bytes/entry = 65536
+    // 2^10 entries times 64 bytes per entry = 65536
     expect(maxCacheByteCapacity(h)).toBe(2 ** 10 * 64);
   });
 
   it("considers both i and d sides of a harvard level", () => {
     const h: Hierarchy = [unifiedLevel("a", 5), harvardLevel("b", 8, 12)];
-    // 2^12 entries * 64 bytes/entry = 262144
+    // 2^12 entries times 64 bytes per entry = 262144
     expect(maxCacheByteCapacity(h)).toBe(2 ** 12 * 64);
   });
 });

@@ -1,8 +1,7 @@
-// Commands backing the memory-contents inspection cards
-// (`RegistersView.vue`, `CacheLevelView.vue`, `RamView.vue`): reading the
-// current simulation's registers, cache-level snapshots, and RAM blocks.
-// Split out of the former single `simulation_controller.rs` — session
-// lifecycle and the `sim:event` stream live in `simulation_session_controller.rs`.
+// Commands used by the memory-contents inspection panels (the registers view,
+// cache level view, and RAM view) to read the current simulation's registers,
+// cache snapshots, and RAM blocks. Session setup and the live event stream
+// live in a separate file, simulation_session_controller.rs.
 use serde::Serialize;
 
 use crate::models::simulation::memory::hierarchy::{CacheLevelInfo, CacheSetSnapshot, CacheSide, RamBlockSnapshot};
@@ -54,10 +53,10 @@ pub fn get_cache_level_info(state: tauri::State<SessionState>, level_index: usiz
 }
 
 fn cache_sets(state: &SessionState, level_index: usize, side: String, start_set: u64, count: u32) -> Result<Vec<CacheSetSnapshot>, String> {
-    // Caps how many sets one call can return, same idea as get_ram_blocks's
-    // MAX_COUNT — NOT a cap on the level's total num_sets (which can be
-    // astronomically large; the frontend pages through it instead of ever
-    // requesting it all at once).
+    // Limits how many sets one call can return (the same idea as the RAM
+    // block limit below). This does not limit how many sets a cache level
+    // can have in total, since that number can be huge; the frontend fetches
+    // it in pages instead of requesting everything at once.
     const MAX_COUNT: u32 = 512;
     if count > MAX_COUNT {
         return Err(format!("count {count} exceeds the maximum of {MAX_COUNT}"));
@@ -167,11 +166,10 @@ mod tests {
     }
 
     fn oversized_cache_hierarchy_config() -> HierarchyConfig {
-        // exp: 20, associativity: 1 -> num_sets = 2^20 = 1,048,576 — far
-        // more than a single get_cache_sets call would ever request, but
-        // no longer something the whole level needs to fit into one
-        // response for (that's exactly what get_cache_level_info +
-        // paginated get_cache_sets replaces).
+        // This works out to 1,048,576 sets, far more than a single call would
+        // ever request, but that's fine since the whole level no longer needs
+        // to fit into one response. Fetching the level's info separately from
+        // fetching its sets in pages is exactly what avoids that problem.
         HierarchyConfig {
             isa: Base::Rv32i,
             vm_enabled: false,

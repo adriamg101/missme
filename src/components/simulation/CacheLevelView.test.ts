@@ -47,10 +47,10 @@ function seedOneLevel() {
   return store;
 }
 
-// get_cache_level_info returns metadata only; get_cache_sets pages through
-// the actual set data — this mocks both, serving get_cache_sets out of the
-// given full `allSets` array by slicing whatever [startSet, startSet+count)
-// window was requested, the same way the real backend command does.
+// get_cache_level_info only returns metadata, while get_cache_sets fetches
+// pages of the actual set data. This fakes both, and answers get_cache_sets
+// by slicing out the requested [startSet, startSet+count) range from the
+// given full `allSets` array, the same way the real backend would.
 function mockCacheLevel(info: CacheLevelInfo, allSets: CacheSet[]) {
   invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
     if (cmd === "get_cache_level_info") return Promise.resolve(info);
@@ -74,11 +74,11 @@ function defaultSets(): CacheSet[] {
   ];
 }
 
-// onMounted's chain is: invoke(get_cache_level_info) -> resetWindow ->
-// nextTick (so .simulation-cache-body exists before measuring it) ->
-// invoke(get_cache_sets) -> listen(...) — several microtask hops, so a
-// fixed small number of `await Promise.resolve()` calls is fragile. This
-// just flushes generously.
+// When the component loads, it fetches the level info, resets the window,
+// waits for the page to update so it can measure the cache body element,
+// fetches the visible sets, and starts listening for events. That's a lot of
+// small steps happening one after another, so waiting a fixed small number
+// of times isn't reliable. This just waits generously to be safe.
 async function flush() {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 }
@@ -101,7 +101,7 @@ describe("CacheLevelView", () => {
       expect.objectContaining({ levelIndex: 0, side: "unified", startSet: 0 }),
     );
     expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
-    // Tag is zero-padded to 8 hex digits, same as words.
+    // The tag is padded with zeros to 8 hex digits, same as the words.
     expect(await screen.findByText("0x00000005")).toBeTruthy();
   });
 
@@ -159,17 +159,17 @@ describe("CacheLevelView — empty and dirty-seeded ways", () => {
     const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await flush();
 
-    // Set 1 in defaultSets() is invalid — its cells must show "-", not
-    // blank, and carry the empty-cell class.
+    // Set 1 in defaultSets() is invalid, so its cells should show "-", not
+    // be blank, and should have the empty-cell class.
     const dashes = container.querySelectorAll(".simulation-cache-cell-empty");
     expect(dashes.length).toBeGreaterThan(0);
     expect(Array.from(dashes).every((cell) => cell.textContent === "-")).toBe(true);
   });
 
   it("shows a phantom (dirty-seeded, recencyRank null) way's dirty bit but hides its tag/data as dashes", async () => {
-    // The program hasn't actually touched this way yet — only the D bit
-    // is real; the tag/words must never leak (there's nothing meaningful
-    // to reveal, and it would look like real data otherwise).
+    // The program hasn't actually touched this way yet, only the dirty bit
+    // is real. The tag and words must never be shown, since there's nothing
+    // meaningful there and it would look like real data otherwise.
     seedOneLevel();
     mockCacheLevel(
       { associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1 },
@@ -208,8 +208,8 @@ describe("CacheLevelView — set-associative layout", () => {
     expect(await screen.findByText("0x11111111")).toBeTruthy();
     expect(screen.getByText("0x22222222")).toBeTruthy();
 
-    // The set index appears exactly once for the whole 2-way block, not
-    // once per way, and it spans both way-rows.
+    // The set index should appear only once for the whole 2-way block, not
+    // once per way, and it should span both way rows.
     const setCells = container.querySelectorAll(".simulation-cache-set-index");
     expect(setCells.length).toBe(1);
     expect(setCells[0].textContent).toBe("0");
@@ -238,7 +238,7 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
     const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await flush();
 
-    // No call ever requests anywhere near the full 5,000,000 sets.
+    // No request should ever ask for anywhere near the full 5,000,000 sets.
     for (const call of invokeMock.mock.calls) {
       if (call[0] === "get_cache_sets") {
         expect((call[1] as { count: number }).count).toBeLessThan(1000);
@@ -247,14 +247,14 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
 
     invokeMock.mockClear();
     const scrollEl = container.querySelector(".simulation-cache-body") as HTMLDivElement;
-    // Scroll to near the bottom of the sliding window to trigger a re-anchor.
+    // Scroll to near the bottom of the visible window to force it to reload around a new position.
     scrollEl.scrollTop = 520_000 - 100;
     await fireEvent.scroll(scrollEl);
     await flush();
 
     const [, args] = invokeMock.mock.calls.find((call) => call[0] === "get_cache_sets") as [string, { startSet: number }];
-    // Re-anchored well past the initial window — proves scrolling isn't
-    // capped at whatever the first window happened to cover.
+    // The new position is well past the initial window, which shows that
+    // scrolling isn't limited to whatever the first window happened to cover.
     expect(args.startSet).toBeGreaterThan(1000);
   });
 });

@@ -9,13 +9,13 @@ const hierarchyStore = useHierarchyConfigStore();
 
 const U32_MAX = 0xffffffff;
 
-// Before the first successful compile, the program's actual .text size
-// isn't known yet (the user may edit dataBase before ever compiling) — so
-// this is a best-effort heuristic, not an exact collision check. 1 MiB is a
-// generous upper bound for any program this simulator is realistically
-// used with, used purely to catch the common mistake of setting .data at
-// or just after .text with no real gap. Once a compile has happened,
-// `lastCompiledTextSize` gives the exact size and this fallback is unused.
+// Before the program is compiled for the first time, we don't actually know
+// how big .text will be, since the user might edit dataBase before ever
+// compiling. So this is just a rough guess, not an exact check. 1 MiB is a
+// generous size for any program this simulator would realistically run,
+// used only to catch the common mistake of placing .data right at or just
+// after .text with no real gap. Once a compile has happened,
+// `lastCompiledTextSize` gives the real size and this guess is no longer used.
 const MIN_TEXT_GAP = 0x100000;
 
 function toHex8(value: number): string {
@@ -31,25 +31,25 @@ const textBaseHex = computed(() => toHex8(store.textBase));
 const dataBaseHex = computed({
   get: () => toHex8(store.dataBase),
   set: (value: string) => {
-    // An empty field means the user is mid-edit, not that they explicitly
-    // chose base address 0 — keep the previous valid dataBase in the store
-    // rather than silently coercing it to 0. The getter above then keeps
-    // showing the last valid value once the field regains a value; the
-    // input itself is left empty by HexField until then.
+    // An empty field just means the user is in the middle of typing, not
+    // that they picked base address 0, so keep the previous valid dataBase
+    // in the store instead of quietly turning it into 0. The value shown
+    // above stays as the last valid one until the field has something in it
+    // again; HexField leaves the input itself empty in the meantime.
     if (value === "") return;
     store.setDataBase(fromHex(value));
   },
 });
 
-// Non-blocking warnings only — the app never prevents an invalid value from
-// being typed, it just surfaces the problem (same house style as e.g. the
-// dirtyPercent NaN guard in CacheConfigForm.vue).
+// These are just warnings, not blockers. The app never stops the user from
+// typing an invalid value, it just points out the problem (same approach
+// used for the dirtyPercent check in CacheConfigForm.vue).
 const textGap = computed(() => store.lastCompiledTextSize ?? MIN_TEXT_GAP);
 const overlapsText = computed(() => store.dataBase < store.textBase + textGap.value);
 
-// Only checkable once a compile has actually produced a .data size — no
-// fallback heuristic here, unlike the collision check above, since there's
-// no sensible guess for "how big will the program's data be".
+// This can only be checked once a compile has actually produced a .data
+// size. Unlike the check above, there's no fallback guess here, since there's
+// no reasonable way to estimate how big the program's data will be.
 const exceedsRam = computed(
   () => store.lastCompiledDataSize !== null && store.lastCompiledDataSize > hierarchyStore.ram.size,
 );

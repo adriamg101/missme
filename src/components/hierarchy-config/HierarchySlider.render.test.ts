@@ -31,7 +31,7 @@ describe("HierarchySlider rendering", () => {
 
   it("renders a unified level as one marker with a label above the line", () => {
     render(HierarchySlider, { props: { hierarchy: unified, isa: "RV32I" } });
-    expect(screen.getByText("1 K")).toBeTruthy(); // 2^10
+    expect(screen.getByText("1 K")).toBeTruthy(); // 2 to the power of 10
     expect(screen.getByLabelText("L1, 1 K")).toBeTruthy();
   });
 

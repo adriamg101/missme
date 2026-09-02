@@ -1,6 +1,6 @@
-// Named hierarchy-config save slots, persisted as one JSON file per name
-// under the app's config directory (not the browser's localStorage, since
-// this data needs to be shareable/inspectable outside the app too).
+// Named hierarchy-config save slots, saved as one JSON file per name in the
+// app's config folder (not browser storage, since this data needs to be
+// shareable and viewable outside the app too).
 import { BaseDirectory, mkdir, readDir, readTextFile, rename, writeTextFile } from "@tauri-apps/plugin-fs";
 
 const CONFIGS_DIR = "hierarchy-configs";

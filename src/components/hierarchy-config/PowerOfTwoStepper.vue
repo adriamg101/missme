@@ -3,9 +3,9 @@ import { computed } from "vue";
 import { sizeLabel } from "../../lib/hierarchy/derive";
 
 /**
- * Numeric stepper for powers of two.
- * INVARIANT: min and max must themselves be powers of two; the component does not enforce this at runtime.
- * The value is only ever changed via the +/- buttons (readonly input) so it never leaves the power-of-two set.
+ * A number field for choosing powers of two.
+ * Important: min and max must themselves be powers of two, the component does not check this itself.
+ * The value only ever changes through the plus/minus buttons (the input can't be typed into), so it always stays a power of two.
  */
 const props = withDefaults(
   defineProps<{
@@ -20,7 +20,7 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ "update:modelValue": [value: number] }>();
 
-// Values here are always exact powers of two, so log2 is always a whole number.
+// Values here are always exact powers of two, so the exponent is always a whole number.
 const display = computed(() => sizeLabel(Math.log2(props.modelValue)));
 
 function clamp(value: number): number {

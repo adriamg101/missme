@@ -1,4 +1,4 @@
-// Backs the (currently placeholder) Stats card (`StatsView.vue`). No
-// commands exist yet — this module is scoped ahead of time for the future
-// multi-simulation stats work mentioned in the S4 epic, so that work lands
-// here rather than needing another controller split later.
+// Backs the stats panel in the interface, which is just a placeholder for
+// now. There are no commands here yet; this file is set up ahead of time so
+// the future stats feature has a home instead of needing to split the
+// controllers again later.

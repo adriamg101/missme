@@ -18,15 +18,15 @@ pub enum TokenKind {
     Register(RegisterKind),
 }
 
-/// RISC-V instruction mnemonics recognized by the lexer, grouped by the
-/// ISA base/extension that defines them. The lexer recognizes all of these
-/// unconditionally, regardless of the active `RiscvConfig` — whether a
-/// given extension is actually enabled is validated later (parser /
-/// semantic analysis), not here.
+/// All the RISC-V instruction names this app recognizes, grouped by which
+/// base instruction set or extension defines them. Every name here is
+/// recognized no matter which extensions are actually turned on for the
+/// current program; checking whether an instruction is actually allowed
+/// happens in a later step, not here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstructionKind {
-    // RV32I base
+    // Base 32-bit instructions
     Lui,
     Auipc,
     Jal,
@@ -68,7 +68,7 @@ pub enum InstructionKind {
     Ecall,
     Ebreak,
 
-    // RV64I additions
+    // Extra instructions added for 64-bit support
     Lwu,
     Ld,
     Sd,
@@ -82,7 +82,7 @@ pub enum InstructionKind {
     Srlw,
     Sraw,
 
-    // M extension
+    // Multiplication and division instructions
     Mul,
     Mulh,
     Mulhsu,
@@ -92,7 +92,7 @@ pub enum InstructionKind {
     Rem,
     Remu,
 
-    // F extension (single precision)
+    // Single-precision floating point instructions
     Flw,
     Fsw,
     FmaddS,
@@ -120,7 +120,7 @@ pub enum InstructionKind {
     FcvtSWu,
     FmvWX,
 
-    // D extension (double precision)
+    // Double-precision floating point instructions
     Fld,
     Fsd,
     FmaddD,
@@ -148,7 +148,7 @@ pub enum InstructionKind {
     FcvtDW,
     FcvtDWu,
 
-    // Q extension (quad precision)
+    // Quad-precision floating point instructions
     Flq,
     Fsq,
     FmaddQ,
@@ -178,7 +178,7 @@ pub enum InstructionKind {
     FcvtQW,
     FcvtQWu,
 
-    // Pseudo-instructions
+    // Shorthand instructions that stand in for a real instruction
     Nop,
     Li,
     Mv,
@@ -206,10 +206,10 @@ pub enum InstructionKind {
     La,
 }
 
-/// Integer (`x0`-`x31`) and floating-point (`f0`-`f31`) registers. ABI alias
-/// names (`sp`, `a0`, `fa0`, ...) resolve to the same numbered register as
-/// their `xN`/`fN` form — the original spelling the user typed is preserved
-/// separately in `Token::lexeme`.
+/// Integer (`x0`-`x31`) and floating-point (`f0`-`f31`) registers. Common
+/// name aliases (`sp`, `a0`, `fa0`, ...) point to the same register as their
+/// `xN`/`fN` form. The exact spelling the user typed is kept separately in
+/// `Token::lexeme`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegisterKind {
@@ -217,13 +217,13 @@ pub enum RegisterKind {
     F(u8),
 }
 
-/// Looks up a word as a RISC-V instruction mnemonic (case-sensitive,
-/// lowercase, matching assembler convention). Returns `None` if the word
-/// is not a recognized mnemonic.
+/// Looks up a word as a RISC-V instruction name (must be lowercase, as
+/// assembly code expects). Returns `None` if the word isn't a known
+/// instruction name.
 pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
     use InstructionKind::*;
     Some(match word {
-        // RV32I base
+        // Base 32-bit instructions
         "lui" => Lui,
         "auipc" => Auipc,
         "jal" => Jal,
@@ -265,7 +265,7 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
         "ecall" => Ecall,
         "ebreak" => Ebreak,
 
-        // RV64I additions
+        // Extra instructions added for 64-bit support
         "lwu" => Lwu,
         "ld" => Ld,
         "sd" => Sd,
@@ -279,7 +279,7 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
         "srlw" => Srlw,
         "sraw" => Sraw,
 
-        // M extension
+        // Multiplication and division instructions
         "mul" => Mul,
         "mulh" => Mulh,
         "mulhsu" => Mulhsu,
@@ -289,7 +289,7 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
         "rem" => Rem,
         "remu" => Remu,
 
-        // F extension
+        // Single-precision floating point instructions
         "flw" => Flw,
         "fsw" => Fsw,
         "fmadd.s" => FmaddS,
@@ -317,7 +317,7 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
         "fcvt.s.wu" => FcvtSWu,
         "fmv.w.x" => FmvWX,
 
-        // D extension
+        // Double-precision floating point instructions
         "fld" => Fld,
         "fsd" => Fsd,
         "fmadd.d" => FmaddD,
@@ -345,7 +345,7 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
         "fcvt.d.w" => FcvtDW,
         "fcvt.d.wu" => FcvtDWu,
 
-        // Q extension
+        // Quad-precision floating point instructions
         "flq" => Flq,
         "fsq" => Fsq,
         "fmadd.q" => FmaddQ,
@@ -375,7 +375,7 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
         "fcvt.q.w" => FcvtQW,
         "fcvt.q.wu" => FcvtQWu,
 
-        // Pseudo-instructions
+        // Shorthand instructions that stand in for a real instruction
         "nop" => Nop,
         "li" => Li,
         "mv" => Mv,
@@ -406,9 +406,9 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
     })
 }
 
-/// Looks up a word as an integer or floating-point register name — either
-/// the numbered form (`x5`, `f12`) or an ABI alias (`sp`, `a0`, `fa0`, ...).
-/// Returns `None` if the word is not a recognized register name.
+/// Looks up a word as an integer or floating-point register name, either
+/// the numbered form (`x5`, `f12`) or a common alias (`sp`, `a0`, `fa0`, ...).
+/// Returns `None` if the word isn't a recognized register name.
 pub fn lookup_register(word: &str) -> Option<RegisterKind> {
     use RegisterKind::*;
 

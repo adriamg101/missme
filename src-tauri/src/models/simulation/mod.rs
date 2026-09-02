@@ -20,10 +20,10 @@ pub struct Action {
     pub instruction_complete: bool,
 }
 
-/// Executes a compiled program one atomic action at a time. A non-memory
-/// instruction is one action; a load/store is one action per memory level
-/// touched, with `instruction_complete` only true on the action that
-/// resolves the whole instruction.
+/// Runs a compiled program one small step at a time. An instruction that
+/// doesn't touch memory finishes in one step; a load or store takes one
+/// step per memory level it has to check, and `instruction_complete` is
+/// only true on the step that finishes the whole instruction.
 pub trait CpuSimulator {
     fn step_action(&mut self) -> Action;
     fn is_finished(&self) -> bool;

@@ -1,7 +1,8 @@
 mod controllers;
 mod models;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+// See the Tauri docs to learn more about commands like this one:
+// https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)

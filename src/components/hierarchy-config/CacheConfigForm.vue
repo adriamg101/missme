@@ -11,18 +11,19 @@ import { defaultCacheConfig } from "../../lib/hierarchy/model";
 const props = defineProps<{ config: CacheConfig; cacheSizeExp: number; isInstructionCache: boolean; isa: ISA }>();
 const emit = defineEmits<{ update: [patch: Partial<CacheConfig>]; "apply-to-all": [] }>();
 
-// cacheSizeExp is the slider's position — the number of entries (tags) in
-// this cache, not a byte count — so associativity (ways) can't exceed that
-// entry count regardless of block size (sets = entries / associativity >= 1).
+// cacheSizeExp is the slider's position, which is the number of entries
+// (tags) in this cache, not a byte count. So associativity (ways) can't
+// go above that entry count no matter the block size, since the number
+// of sets (entries divided by associativity) must stay at least 1.
 const maxAssociativity = computed(() => 2 ** props.cacheSizeExp);
 
-// A block must be able to hold at least one word — 4 bytes on RV32I, 8 on RV64I.
+// A block must be able to hold at least one word, 4 bytes on RV32I or 8 on RV64I.
 const minBlockSize = computed(() => (props.isa === "RV32I" ? 4 : 8));
 
-// Defends against a config persisted before CacheConfig gained `dirtyPercent`
-// (e.g. localStorage saved by an older version of this app) — without this,
-// an undefined value here turns every +/- click into a NaN that never visibly
-// changes (NaN === NaN is false, so the stepper never sees "no change").
+// Protects against a saved config from before the dirty percent setting
+// existed (for example, data saved by an older version of this app). Without
+// this fallback, a missing value would turn every plus/minus click into an
+// invalid number that never seems to change on screen.
 const safeDirtyPercent = computed(() =>
   Number.isFinite(props.config.dirtyPercent) ? props.config.dirtyPercent : defaultCacheConfig().dirtyPercent,
 );

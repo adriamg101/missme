@@ -30,9 +30,9 @@ pub struct CacheLineSnapshot {
     pub recency_rank: Option<usize>,
 }
 
-/// A single shared implementation of set-associative storage, reused by
-/// every cache level and by the TLB. Only LRU replacement is simulated —
-/// see this plan's Global Constraints.
+/// One shared implementation of set-associative storage, reused by every
+/// cache level and by the TLB. Only LRU (least recently used) replacement
+/// is simulated, see this plan's Global Constraints.
 #[derive(Debug)]
 pub struct SetAssociativeCache {
     associativity: usize,
@@ -42,18 +42,18 @@ pub struct SetAssociativeCache {
     seed: u64,
 }
 
-/// A not-yet-touched way slot in `set_index` counts as pre-loaded ("phantom
-/// dirty") if it rolls under `dirty_percent` — a pure function of coordinates,
-/// never stored, so it's consistent whether asked by a real access or by a
-/// display snapshot. `way` here is always the slot a real insert would fill
-/// next (`lines.len()` at insert time), matching how `snapshot_set` numbers
-/// empty ways, so both agree on which slots are phantom-occupied.
+/// A not-yet-touched way in a set counts as pre-loaded dirty if its roll
+/// comes out under the dirty percent setting. This is always worked out
+/// from the coordinates, never stored, so it gives the same answer whether
+/// asked by a real access or by a display snapshot. `way` here is always
+/// the slot a real insert would fill next, matching how `snapshot_set`
+/// numbers empty ways, so both agree on which slots count as pre-loaded.
 fn phantom_dirty_roll(dirty_percent: u8, seed: u64, set_index: u64, way: u64) -> bool {
     dirty_percent > 0 && seeded_random::percent_roll(seed, &[3, set_index, way]) < dirty_percent
 }
 
-/// The fake tag a phantom-dirty way displays/evicts — an arbitrary-looking
-/// value that will essentially never collide with a tag a real access
+/// The fake tag a pre-loaded dirty way shows or evicts. It's a random-
+/// looking value that will basically never clash with a tag a real access
 /// derives from an actual address.
 fn phantom_tag(seed: u64, set_index: u64, way: u64) -> u64 {
     seeded_random::value(seed, &[4, set_index, way])
@@ -64,15 +64,15 @@ impl SetAssociativeCache {
         Self::with_dirty_seed(associativity, 0, 0)
     }
 
-    /// `dirty_percent` of ways that a real access has never touched still
-    /// count as already occupied by pre-existing dirty data, the same way a
-    /// cache that wasn't cold-started would be — the first real insert into
-    /// such a slot is a miss-with-eviction (of that phantom line) rather
-    /// than a free append. `seed` is resolved once per simulation session
-    /// (the user's chosen value, or a freshly generated one — see
-    /// `seeded_random::generate_seed`) and derived per level/side by the
-    /// caller, so different caches in the same hierarchy don't roll in
-    /// lockstep.
+    /// A percentage of ways that a real access has never touched still
+    /// count as already holding pre-existing dirty data, the same way a
+    /// cache that didn't start out empty would be. So the first real insert
+    /// into such a slot is a miss that evicts that pre-loaded line, rather
+    /// than simply being added for free. The seed is decided once per
+    /// simulation session (either the user's chosen value, or a freshly
+    /// generated one, see `seeded_random::generate_seed`), and the caller
+    /// derives a different one per level and side, so different caches in
+    /// the same hierarchy don't all roll the same pattern.
     pub fn with_dirty_seed(associativity: usize, dirty_percent: u8, seed: u64) -> Self {
         Self {
             associativity,
@@ -141,9 +141,9 @@ impl SetAssociativeCache {
         self.associativity
     }
 
-    /// Read-only: never touches `last_used`/`tick`, unlike `lookup`. Always
-    /// returns exactly `associativity` entries; ways beyond how many lines
-    /// this set currently holds are reported empty.
+    /// Read-only: never changes the recency tracking, unlike `lookup`.
+    /// Always returns exactly as many entries as the associativity; ways
+    /// beyond how many lines this set currently holds are reported empty.
     pub fn snapshot_set(&self, set_index: u64) -> Vec<CacheLineSnapshot> {
         let empty: Vec<CacheLine> = Vec::new();
         let lines = self.sets.get(&set_index).unwrap_or(&empty);
@@ -208,7 +208,7 @@ mod tests {
         let mut cache = SetAssociativeCache::new(2);
         cache.insert(0, 1, false);
         cache.insert(0, 2, false);
-        // touch tag 1 so tag 2 becomes the least recently used
+        // touch tag 1 so tag 2 becomes the least recently used one
         cache.lookup(0, 1);
 
         let evicted = cache.insert(0, 3, false);
@@ -239,7 +239,7 @@ mod tests {
         let mut cache = SetAssociativeCache::new(1);
         cache.insert(0, 1, false);
         cache.mark_dirty(0, 1);
-        // re-insert-free way to observe dirty: evict it and check the flag
+        // the simplest way to check the dirty bit is to evict the line and look at the flag
         let evicted = cache.insert(0, 2, false).unwrap();
         assert!(evicted.dirty);
     }
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn mark_dirty_on_a_tag_not_resident_is_a_no_op() {
         let mut cache = SetAssociativeCache::new(1);
-        cache.mark_dirty(0, 999); // must not panic
+        cache.mark_dirty(0, 999); // must not crash
     }
 
     #[test]
@@ -275,7 +275,7 @@ mod tests {
         let mut cache = SetAssociativeCache::new(2);
         cache.insert(0, 1, false);
         cache.insert(0, 2, false);
-        cache.lookup(0, 1); // touch tag 1 so it becomes most recently used
+        cache.lookup(0, 1); // touch tag 1 so it becomes the most recently used one
 
         let snap = cache.snapshot_set(0);
         let rank_of = |tag: u64| snap.iter().find(|w| w.valid && w.tag == tag).unwrap().recency_rank.unwrap();
@@ -287,8 +287,8 @@ mod tests {
     fn snapshot_set_does_not_mutate_recency() {
         let mut cache = SetAssociativeCache::new(1);
         cache.insert(0, 1, false);
-        cache.snapshot_set(0); // must not touch last_used/tick
-        cache.insert(0, 2, false); // if snapshot_set bumped tick, eviction order would be unaffected here anyway; the real guard is the compiler: snapshot_set takes &self
+        cache.snapshot_set(0); // must not affect recency tracking
+        cache.insert(0, 2, false); // eviction order wouldn't actually change here even if it did, but the real safeguard is that this function only reads, it can't modify anything
         let evicted = cache.insert(0, 3, false);
         assert_eq!(evicted.unwrap().tag, 2);
     }
@@ -312,7 +312,7 @@ mod tests {
         let snap = cache.snapshot_set(0);
         assert_eq!(snap.len(), 2);
         assert!(snap.iter().all(|w| w.valid && w.dirty));
-        // Distinct way slots roll distinct fake tags.
+        // Different way slots roll different fake tags.
         assert_ne!(snap[0].tag, snap[1].tag);
     }
 
@@ -338,8 +338,8 @@ mod tests {
         let evicted = cache.insert(0, 999, false);
 
         assert_eq!(evicted, Some(Eviction { tag: phantom_tag, dirty: true }));
-        // The set now holds one real line; only the untouched way slot
-        // still rolls as phantom.
+        // The set now holds one real line; only the still-untouched way
+        // slot rolls as pre-loaded dirty.
         let snap = cache.snapshot_set(0);
         assert_eq!(snap[0].tag, 999);
         assert!(!snap[0].dirty);
@@ -351,7 +351,8 @@ mod tests {
         let mut cache = SetAssociativeCache::with_dirty_seed(1, 100, 1);
         cache.insert(0, 1, false);
         // The only way is now real; a second insert must evict the real
-        // line via normal LRU, not re-roll a phantom for the same slot.
+        // line through normal LRU, not roll a new pre-loaded dirty line for
+        // the same slot.
         let evicted = cache.insert(0, 2, false);
         assert_eq!(evicted, Some(Eviction { tag: 1, dirty: false }));
     }

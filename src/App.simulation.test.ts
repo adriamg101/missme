@@ -100,13 +100,13 @@ describe("App simulation panel swap", () => {
     expect(box).toBeTruthy();
 
     const event = { payload: { kind: "cache_access", levelIndex: 0, outcome: "hit", sourceLine: 1 } };
-    // Call all captured handlers (only the one wired to the diagram will produce an observable effect)
+    // Call all captured handlers; only the one wired to the diagram will actually change anything visible
     for (const handler of allHandlers) {
       handler(event);
     }
 
-    // Vue reactivity updates are asynchronous, so use waitFor to check the class
-    // Note: SVG elements return SVGAnimatedString for className, so we use getAttribute instead
+    // The screen doesn't update instantly, so wait before checking the class
+    // Note: SVG elements need getAttribute here instead of the usual className check
     await waitFor(() => {
       expect(box!.getAttribute("class")).toContain("access-hit");
     });
@@ -139,9 +139,9 @@ describe("App simulation panel swap", () => {
       expect(document.querySelector(".hierarchy-diagram-status")).toBeTruthy();
     });
 
-    // The simulation ends (Stop pressed, or otherwise no longer active) —
-    // no further sim:event will ever arrive to trigger the usual
-    // before-the-next-step clear, so this must reset on its own.
+    // The simulation ends, whether Stop was pressed or it just stopped being
+    // active, so no further sim event will arrive to trigger the usual
+    // before-the-next-step clear. This must reset on its own instead.
     store.isActive = false;
 
     await waitFor(() => {
