@@ -14,17 +14,14 @@ import { useCompileConfigStore } from "../stores/compileConfig";
 import SimulationToolbar from "./simulation/SimulationToolbar.vue";
 import { useSimulationStore } from "../stores/simulation";
 
-// TODO: in the future this list should come from the backend
+// TODO: in the future this list should come from the backend instead of being hardcoded here
 const languages = ["RISC-V"];
 const languageOptions = languages.map((lang) => ({ value: lang, label: lang }));
 
 const selectedLanguage = ref(languages[0]);
 const code = ref("");
 
-// Keep in sync with the languages CompileConfigForm actually knows how to
-// render a form for (currently only RISC-V). Prevents an empty bordered
-// strip from showing up once a second language is added without a
-// compile-config form of its own yet.
+// Only these languages have a real compile form to show, right now just RISC-V.
 const languagesWithCompileConfig = new Set(["RISC-V"]);
 const languageHasCompileConfig = computed(() => languagesWithCompileConfig.has(selectedLanguage.value));
 
@@ -80,8 +77,7 @@ function syncScroll() {
 
 const lineHeightPx = ref(20);
 
-// Matches the top padding set on .editor-textarea (0.5rem) so the highlight
-// overlay lines up with the text instead of the top of .editor-body.
+// Matches the text area's own top spacing so the highlight lines up with the actual text.
 const TEXTAREA_TOP_PADDING_PX = 8;
 
 function measureLineHeight() {
@@ -209,8 +205,7 @@ async function handleStartClick() {
     errorOutput.value = result.error_output;
 
     if (result.error_count === 0 && result.codegen) {
-      // Each instruction is a fixed 4-byte word in this engine — see the
-      // S4 plan's rulings — so .text's real size is just entry count * 4.
+      // Every instruction is a fixed 4 bytes, so the code size is just the entry count times 4.
       compileConfigStore.setCompiledSizes(result.codegen.entries.length * 4, result.codegen.layout.initial_data.length);
       await simulationStore.start(
         riscvBase.value,
@@ -218,6 +213,7 @@ async function handleStartClick() {
         {
           isa: hierarchyConfigStore.isa,
           vmEnabled: hierarchyConfigStore.vmEnabled,
+          pageSize: hierarchyConfigStore.pageSize,
           hierarchy: hierarchyConfigStore.hierarchy,
           tlb: hierarchyConfigStore.tlb,
           ram: hierarchyConfigStore.ram,
@@ -244,7 +240,7 @@ async function handleOverwrite() {
 
 async function handleSaveThenLoad() {
   const path = await save();
-  if (!path) return; // user cancelled the save dialog, abort the whole load
+  if (!path) return; // the user cancelled the save dialog, so cancel the whole load too
 
   await writeTextFile(path, code.value);
 
@@ -278,9 +274,7 @@ async function handleDroppedPath(path: string) {
 
 onMounted(async () => {
   document.addEventListener("click", handleDocumentClick);
-  // Tauri intercepts OS-level file drag & drop before it reaches the DOM
-  // (dataTransfer.files stays empty for files dragged from a file manager),
-  // so this uses Tauri's own drag & drop event instead of native HTML5 drop events.
+  // This listens for files dragged in from outside the app, since the normal browser drop does not see them.
   unlistenDragDrop = await getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === "drop") {
       isDragOver.value = false;
@@ -308,9 +302,7 @@ onBeforeUnmount(() => {
   unlistenSimEvents?.();
 });
 
-// Exposed for tests only: `languages` currently has a single entry, so
-// there's no UI path to select an "unsupported" language yet — this lets
-// tests exercise the languageHasCompileConfig gating (finding #5) directly.
+// Exposed only so tests can pick a language the app itself cannot pick yet.
 defineExpose({ selectedLanguage });
 </script>
 

@@ -10,7 +10,7 @@ use super::{Action, ActionKind, CpuSimulator, RegisterId};
 struct PendingMemoryOp {
     source_line: usize,
     register: RegisterId,
-    #[allow(dead_code)] // constructed for symmetry with the access request; not yet consulted after completion, kept for a near-future consumer (e.g. event payloads)
+    #[allow(dead_code)] // kept alongside the other access details for consistency; nothing reads it yet, but something probably will soon
     size: u8,
     sign_extend: bool,
     is_fp: bool,
@@ -24,11 +24,8 @@ pub struct RiscvCpuSimulator {
     instructions: InstructionStore,
     memory: MemoryHierarchySimulator,
     pending: Option<PendingMemoryOp>,
-    // Source line of the instruction currently being fetched, while its
-    // Fetch access is walking the memory hierarchy — mirrors `pending`'s
-    // role for loads/stores, but a fetch has no register to write back on
-    // completion, so it only needs to remember where to attribute the
-    // in-progress MemoryLevel actions.
+    // Source line of the instruction being fetched right now, while it makes its way through the memory hierarchy.
+    // Works like pending does for loads and stores, but a fetch has no register to write back.
     fetch_pending: Option<usize>,
 }
 
@@ -37,12 +34,8 @@ impl RiscvCpuSimulator {
         let text_base = codegen.layout.text_base as u64;
         let data_base = codegen.layout.data_base as u64;
         memory.preload_ram(data_base, &codegen.layout.initial_data);
-        // Instruction bytecode is preloaded into RAM at text_base too, in
-        // program order (one 4-byte little-endian word per entry) — purely
-        // so a Fetch access has real bytes to read on its way through the
-        // hierarchy/RAM inspection views. Actual instruction decoding never
-        // reads this back; it always uses `instructions` below, which is
-        // the authoritative source of what each instruction is.
+        // The instruction bytes are also loaded into RAM in program order, so a fetch has real bytes to read.
+        // The simulator never reads them back to decode instructions though, it always uses the real source below.
         let text_bytes: Vec<u8> = codegen.entries.iter().flat_map(|entry| entry.bytecode.to_le_bytes()).collect();
         memory.preload_ram(text_base, &text_bytes);
         Self {
@@ -57,8 +50,7 @@ impl RiscvCpuSimulator {
         }
     }
 
-    /// Masks a value to this CPU's configured word width — 32 bits for
-    /// Rv32i, the full 64 bits for Rv64i.
+    /// Trims a value down to this CPU's word size, 32 bits for Rv32i, the full 64 bits for Rv64i.
     fn mask(&self, value: u64) -> u64 {
         match self.base {
             Base::Rv32i => value & 0xFFFF_FFFF,
@@ -66,9 +58,8 @@ impl RiscvCpuSimulator {
         }
     }
 
-    /// Sign-extends a u64 value to i64 based on this CPU's configured word width.
-    /// For Rv32i, treats the lower 32 bits as a signed 32-bit value and extends the sign.
-    /// For Rv64i, treats the full 64 bits as a signed 64-bit value.
+    /// Turns a value into a signed number, based on this CPU's word size.
+    /// For Rv32i only the lower 32 bits count, with the sign extended from there, Rv64i uses the full 64 bits.
     fn sign_extend(&self, value: u64) -> i64 {
         match self.base {
             Base::Rv32i => ((value as u32) as i32) as i64,
@@ -116,11 +107,8 @@ impl RiscvCpuSimulator {
         if sign_extend {
             let bit_width = bytes.len() * 8;
             let sign_bit = 1u64 << (bit_width - 1);
-            // A full 64-bit read already fills the type, so it needs no
-            // extension — and `!0u64 << 64` would panic (shift amount
-            // must be < 64) in a debug build. Unreachable with today's
-            // callers (no instruction loads 8 sign-extended bytes), but
-            // guarded defensively since this is easy to get wrong later.
+            // A full 64 bit read already fills the whole value, so there is nothing left to extend.
+            // Shifting by a full 64 bits would crash in a debug build, this guard just protects against that.
             if bit_width < 64 && value & sign_bit != 0 {
                 value |= !0u64 << bit_width;
             }
@@ -189,10 +177,8 @@ impl RiscvCpuSimulator {
                     Operand::Immediate(v) => *v,
                     _ => unreachable!("operand shape already validated by semantic analysis"),
                 };
-                // `imm` arrives as an unsigned 20-bit value (validated
-                // upstream). Shifting it into bit 31 can set that bit,
-                // which under RV64I must be sign-extended through the
-                // full 64-bit result — hence the signed round-trip below.
+                // The value comes in unsigned, and shifting it left can set the top bit of the 32 bit result.
+                // Under Rv64i that top bit needs to carry through the full 64 bits, hence the signed conversion below.
                 let shifted = ((imm as u32) << 12) as i32 as i64 as u64;
                 let value = self.mask(shifted);
                 self.write_register(rd, value);
@@ -209,7 +195,7 @@ impl RiscvCpuSimulator {
                     Operand::Immediate(v) => *v,
                     _ => unreachable!("operand shape already validated by semantic analysis"),
                 };
-                // Same signed-shift reasoning as `Lui`, then add the pc.
+                // Same shifting logic as Lui above, then add the program counter.
                 let shifted = ((imm as u32) << 12) as i32 as i64 as u64;
                 let value = self.mask((entry.address as u64).wrapping_add(shifted));
                 self.write_register(rd, value);
@@ -678,12 +664,8 @@ impl RiscvCpuSimulator {
                     instruction_complete: true,
                 }
             }
-            // NOTE: RISC-V requires fmin(+0.0, -0.0) == -0.0 and
-            // fmax(-0.0, +0.0) == +0.0. Rust's f32::min/max documentation
-            // explicitly states signed-zero ordering is unspecified; the
-            // current toolchain happens to produce the RISC-V-correct
-            // answer, but this isn't a guaranteed contract and should be
-            // re-verified after any toolchain upgrade.
+            // RISC-V says the sign of zero matters for fmin and fmax, and Rust does not officially guarantee the same behavior.
+            // The current Rust version happens to give the right answer, worth checking again after a Rust update.
             InstructionKind::FminS | InstructionKind::FmaxS => {
                 let rd = Self::fp_register_id(&entry.operands[0]);
                 let rs1 = Self::fp_register_id(&entry.operands[1]);
@@ -699,8 +681,7 @@ impl RiscvCpuSimulator {
                     instruction_complete: true,
                 }
             }
-            // NOTE: same reliance on f64::min/max's unspecified signed-zero
-            // ordering as FminS/FmaxS above — see comment there.
+            // Same situation as FminS and FmaxS above.
             InstructionKind::FminD | InstructionKind::FmaxD => {
                 let rd = Self::fp_register_id(&entry.operands[0]);
                 let rs1 = Self::fp_register_id(&entry.operands[1]);
@@ -825,11 +806,8 @@ impl RiscvCpuSimulator {
                 let value = self.read_fp_register(rs1);
                 let is_single = matches!(entry.kind, InstructionKind::FcvtWS | InstructionKind::FcvtWuS);
                 let is_unsigned = matches!(entry.kind, InstructionKind::FcvtWuS | InstructionKind::FcvtWuD);
-                // NaN guard: Rust's `as` cast saturates out-of-range finite
-                // values to the target type's min/max (matching RISC-V's
-                // invalid-operation behavior), but it maps NaN to 0 — RISC-V
-                // instead requires NaN to convert to the signed/unsigned
-                // saturated maximum (2^31-1 / 2^32-1).
+                // A normal too large number already clamps correctly to the smallest or largest possible value.
+                // Converting NaN this way would give 0, but RISC-V requires NaN to convert to the largest possible value.
                 let is_nan = if is_single { (value as f32).is_nan() } else { value.is_nan() };
                 let result: u64 = if is_unsigned {
                     let v: u32 = if is_nan {
@@ -839,11 +817,8 @@ impl RiscvCpuSimulator {
                     } else {
                         value as u32
                     };
-                    // FCVT.WU.* sign-extends its 32-bit unsigned result to XLEN
-                    // on Rv64i (same as the signed variant) rather than
-                    // zero-extending — this is explicit, if counter-intuitive,
-                    // in the RISC-V F/D spec. On Rv32i the masking below hides
-                    // the distinction.
+                    // The unsigned result extends to the full register width the same way the signed version does, carrying the sign bit.
+                    // This is unusual but it is what RISC-V requires, and on Rv32i the masking below makes the difference invisible anyway.
                     self.mask(v as i32 as i64 as u64)
                 } else {
                     let v: i32 = if is_nan {
@@ -869,10 +844,8 @@ impl RiscvCpuSimulator {
                 let is_single = matches!(entry.kind, InstructionKind::FcvtSW | InstructionKind::FcvtSWu);
                 let is_unsigned = matches!(entry.kind, InstructionKind::FcvtSWu | InstructionKind::FcvtDWu);
                 let raw = self.read_register(rs1);
-                // *W/*Wu convert a 32-bit integer: always truncate to rs1[31:0]
-                // first and sign/zero-extend from that 32-bit value, regardless
-                // of XLEN — on Rv64i the full 64-bit register value must NOT be
-                // used directly (it may carry a pointer or other data above bit 31).
+                // These instructions convert a 32 bit integer, always keeping only the lower 32 bits first, no matter the word size.
+                // On Rv64i the full 64 bit register value must not be used directly, since the upper bits could hold unrelated data.
                 let as_f64 = if is_unsigned {
                     (raw as u32) as f64
                 } else {
@@ -887,12 +860,8 @@ impl RiscvCpuSimulator {
                     instruction_complete: true,
                 }
             }
-            // NOTE: the register file stores f64 (no NaN-boxed f32-in-f64,
-            // per this branch's documented simplification), so an
-            // f32->f64->f32 round-trip through FmvWX then FmvXW quiets a
-            // signaling NaN and does not preserve its exact payload/
-            // signaling bit. This is an inherent consequence of that
-            // design, not a bug.
+            // Floating point registers always store 64 bit values here, even for 32 bit numbers, as a deliberate simplification.
+            // Moving a 32 bit NaN out and back through FmvWX and FmvXW can lose its exact bit pattern, an expected side effect.
             InstructionKind::FmvXW => {
                 let rd = Self::register_id(&entry.operands[0]);
                 let rs1 = Self::fp_register_id(&entry.operands[1]);
@@ -950,11 +919,8 @@ impl CpuSimulator for RiscvCpuSimulator {
 
         if let Some(pending) = &self.pending {
             let source_line = pending.source_line;
-            // The access may already have finished during `begin_access`
-            // itself (e.g. a hierarchy with no cache levels resolves
-            // straight to RAM in one call) — in that case there is no
-            // further `LevelResult` to report and we go straight to the
-            // completion action below.
+            // The memory access may have already finished as soon as it started, for example with no cache levels.
+            // In that case there is no extra step to report, so we go straight to finishing up below.
             if self.memory.is_access_finished() {
                 let register = pending.register;
                 let sign_extend = pending.sign_extend;
@@ -986,29 +952,15 @@ impl CpuSimulator for RiscvCpuSimulator {
                 }
                 return Action { kind: ActionKind::NoOp, source_line, instruction_complete: true };
             }
-            // Otherwise the access is still in progress: take one step and
-            // report its own `LevelResult` on THIS call, even if this very
-            // step is the one that finishes the access. The completion
-            // action (register write / NoOp / pc advance) is deliberately
-            // deferred to the NEXT `step_action()` call, which will see
-            // `is_access_finished()` already true and take the branch
-            // above — keeping "the level that resolved the access" and
-            // "the completion action" as two separate actions, exactly
-            // like a step that finishes on a later call already does.
+            // Otherwise the memory access is still going, take one more step and report what happened.
+            // Finishing up is left for the next call, which sees the access is done and takes the branch above.
             let level_result = self.memory.step();
             return Action { kind: ActionKind::MemoryLevel(level_result), source_line, instruction_complete: false };
         }
 
         if let Some(source_line) = self.fetch_pending {
-            // Same shape as the `pending` branch above: while the fetch's
-            // walk through the hierarchy isn't finished, report one step
-            // per call; once finished, consume its result (the fetched
-            // bytes themselves are unused — decoding always comes from
-            // `instructions`, never from what was just read out of RAM)
-            // and only THEN move on to actually executing the instruction,
-            // on this same call, exactly as a completed load/store's own
-            // pending branch immediately used to return its completion
-            // action rather than deferring it to yet another call.
+            // Works the same way as the pending branch above, reporting one step per call while the fetch is going.
+            // Once it finishes, the fetched bytes are not needed since decoding uses the real source, so run the instruction right away.
             if self.memory.is_access_finished() {
                 self.fetch_pending = None;
                 self.memory.take_result();
@@ -1018,10 +970,8 @@ impl CpuSimulator for RiscvCpuSimulator {
             return Action { kind: ActionKind::MemoryLevel(level_result), source_line, instruction_complete: false };
         }
 
-        // Begin fetching the instruction at pc through the memory
-        // hierarchy — purely for cache/TLB/RAM hit-miss modeling and the
-        // memory-inspection views; the instruction itself is still decoded
-        // straight from `instructions` once this access finishes, below.
+        // Start fetching the instruction at the current program counter through the memory hierarchy.
+        // This only simulates cache, TLB, and RAM hits and misses for the memory views, decoding uses the real source directly.
         let entry = self
             .instructions
             .fetch(self.pc)
@@ -1081,7 +1031,7 @@ mod tests {
     use crate::models::interpreter::riscv::parser::ast::Operand;
     use crate::models::simulation::memory::backing_store::DataStore;
     use crate::models::simulation::memory::config::{
-        CacheConfig, CacheEntry, DiskConfig, HierarchyConfig, InclusionPolicy, Level, RamConfig, ReplacementPolicy, TlbConfig,
+        CacheConfig, CacheEntry, DiskConfig, FrameAllocationPolicy, HierarchyConfig, InclusionPolicy, Level, RamConfig, ReplacementPolicy, TlbConfig,
         TlbReplacementPolicy, WritePolicy,
     };
     use crate::models::simulation::memory::hierarchy::{AccessKind, LevelId, LevelOutcome, LevelResult, MemoryHierarchySimulator};
@@ -1091,16 +1041,15 @@ mod tests {
         HierarchyConfig {
             isa: Base::Rv32i,
             vm_enabled: false,
+            page_size: 4096,
             hierarchy: vec![],
             tlb: TlbConfig {
-                page_size: 4096,
-                page_table_levels: 1,
                 page_walk_start: "RAM".into(),
                 entries: 4,
                 associativity: 4,
                 replacement: TlbReplacementPolicy::Lru,
             },
-            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
+            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
             seed: None,
         }
@@ -1110,14 +1059,13 @@ mod tests {
         MemoryHierarchySimulator::new(no_cache_hierarchy_config(), DataStore::new(64), DataStore::new(64), 0)
     }
 
-    /// A hierarchy with a single L1 cache level between the CPU and RAM —
-    /// unlike `no_cache_hierarchy_config`, a fresh (cold) access here
-    /// misses at the cache and needs a further `step()` to reach RAM, so
-    /// `step_action` has to take more than one call to resolve it.
+    /// A memory setup with one cache level between the CPU and RAM.
+    /// A brand new access here misses the cache first and needs another step to reach RAM.
     fn one_cache_level_hierarchy_config() -> HierarchyConfig {
         HierarchyConfig {
             isa: Base::Rv32i,
             vm_enabled: false,
+            page_size: 4096,
             hierarchy: vec![Level {
                 id: "l1".into(),
                 harvard: false,
@@ -1139,14 +1087,12 @@ mod tests {
                 bus_width: 32,
             }],
             tlb: TlbConfig {
-                page_size: 4096,
-                page_table_levels: 1,
                 page_walk_start: "RAM".into(),
                 entries: 4,
                 associativity: 4,
                 replacement: TlbReplacementPolicy::Lru,
             },
-            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
+            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
             seed: None,
         }
@@ -1256,10 +1202,8 @@ mod tests {
 
     #[test]
     fn instruction_bytecode_is_preloaded_into_ram_at_text_base() {
-        // The engine's memory hierarchy has no separate instruction store
-        // of its own — a Fetch access needs real bytes to read on its way
-        // through RAM, so the compiled bytecode must be preloaded there at
-        // text_base, one little-endian word per entry, in program order.
+        // The memory simulator has no separate place to store instructions, so a fetch needs real bytes to read.
+        // The compiled instructions are loaded into RAM in program order, so fetches have something real to find.
         let entry_a = IrEntry {
             address: 0x1000,
             kind: InstructionKind::Add,
@@ -1486,21 +1430,12 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![load_entry(InstructionKind::Lw, 0x1000, 1, 2, 0)]), mem);
         sim.registers[2] = 0x10000000;
 
-        // Every instruction now begins with its own Fetch access walking
-        // the hierarchy first. With a zero-level hierarchy that resolves
-        // straight to RAM in one call, so this single throwaway call
-        // finishes the fetch and, via execute_current_instruction(),
-        // immediately begins the load's own access too (its begin_access
-        // also resolves straight to RAM in one call) — that's the result
-        // this call returns, and what `first` below picks up next.
-        sim.step_action(); // fetch: begin_access resolves straight to RAM
+        // Every instruction starts with its own fetch step, and with no cache levels that goes straight to RAM and finishes.
+        // This throwaway call finishes the fetch and immediately starts the load's own access, which also finishes straight away.
+        sim.step_action();
 
-        // With a zero-level hierarchy, the load's own `begin_access`
-        // (returned by the call above, once the fetch that preceded it
-        // finished) resolves straight to RAM, so no `step()` is ever
-        // taken — the next `step_action` call must find the access
-        // already finished and complete right away, with no spurious
-        // extra step introduced by the finding #1 fix.
+        // The load's own access also goes straight to RAM, so it needs no extra step.
+        // The next call must find the access already finished and complete right away.
         let first = sim.step_action();
         assert_eq!(
             first.kind,
@@ -1555,27 +1490,19 @@ mod tests {
 
     #[test]
     fn the_level_that_resolves_a_load_is_reported_before_the_completion_action() {
-        // Regression test for finding #1: with an L1 cache level between
-        // the CPU and RAM, a cold `lw` misses at L1 (reported by
-        // `begin_access`) and then the `step()` that reaches RAM is the
-        // one that actually finishes the access. That RAM `LevelResult`
-        // must be surfaced as its own `MemoryLevel` action — not silently
-        // folded into the completion `RegisterWrite` on the same call.
+        // Regression test, with one cache level a fresh load misses the cache first, then a later step reaches RAM.
+        // That RAM step must be reported as its own action, not silently combined with the final register write.
         let mut mem = mem_with_one_cache_level();
         mem.preload_ram(0x10000000, &[0xEF, 0xBE, 0xAD, 0xDE]); // little-endian 0xDEADBEEF
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![load_entry(InstructionKind::Lw, 0x1000, 1, 2, 0)]), mem);
         sim.registers[2] = 0x10000000;
 
-        // Every instruction now begins with its own Fetch access walking
-        // the hierarchy first — for pc 0x1000 that's a cold miss at L1
-        // (throwaway call 1) followed by a RAM hit (throwaway call 2,
-        // which finishes the fetch and, via execute_current_instruction(),
-        // immediately begins the load's own access, whose result is what
-        // `first` below picks up).
-        sim.step_action(); // fetch: misses at L1
-        sim.step_action(); // fetch: hits at RAM, finishes, load's own access begins
+        // Every instruction starts with its own fetch step, which for this address misses the cache first, then hits RAM.
+        // That finishes the fetch and immediately starts the load's own access, whose result is what first below reads.
+        sim.step_action();
+        sim.step_action();
 
-        // Call 1 (of the load itself): begin_access misses at L1.
+        // The load's own access first misses the cache.
         let first = sim.step_action();
         assert_eq!(
             first.kind,
@@ -1589,9 +1516,8 @@ mod tests {
         assert!(!first.instruction_complete);
         assert_eq!(sim.pc(), 0x1000, "pc must not advance until the instruction actually completes");
 
-        // Call 2: step() reaches RAM and finishes the access. This is the
-        // level that actually resolved the load — it must be reported
-        // here, as its own action, not dropped.
+        // This step reaches RAM and finishes the access, actually resolving the load.
+        // It must be reported here as its own action, not skipped.
         let second = sim.step_action();
         assert_eq!(
             second.kind,
@@ -1606,8 +1532,7 @@ mod tests {
         assert_eq!(sim.pc(), 0x1000, "pc must not advance on the resolving step either — only on the completion action");
         assert_eq!(sim.register(RegisterId(1)), 0, "the register write must not happen until the dedicated completion call");
 
-        // Call 3: only now does the completion (register write + pc
-        // advance) happen, exactly like the zero-step / no-cache path.
+        // Only now does finishing up happen, the register write and moving the program counter forward, just like the no cache case.
         let third = sim.step_action();
         assert_eq!(third.kind, ActionKind::RegisterWrite { register: RegisterId(1), value: 0xDEAD_BEEF });
         assert!(third.instruction_complete);
@@ -1726,9 +1651,8 @@ mod tests {
 
     #[test]
     fn rv64i_lw_sign_extends_unlike_lwu() {
-        // Regression test for finding #2: `Lw` loads 32 bits and must
-        // sign-extend to fill the 64-bit register under Rv64i, unlike
-        // `Lwu` which zero-extends. This test distinguishes the two.
+        // Regression test, Lw loads 32 bits and must extend the sign to fill the full register under Rv64i.
+        // Lwu instead fills the rest with zeros, this test tells the two apart.
         let mut mem = mem();
         mem.preload_ram(0x10000000, &[0xFF, 0xFF, 0xFF, 0xFF]);
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![load_entry(InstructionKind::Lw, 0x1000, 1, 2, 0)]), mem);
@@ -1826,10 +1750,8 @@ mod tests {
 
     #[test]
     fn rv64i_lui_sign_extends_bit_31_of_its_result() {
-        // Regression test for finding #3. The immediate arrives as the
-        // unsigned 20-bit value 0xFFFFF (bit 19 set), which after `<< 12`
-        // sets bit 31 of the 32-bit result — that must sign-extend through
-        // the full 64-bit register under Rv64i.
+        // Regression test, the value comes in as an unsigned number, and shifting it left sets the top bit of the result.
+        // That top bit must extend through the full register under Rv64i.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![u_type_entry(InstructionKind::Lui, 0x1000, 1, 0xFFFFF)]), mem());
         run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF_FFFF_F000);
@@ -1844,9 +1766,8 @@ mod tests {
 
     #[test]
     fn rv64i_auipc_sign_extends_bit_31_of_its_result() {
-        // Regression test for finding #3. `0x1000 + (-4096)` must be `0`;
-        // before the fix the un-sign-extended immediate made this
-        // `0x1_0000_0000` instead.
+        // Regression test, adding these two values must equal zero.
+        // Before this was fixed, the value was not properly sign extended and the result came out wrong.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![u_type_entry(InstructionKind::Auipc, 0x1000, 1, 0xFFFFF)]), mem());
         run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0);
@@ -1854,12 +1775,8 @@ mod tests {
 
     #[test]
     fn rv32i_sltiu_compares_against_the_sign_extended_then_masked_immediate() {
-        // Regression test for finding #4: `sltiu x1, x2, -1` with
-        // `x2 = 0xFFFF_FFFF` must yield 0 under Rv32i — comparing the
-        // register's max 32-bit value against itself is never "less
-        // than". The old code cast the immediate straight `as u64`,
-        // producing 0xFFFF_FFFF_FFFF_FFFF, which made the comparison
-        // always true.
+        // Regression test, comparing a register to its own largest value must give zero under Rv32i.
+        // The old code converted the value the wrong way, producing a huge number that made the comparison always come out true.
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![i_type_entry(InstructionKind::Sltiu, 0x1000, 1, 2, -1)]), mem());
         sim.registers[2] = 0xFFFF_FFFF;
         run_to_finished_action(&mut sim);
@@ -1978,13 +1895,10 @@ mod tests {
         sim.f_registers[0] = 9.0;
         sim.registers[2] = 0x10000000;
 
-        // if f0 were wrongly hardwired to zero, the store would write 0.0's
-        // bits instead of 9.0's; reload the STORED bytes into a different
-        // register via flw to actually prove what landed in memory, rather
-        // than re-reading f0 (which the test itself wrote directly and
-        // would still pass even if the store path silently zeroed f0).
-        run_to_finished_action(&mut sim); // fsw
-        run_to_finished_action(&mut sim); // flw
+        // If the source register were wrongly stuck at zero, the store would write the wrong bits.
+        // Reloading the stored bytes into a different register actually proves what landed in memory, rather than reading the same register again.
+        run_to_finished_action(&mut sim);
+        run_to_finished_action(&mut sim);
 
         assert_eq!(sim.fp_register(RegisterId(3)), 9.0);
     }
@@ -2077,15 +1991,14 @@ mod tests {
         sim.f_registers[2] = -5.0;
         sim.f_registers[3] = -1.0;
         run_to_finished_action(&mut sim);
-        // both negative -> XOR is false (positive) -> +5.0
+        // Both signs are negative, so they cancel out, giving a positive value.
         assert_eq!(sim.fp_register(RegisterId(1)), 5.0);
     }
 
     #[test]
     fn fsgnjx_s_xors_the_signs_discriminating_test() {
-        // Discriminating test to verify genuine XOR semantics: rs1 positive, rs2 negative.
-        // Under correct XOR: sign(5.0)=false, sign(-1.0)=true, XOR=true -> result should be -5.0.
-        // A buggy Fsgnjn-copy implementation would give +5.0 instead.
+        // Confirms the sign logic really combines two different signs into a negative result.
+        // A wrong implementation that just copies the second value's negated sign would give a positive result instead.
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fp_r3_entry(InstructionKind::FsgnjxS, 0x1000, 1, 2, 3)]), mem());
         sim.f_registers[2] = 5.0;
         sim.f_registers[3] = -1.0;
@@ -2112,11 +2025,8 @@ mod tests {
 
     #[test]
     fn bytes_to_value_does_not_panic_on_a_full_8_byte_sign_extending_read() {
-        // Regression test for finding #6: an 8-byte read is already the
-        // full width of the `u64` accumulator, so sign-extension is a
-        // no-op — but the naive `!0u64 << 64` would panic in a debug
-        // build. Unreachable via any current instruction, but cheap to
-        // guard directly.
+        // Regression test, a full 8 byte read already fills the value, so sign extension should do nothing.
+        // A naive implementation could crash trying to shift by a full 64 bits, this guard protects against that.
         let bytes = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x80];
         let value = RiscvCpuSimulator::bytes_to_value(&bytes, true);
         assert_eq!(value, 0x80FF_FFFF_FFFF_FFFF);
@@ -2342,7 +2252,7 @@ mod tests {
     #[test]
     fn fclass_d_identifies_a_quiet_nan() {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FclassD, 0x1000, 1, 2)]), mem());
-        sim.f_registers[2] = f64::NAN; // Rust's f64::NAN is a quiet NaN
+        sim.f_registers[2] = f64::NAN; // this is the "quiet" kind of NaN, not the "signaling" kind
         run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 1 << 9);
     }
@@ -2360,7 +2270,7 @@ mod tests {
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![fclass_entry(InstructionKind::FcvtWD, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = -3.9;
         run_to_finished_action(&mut sim);
-        assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFD); // -3 sign-extended within 32 bits, masked
+        assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFD); // -3, with the sign extended within 32 bits and then trimmed
     }
 
     #[test]
@@ -2397,10 +2307,8 @@ mod tests {
 
     #[test]
     fn fcvt_s_w_on_rv64_truncates_to_the_low_32_bits_before_sign_extending() {
-        // Regression test for finding #1: on Rv64i, FCVT.S.W must convert
-        // rs1[31:0], not the full 64-bit register value. A register whose
-        // upper 32 bits are nonzero (here bit 32 set) must not leak into
-        // the converted value.
+        // Regression test, on Rv64i this conversion must use only the lower 32 bits of the register, not the full value.
+        // A register with extra bits set higher up must not affect the converted result.
         let entry = IrEntry {
             address: 0x1000,
             kind: InstructionKind::FcvtSW,
@@ -2417,8 +2325,7 @@ mod tests {
 
     #[test]
     fn fcvt_s_wu_on_rv64_truncates_to_the_low_32_bits_before_zero_extending() {
-        // Regression test for finding #1, unsigned variant: on Rv64i,
-        // FCVT.S.WU must zero-extend rs1[31:0], not the full 64-bit value.
+        // Regression test, the unsigned version, must use only the lower 32 bits, filled with zeros above.
         let entry = IrEntry {
             address: 0x1000,
             kind: InstructionKind::FcvtSWu,
@@ -2435,21 +2342,17 @@ mod tests {
 
     #[test]
     fn fcvt_wu_s_on_rv64_sign_extends_the_32_bit_result() {
-        // Regression test for finding #2: on Rv64i, FCVT.WU.S sign-extends
-        // its 32-bit unsigned result to XLEN (same as the signed variant)
-        // rather than zero-extending, so a result with bit 31 set comes
-        // back as all-ones in the upper 32 bits.
+        // Regression test, this conversion extends its 32 bit result using the sign bit, like the signed version does.
+        // A result with the top bit set comes back with all the upper bits set to one as well.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWuS, 0x1000, 1, 2)]), mem());
-        sim.f_registers[2] = 4294967295.0; // 2^32 - 1: bit 31 of the 32-bit result is set
+        sim.f_registers[2] = 4294967295.0; // 2^32 - 1: the top bit of the 32-bit result is set
         run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF_FFFF_FFFF);
     }
 
     #[test]
     fn fcvt_w_s_maps_nan_to_the_signed_saturated_maximum() {
-        // Regression test for finding #3: RISC-V requires NaN inputs to
-        // convert to the saturated maximum (2^31 - 1 for signed), not to 0
-        // as Rust's `as` cast would otherwise produce.
+        // Regression test, RISC-V requires that converting a NaN value gives the largest possible result, not zero.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = f64::NAN;
         run_to_finished_action(&mut sim);
@@ -2458,8 +2361,7 @@ mod tests {
 
     #[test]
     fn fcvt_wu_s_maps_nan_to_the_unsigned_saturated_maximum() {
-        // Regression test for finding #3, unsigned variant: NaN must
-        // convert to 2^32 - 1, sign-extended per finding #2's fix on Rv64i.
+        // Regression test, the unsigned version, NaN must convert to the largest unsigned value with the upper bits extended too.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWuS, 0x1000, 1, 2)]), mem());
         sim.f_registers[2] = 0.0 / 0.0; // NaN
         run_to_finished_action(&mut sim);

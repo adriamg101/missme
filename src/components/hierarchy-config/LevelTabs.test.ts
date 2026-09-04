@@ -35,7 +35,7 @@ describe("LevelTabs", () => {
     store.setVmEnabled(true);
     render(LevelTabs);
     await fireEvent.click(screen.getByText("TLB"));
-    expect(screen.getByLabelText("Page size")).toBeTruthy();
+    expect(screen.getByLabelText("Page walk start")).toBeTruthy();
     await fireEvent.click(screen.getByText("L1"));
     expect(screen.getByLabelText("Associativity")).toBeTruthy();
   });

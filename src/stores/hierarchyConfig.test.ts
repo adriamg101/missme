@@ -4,12 +4,11 @@ import { createApp } from "vue";
 import { useHierarchyConfigStore } from "./hierarchyConfig";
 import { persistPlugin } from "./persistPlugin";
 
-// Pinia only actually applies plugins registered via `pinia.use()` once the
-// pinia instance is installed into a Vue app (`app.use(pinia)`) — until
-// then, `.use()` just queues the plugin in an internal `toBeInstalled` list
-// (see node_modules/pinia/dist/pinia.js, `createPinia`/`use`). main.ts does
-// this installation as part of mounting the real app; tests need an
-// equivalent (throwaway) app to get the same real plugin wiring.
+// Pinia only actually turns on a plugin registered with `pinia.use()` once
+// the store is installed into a Vue app. Before that, it just remembers the
+// plugin to install later. main.ts does this installation when it starts
+// the real app, so tests need a throwaway app of their own to get the same
+// real plugin behavior.
 function freshPersistedPinia() {
   const pinia = createPinia();
   pinia.use(persistPlugin);
@@ -73,7 +72,7 @@ describe("useHierarchyConfigStore", () => {
   it("setIsa clamps existing markers to the new ISA range", () => {
     const store = useHierarchyConfigStore();
     store.createLevelAt(5);
-    store.createLevelAt(40); // valid under RV64I default? RV32I default max is 31, so seed via RV64I first
+    store.createLevelAt(40); // only valid under RV64I, since RV32I's max is 31, so start with RV64I
     store.setIsa("RV64I");
     store.createLevelAt(40);
     store.setIsa("RV32I");
@@ -132,9 +131,9 @@ describe("useHierarchyConfigStore", () => {
     store.updateCacheConfig(id, "unified", { blockSize: 64, associativity: 16 });
     expect(store.hierarchy[0].unified!.config.associativity).toBe(16);
 
-    // shrink to exp 2 -> max associativity 2**2 = 4 entries, clamps 16 down to 4.
-    // Max associativity is independent of blockSize — it's purely the
-    // entry count (numSets * associativity), per diagram.ts/backend.
+    // Shrinking to exp 2 means the max associativity is 2**2 = 4 entries, so
+    // 16 gets brought down to 4. The max associativity doesn't depend on
+    // block size, it only depends on the entry count.
     store.moveMarker(id, "unified", 2);
     expect(store.hierarchy[0].unified!.exp).toBe(2);
     expect(store.hierarchy[0].unified!.config.associativity).toBe(4);
@@ -142,8 +141,8 @@ describe("useHierarchyConfigStore", () => {
 
   it("applyCacheConfigToAllLevels copies the config to every cache entry, clamping associativity per level", () => {
     const store = useHierarchyConfigStore();
-    store.createLevelAt(10); // exp 10 -> max associativity 1024
-    store.createLevelAt(2); // exp 2 -> max associativity 4, smaller cache
+    store.createLevelAt(10); // exp 10 means max associativity is 1024
+    store.createLevelAt(2); // exp 2 means max associativity is 4, a smaller cache
     const bigLevel = store.hierarchy.find((l) => l.unified!.exp === 10)!;
     const smallId = store.hierarchy.find((l) => l.unified!.exp === 2)!.id;
 
@@ -167,7 +166,7 @@ describe("useHierarchyConfigStore", () => {
       hitTime: 3,
       dirtyPercent: 20,
     });
-    // exp 2 -> max associativity 2**2 = 4, clamps the requested 16 down to 4.
+    // exp 2 means max associativity is 2**2 = 4, so the requested 16 gets brought down to 4.
     const smallLevel = store.hierarchy.find((l) => l.id === smallId)!;
     expect(smallLevel.unified!.config.associativity).toBe(4);
     expect(smallLevel.unified!.config.replacement).toBe("FIFO");
@@ -175,9 +174,9 @@ describe("useHierarchyConfigStore", () => {
 
   it("setIsa applies the clamp (colliding two levels) when the confirm callback returns true", () => {
     const store = useHierarchyConfigStore();
-    store.createLevelAt(31); // valid under RV32I, stays at 31 when clamped
-    store.setIsa("RV64I"); // no collision here, safe with default confirm
-    store.createLevelAt(40); // second level, only valid under RV64I
+    store.createLevelAt(31); // valid under RV32I, stays at 31 after clamping
+    store.setIsa("RV64I"); // no conflict here, so the default confirm is fine
+    store.createLevelAt(40); // a second level, only valid under RV64I
 
     const confirmFn = () => true;
     store.setIsa("RV32I", confirmFn);

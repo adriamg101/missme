@@ -77,6 +77,7 @@ function onApplyCacheConfigToAll() {
         :hierarchy="store.hierarchy"
         :vm-enabled="store.vmEnabled"
         :isa="store.isa"
+        :page-size="store.pageSize"
         @update="store.updateRamConfig"
       />
       <DiskConfigForm v-else-if="activeTab?.kind === 'disk'" :config="store.disk" @update="store.updateDiskConfig" />

@@ -9,13 +9,7 @@ const hierarchyStore = useHierarchyConfigStore();
 
 const U32_MAX = 0xffffffff;
 
-// Before the first successful compile, the program's actual .text size
-// isn't known yet (the user may edit dataBase before ever compiling) — so
-// this is a best-effort heuristic, not an exact collision check. 1 MiB is a
-// generous upper bound for any program this simulator is realistically
-// used with, used purely to catch the common mistake of setting .data at
-// or just after .text with no real gap. Once a compile has happened,
-// `lastCompiledTextSize` gives the exact size and this fallback is unused.
+// This is a rough guess for the size of the program before it has been compiled, only used to warn about data sitting too close to code.
 const MIN_TEXT_GAP = 0x100000;
 
 function toHex8(value: number): string {
@@ -31,27 +25,24 @@ const textBaseHex = computed(() => toHex8(store.textBase));
 const dataBaseHex = computed({
   get: () => toHex8(store.dataBase),
   set: (value: string) => {
-    // An empty field means the user is mid-edit, not that they explicitly
-    // chose base address 0 — keep the previous valid dataBase in the store
-    // rather than silently coercing it to 0. The getter above then keeps
-    // showing the last valid value once the field regains a value; the
-    // input itself is left empty by HexField until then.
+    // An empty field means the user is still typing, so we keep the last real value instead of treating it as zero.
     if (value === "") return;
     store.setDataBase(fromHex(value));
   },
 });
 
-// Non-blocking warnings only — the app never prevents an invalid value from
-// being typed, it just surfaces the problem (same house style as e.g. the
-// dirtyPercent NaN guard in CacheConfigForm.vue).
+// These are only warnings, they never stop the user from typing an invalid value.
 const textGap = computed(() => store.lastCompiledTextSize ?? MIN_TEXT_GAP);
 const overlapsText = computed(() => store.dataBase < store.textBase + textGap.value);
 
-// Only checkable once a compile has actually produced a .data size — no
-// fallback heuristic here, unlike the collision check above, since there's
-// no sensible guess for "how big will the program's data be".
+// RAM's real capacity comes from frames and page size when virtual memory is on, and from the plain size otherwise.
+const ramCapacity = computed(() =>
+  hierarchyStore.vmEnabled ? hierarchyStore.ram.frames * hierarchyStore.pageSize : hierarchyStore.ram.size,
+);
+
+// This can only be checked once the program has actually been compiled, there is no way to guess it beforehand.
 const exceedsRam = computed(
-  () => store.lastCompiledDataSize !== null && store.lastCompiledDataSize > hierarchyStore.ram.size,
+  () => store.lastCompiledDataSize !== null && store.lastCompiledDataSize > ramCapacity.value,
 );
 </script>
 

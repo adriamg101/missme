@@ -29,7 +29,7 @@ describe("HierarchySlider interactions", () => {
     const { getByLabelText, emitted } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
     const marker = getByLabelText("L1, 1 K");
     await fireEvent.mouseDown(marker, { clientX: 100 });
-    await fireEvent.mouseUp(marker, { clientX: 101 }); // 1px, below the 4px threshold
+    await fireEvent.mouseUp(marker, { clientX: 101 }); // only 1px of movement, below the 4px threshold for a drag
     expect(emitted().move).toBeUndefined();
   });
 
@@ -37,7 +37,7 @@ describe("HierarchySlider interactions", () => {
     const { getByLabelText, emitted } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
     const marker = getByLabelText("L1, 1 K");
     await fireEvent.mouseDown(marker, { clientX: 100 });
-    await fireEvent.mouseMove(document, { clientX: 130 }); // past the 4px threshold
+    await fireEvent.mouseMove(document, { clientX: 130 }); // past the 4px threshold for a drag
     await fireEvent.mouseUp(document, { clientX: 130 });
     expect(emitted().move).toBeTruthy();
     const moveEvents = emitted<[string, string, number]>("move");

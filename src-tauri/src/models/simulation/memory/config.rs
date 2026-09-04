@@ -2,10 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::interpreter::riscv::Base;
 
-/// Frontend strings are "LRU"/"FIFO"/"Random"/"LFU"/"PLRU" — a mix of
-/// all-caps acronyms and one capitalized word, not a uniform casing
-/// convention, so each variant is renamed explicitly rather than trusting
-/// a blanket `rename_all` to get every one right.
+/// The interface sends these as the exact strings LRU, FIFO, Random, LFU, PLRU.
+/// Each one is spelled out by hand since they mix different casings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReplacementPolicy {
     #[serde(rename = "LRU")]
@@ -39,8 +37,7 @@ pub enum WritePolicy {
     WriteBack,
 }
 
-/// Frontend strings are "inclusive"/"exclusive"/"NINE" (Non-Inclusive
-/// Non-Exclusive) — again mixed casing, explicit renames.
+/// The interface sends these as inclusive, exclusive, or NINE, each spelled out by hand due to mixed casing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InclusionPolicy {
     #[serde(rename = "inclusive")]
@@ -90,12 +87,19 @@ pub type Hierarchy = Vec<Level>;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TlbConfig {
-    pub page_size: u32,
-    pub page_table_levels: u32,
     pub page_walk_start: String,
     pub entries: u32,
     pub associativity: u32,
     pub replacement: TlbReplacementPolicy,
+}
+
+/// Which free frame a page fault picks, either the next one in order or a seeded random pick.
+/// Once every frame is full, eviction always picks the least recently used one instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FrameAllocationPolicy {
+    Sequential,
+    Random,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -104,6 +108,11 @@ pub struct RamConfig {
     pub latency: u32,
     pub size: u32,
     pub dirty_percent: u8,
+    pub page_table_levels: u8,
+    pub frame_allocation: FrameAllocationPolicy,
+    /// How many frames the physical frame pool has under VM, a power of two the user picks directly.
+    /// Only meaningful and only shown when VM is on.
+    pub frames: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -117,13 +126,12 @@ pub struct DiskConfig {
 pub struct HierarchyConfig {
     pub isa: Base,
     pub vm_enabled: bool,
+    pub page_size: u32,
     pub hierarchy: Hierarchy,
     pub tlb: TlbConfig,
     pub ram: RamConfig,
     pub disk: DiskConfig,
-    /// The user's chosen seed for dirty-line pre-seeding, or `None` to draw
-    /// a fresh random one each time a session is built — see
-    /// `seeded_random` for why nothing here is ever a fixed constant.
+    /// The seed the user chose for randomly pre-marking some cache lines as dirty, or none to pick a fresh one each session.
     pub seed: Option<u64>,
 }
 
@@ -149,6 +157,7 @@ mod tests {
         let config = HierarchyConfig {
             isa: Base::Rv32i,
             vm_enabled: false,
+            page_size: 4096,
             hierarchy: vec![Level {
                 id: "l1".into(),
                 harvard: false,
@@ -159,14 +168,12 @@ mod tests {
                 bus_width: 32,
             }],
             tlb: TlbConfig {
-                page_size: 4096,
-                page_table_levels: 1,
                 page_walk_start: "RAM".into(),
                 entries: 64,
                 associativity: 4,
                 replacement: TlbReplacementPolicy::Lru,
             },
-            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
+            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
             seed: Some(42),
         };
@@ -175,30 +182,35 @@ mod tests {
 
         assert_eq!(json["isa"], "RV32I");
         assert_eq!(json["vmEnabled"], false);
+        assert_eq!(json["pageSize"], 4096);
         let level = &json["hierarchy"][0];
         assert_eq!(level["id"], "l1");
         assert_eq!(level["harvard"], false);
-        assert_eq!(level["unified"]["exp"], 10);
-        assert_eq!(level["unified"]["config"]["blockSize"], 64);
-        assert_eq!(level["unified"]["config"]["associativity"], 2);
-        assert_eq!(level["unified"]["config"]["replacement"], "Random");
-        assert_eq!(level["unified"]["config"]["writePolicy"], "write-back");
-        assert_eq!(level["unified"]["config"]["writeAllocate"], true);
-        assert_eq!(level["unified"]["config"]["hitTime"], 1);
-        assert_eq!(level["unified"]["config"]["dirtyPercent"], 0);
-        assert!(level["i"].is_null());
-        assert!(level["d"].is_null());
         assert_eq!(level["inclusion"], "NINE");
         assert_eq!(level["busWidth"], 32);
-        assert_eq!(json["tlb"]["pageSize"], 4096);
-        assert_eq!(json["tlb"]["pageTableLevels"], 1);
+        assert!(level["i"].is_null());
+        assert!(level["d"].is_null());
+        assert_eq!(level["unified"]["exp"], 10);
+        let cache_config = &level["unified"]["config"];
+        assert_eq!(cache_config["blockSize"], 64);
+        assert_eq!(cache_config["associativity"], 2);
+        assert_eq!(cache_config["replacement"], "Random");
+        assert_eq!(cache_config["writePolicy"], "write-back");
+        assert_eq!(cache_config["writeAllocate"], true);
+        assert_eq!(cache_config["hitTime"], 1);
+        assert_eq!(cache_config["dirtyPercent"], 0);
         assert_eq!(json["tlb"]["pageWalkStart"], "RAM");
         assert_eq!(json["tlb"]["entries"], 64);
         assert_eq!(json["tlb"]["associativity"], 4);
         assert_eq!(json["tlb"]["replacement"], "LRU");
+        assert!(json["tlb"].get("pageSize").is_none());
+        assert!(json["tlb"].get("pageTableLevels").is_none());
         assert_eq!(json["ram"]["latency"], 100);
         assert_eq!(json["ram"]["size"], 1024);
         assert_eq!(json["ram"]["dirtyPercent"], 0);
+        assert_eq!(json["ram"]["pageTableLevels"], 1);
+        assert_eq!(json["ram"]["frameAllocation"], "sequential");
+        assert_eq!(json["ram"]["frames"], 4);
         assert_eq!(json["disk"]["latency"], 10000);
         assert_eq!(json["seed"], 42);
 
@@ -231,6 +243,12 @@ mod tests {
     }
 
     #[test]
+    fn frame_allocation_policy_variants_match_frontend_strings() {
+        assert_eq!(serde_json::to_value(FrameAllocationPolicy::Sequential).unwrap(), "sequential");
+        assert_eq!(serde_json::to_value(FrameAllocationPolicy::Random).unwrap(), "random");
+    }
+
+    #[test]
     fn harvard_level_carries_separate_i_and_d_entries() {
         let level = Level {
             id: "l1".into(),
@@ -252,16 +270,10 @@ mod tests {
         let config = HierarchyConfig {
             isa: Base::Rv32i,
             vm_enabled: true,
+            page_size: 4096,
             hierarchy: vec![],
-            tlb: TlbConfig {
-                page_size: 4096,
-                page_table_levels: 1,
-                page_walk_start: "RAM".into(),
-                entries: 64,
-                associativity: 4,
-                replacement: TlbReplacementPolicy::Lru,
-            },
-            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0 },
+            tlb: TlbConfig { page_walk_start: "RAM".into(), entries: 64, associativity: 4, replacement: TlbReplacementPolicy::Lru },
+            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
             seed: None,
         };
@@ -269,27 +281,15 @@ mod tests {
         let json: serde_json::Value = serde_json::to_value(&config).unwrap();
         let obj = json.as_object().expect("HierarchyConfig must serialize to a JSON object");
 
-        let expected_keys = vec!["isa", "vmEnabled", "hierarchy", "tlb", "ram", "disk", "seed"];
+        let expected_keys = vec!["isa", "vmEnabled", "pageSize", "hierarchy", "tlb", "ram", "disk", "seed"];
         let actual_keys: Vec<&String> = obj.keys().collect();
 
-        assert_eq!(
-            actual_keys.len(),
-            expected_keys.len(),
-            "HierarchyConfig has {} keys but expected {}",
-            actual_keys.len(),
-            expected_keys.len()
-        );
-
+        assert_eq!(actual_keys.len(), expected_keys.len());
         for key in &expected_keys {
             assert!(obj.contains_key(*key), "Missing expected key: {}", key);
         }
-
         for key in obj.keys() {
-            assert!(
-                expected_keys.contains(&key.as_str()),
-                "Unexpected key: {}",
-                key
-            );
+            assert!(expected_keys.contains(&key.as_str()), "Unexpected key: {}", key);
         }
     }
 }

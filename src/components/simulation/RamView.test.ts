@@ -16,9 +16,10 @@ import RamView from "./RamView.vue";
 import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 import { useCompileConfigStore } from "../../stores/compileConfig";
 
-// Blocks are cached by absolute row (address / 32), so — unlike the old
-// window-relative scheme — the mock must return an address that actually
-// matches the requested startAddress for the rendered row to find it.
+// Blocks are cached by their actual row (address divided by 32), unlike the
+// old scheme that was relative to the visible window. So the fake response
+// here must return an address that matches the requested startAddress, or
+// the row on screen won't find it.
 function mockWordAtRequestedAddress(word: number) {
   invokeMock.mockImplementation((_cmd: string, args: { startAddress: number }) =>
     Promise.resolve([{ address: args.startAddress, words: [word], populated: true }]),
@@ -30,14 +31,14 @@ beforeEach(() => {
   invokeMock.mockReset();
   mockWordAtRequestedAddress(0x12345678);
   capturedHandler = null;
-  useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0 };
+  useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0, pageTableLevels: 1, frameAllocation: "sequential", frames: 4 };
   useCompileConfigStore().dataBase = 0x10000000;
 });
 
-// A jump centers the target address in the window, so the fetched range
-// starts a bit before it (overscan) rather than exactly at it — this
-// checks the fetched window actually covers the target instead of
-// asserting an exact startAddress.
+// Jumping to an address centers it in the visible window, so the range
+// fetched starts a little before it rather than exactly at it. This checks
+// that the fetched range actually covers the target address, instead of
+// expecting an exact start.
 function expectLastFetchCovers(address: number) {
   const [, args] = invokeMock.mock.calls.at(-1) as [string, { startAddress: number; count: number }];
   expect(args.startAddress).toBeLessThanOrEqual(address);
@@ -66,10 +67,11 @@ describe("RamView", () => {
   });
 
   it("also shows a dash — not the garbage value — for a dirty-seeded cell the program hasn't actually touched yet", async () => {
-    // dirty-seeded garbage only becomes visible once the simulated program
-    // really reads/writes that address — a passive inspection peek (this
-    // mock) must never leak it, so the display treats it exactly like any
-    // other unpopulated cell.
+    // Garbage data placed there ahead of time should only become visible
+    // once the simulated program actually reads or writes that address.
+    // Just looking at the memory (what this fake response simulates) must
+    // never reveal it, so the display treats it exactly the same as any
+    // other empty cell.
     invokeMock.mockImplementation((_cmd: string, args: { startAddress: number }) =>
       Promise.resolve([{ address: args.startAddress, words: [0xdeadbeef], populated: false, dirty: true }]),
     );
@@ -170,15 +172,15 @@ describe("RamView", () => {
     const scrollEl = container.querySelector(".simulation-ram-body") as HTMLDivElement;
     invokeMock.mockClear();
 
-    // Scroll to near the bottom of the sliding window (WINDOW_ROWS * ROW_HEIGHT).
+    // Scroll to near the bottom of the visible window.
     scrollEl.scrollTop = 20_000 * 26 - 100;
     await fireEvent.scroll(scrollEl);
     await Promise.resolve();
     await Promise.resolve();
 
     const [, args] = invokeMock.mock.calls.at(-1) as [string, { startAddress: number }];
-    // Far beyond textBase + the old 1024-byte ram.size cap — proves this
-    // no longer dead-ends at a fixed small window.
+    // This is far beyond textBase plus the old 1024-byte RAM size limit,
+    // which proves scrolling is no longer stuck at a small fixed window.
     expect(args.startAddress).toBeGreaterThan(0x00400000 + 1024);
   });
 
@@ -188,22 +190,23 @@ describe("RamView", () => {
     await Promise.resolve();
     const scrollEl = container.querySelector(".simulation-ram-body") as HTMLDivElement;
 
-    // Triggers a recenter, which programmatically writes scrollEl.scrollTop
-    // — in a real browser that write itself dispatches a 'scroll' event.
+    // This triggers a recenter, which sets the scroll position in code. In
+    // a real browser, setting the scroll position like that fires its own
+    // scroll event.
     scrollEl.scrollTop = 20_000 * 26 - 100;
     await fireEvent.scroll(scrollEl);
     await Promise.resolve();
     await Promise.resolve();
     invokeMock.mockClear();
 
-    // Simulate that browser-dispatched synthetic event: it must be
-    // swallowed, not treated as a real user scroll (which would re-run
-    // maybeRecenter and could jitter the window back and forth).
+    // Simulate that browser-triggered scroll event. It must be ignored, not
+    // treated as a real user scroll, or the window could re-center again
+    // and jitter back and forth.
     await fireEvent.scroll(scrollEl);
     await Promise.resolve();
     expect(invokeMock).not.toHaveBeenCalled();
 
-    // A genuine subsequent scroll still works normally afterwards.
+    // A real scroll that happens afterward should still work as normal.
     scrollEl.scrollTop += 100;
     await fireEvent.scroll(scrollEl);
     await Promise.resolve();
@@ -219,9 +222,9 @@ describe("RamView", () => {
       await vi.advanceTimersByTimeAsync(0);
       const scrollEl = container.querySelector(".simulation-ram-body") as HTMLDivElement;
 
-      // A small, realistic scroll delta from the centered mount position
-      // (260000px) — not near either edge of the window, so this doesn't
-      // also trigger a recenter, which would itself move scrollTop.
+      // A small, realistic scroll move from the centered starting position.
+      // It's not near either edge of the window, so it won't also trigger
+      // a recenter, which would move the scroll position itself.
       scrollEl.scrollTop = 260000.6;
       await fireEvent.scroll(scrollEl);
       expect(scrollEl.scrollTop).toBe(260000.6);

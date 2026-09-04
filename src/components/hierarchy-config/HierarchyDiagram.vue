@@ -8,7 +8,7 @@ const store = useHierarchyConfigStore();
 
 const emit = defineEmits<{ boxClick: [box: DiagramBox] }>();
 
-const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.disk, store.tlb, store.vmEnabled));
+const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.pageSize, store.disk, store.tlb, store.vmEnabled));
 
 const pressedBoxId = ref<string | null>(null);
 
@@ -33,19 +33,12 @@ function stateFor(boxId: string): AccessState {
   return accessStates[boxId];
 }
 
-// State changes, not timed effects: a box switches from its normal type
-// color to the hit/miss border and stays there until the (future)
-// simulation step controller calls clearAccessStates() before applying the
-// next step's state — this is a step-through UI, not an auto-reverting
-// flash. The visual "pulse" is just the CSS transition between the two
-// states, not a self-clearing animation.
+// A box keeps its hit or miss color until the next step clears it, it never fades back on its own.
 function triggerHitMiss(boxId: string, kind: HitMiss) {
   stateFor(boxId).hitMiss = kind;
 }
 
-// The single status line, replacing the old per-box read/write dot: one
-// general message describing the most recent access, e.g. "Reading data at
-// 0x1000". Persists (like hitMiss) until clearAccessStates() runs.
+// One line describing the most recent access, it stays until the next step clears it.
 const statusMessage = ref<string | null>(null);
 
 type AccessKind = "fetch" | "load" | "store";
@@ -64,9 +57,7 @@ function setStatusMessage(accessKind: AccessKind, address: number) {
   statusMessage.value = text;
 }
 
-// Reverts every box to its normal type color and clears the status line —
-// call this before the next step's triggerHitMiss/setStatusMessage so the
-// previous step's highlight doesn't linger.
+// Sets every box back to its normal color and clears the status line before the next step.
 function clearAccessStates() {
   for (const state of Object.values(accessStates)) {
     state.hitMiss = null;
@@ -74,9 +65,7 @@ function clearAccessStates() {
   statusMessage.value = null;
 }
 
-// No caller exists yet (there's no simulation engine driving real access
-// events) — exposed so a future one can trigger these without touching this
-// component again.
+// Nothing calls these yet, they are exposed for a future simulation engine to use.
 defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
 </script>
 
@@ -179,11 +168,12 @@ defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
   opacity: 0.7;
 }
 
-/* Hit/miss: a state change, not a timed effect — border + glow switch to
-   the outcome color and stay there until clearAccessStates() runs (the
-   future step controller calls it right before the next step). The
-   "pulse" is just the transition above animating the switch, not a
-   self-reverting keyframe animation. */
+/* Hit or miss: this stays on screen, it isn't a timed effect. The border
+   and glow switch to the outcome color and stay there until
+   clearAccessStates() runs (the future step controller will call it right
+   before the next step). The "pulse" look just comes from the transition
+   above animating the color switch, it isn't an animation that reverts by
+   itself. */
 .hierarchy-diagram-box.access-hit .hierarchy-diagram-box-rect {
   stroke: var(--diagram-hit-color);
   filter: drop-shadow(0 0 6px var(--diagram-hit-color));
@@ -194,9 +184,9 @@ defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
   filter: drop-shadow(0 0 6px var(--diagram-miss-color));
 }
 
-/* Single status line describing the most recent access — replaces the old
-   per-box read/write dot. Persists (like hit/miss) until the next
-   clearAccessStates() call. */
+/* Single status line describing the most recent access, replacing the old
+   per-box read/write dot. Stays on screen, like the hit or miss color,
+   until the next clearAccessStates() call. */
 .hierarchy-diagram-status {
   position: absolute;
   left: 0.5rem;

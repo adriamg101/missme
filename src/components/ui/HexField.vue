@@ -6,9 +6,7 @@ const props = withDefaults(
     ariaLabel?: string;
     readonly?: boolean;
     size?: "sm" | "md" | "lg";
-    // Every current use case is a 32-bit hex address, so 8 hex digits is a
-    // sensible default cap (prevents values past u32::MAX from ever being
-    // typed in).
+    // A sensible default limit that stops the value from getting too big to type in.
     maxLength?: number;
   }>(),
   { size: "sm", maxLength: 8 },
@@ -23,12 +21,7 @@ function onInput(event: Event) {
     .toUpperCase()
     .slice(0, props.maxLength);
 
-  // Vue only rewrites the DOM value when the `modelValue` prop actually
-  // changes. If the sanitized value round-trips back to the same prop
-  // value the parent already held, Vue sees no change and leaves whatever
-  // raw text the user typed sitting in the DOM — so force it back to the
-  // sanitized string explicitly instead of relying solely on the
-  // reactive `:value` binding.
+  // Sets the cleaned value on the field directly, or it would keep showing whatever the user typed.
   if (input.value !== clean) {
     input.value = clean;
   }

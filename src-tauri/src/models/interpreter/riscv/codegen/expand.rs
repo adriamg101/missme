@@ -116,7 +116,7 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].kind, InstructionKind::Lui);
         assert_eq!(result[1].kind, InstructionKind::Addi);
-        // Reconstruct: (hi << 12) + lo must equal the original immediate.
+        // Putting the two halves back together should give the original value.
         let hi = match result[0].operands[1] {
             Operand::Immediate(v) => v,
             _ => panic!("expected immediate"),
@@ -130,7 +130,8 @@ mod tests {
 
     #[test]
     fn expands_li_with_negative_lo12_adjusts_hi() {
-        // 0x7FFFFFFF: lo12 = 0xFFF -> signed -1, hi must compensate by +1.
+        // For this value, the lower part comes out negative, so the upper
+        // part needs to be adjusted up by one to compensate.
         let n = node(InstructionKind::Li, vec![x(1), Operand::Immediate(0x7FFFFFFF)]);
         let result = expand(&n);
         let hi = match result[0].operands[1] {

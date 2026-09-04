@@ -14,12 +14,7 @@ function togglePlayPause() {
   }
 }
 
-// The slider is log-scaled: a linear 10..1000x range makes the fast end
-// (10-50ms) feel cramped into the first ~5% of the track, while the rest
-// of the track (50-1000ms) all reads as "slow" with no perceptible
-// difference — humans perceive a speed/delay range multiplicatively, not
-// additively. The raw input stays a plain 0..SLIDER_MAX range (for normal
-// <input type="range"> behavior); it's mapped to/from ms exponentially.
+// The slider moves evenly, but its position is turned into a speed on a curve, so fast speeds still feel spread out.
 const MIN_MS = 10;
 const MAX_MS = 1000;
 const SLIDER_MAX = 100;

@@ -10,14 +10,14 @@ export function persistPlugin({ store }: PiniaPluginContext) {
     try {
       store.$patch(JSON.parse(saved));
     } catch {
-      // corrupted/old-format data: ignore and keep defaults
+      // the saved data is broken or from an old format, so ignore it and keep the defaults
     }
   }
 
-  // flush: "sync" so the write lands immediately when the mutation happens
-  // (rather than batched on Vue's next tick) — otherwise a synchronous
-  // read-immediately-after-write (as in the persistence round-trip test,
-  // and in general app navigation) can race ahead of the write.
+  // Save immediately when a change happens, instead of waiting and batching
+  // it with other updates. Otherwise a read that happens right after a write
+  // (like in the save-and-reload test, and during normal app navigation)
+  // could run before the save actually finishes.
   store.$subscribe(
     (_mutation, state) => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));

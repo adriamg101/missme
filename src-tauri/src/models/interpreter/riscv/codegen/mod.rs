@@ -36,14 +36,8 @@ pub fn generate(
     let mut entries = Vec::new();
 
     for (address, instr) in &layout_result.instructions {
-        // Codegen always runs even when semantic analysis already reported
-        // errors elsewhere in the program (every stage always runs, so the
-        // user sees every problem at once). An instruction with an invalid
-        // operand shape that semantic analysis already flagged could still
-        // reach here; resolve_operands/encode assume a valid shape and may
-        // panic on one that isn't. Rather than let one malformed
-        // instruction crash the whole compile, skip just that instruction
-        // — its real error is already reported by semantic analysis.
+        // This step always runs even after earlier checks found errors, so a wrongly shaped instruction can still reach here.
+        // Instead of letting one bad instruction crash the whole compile, we just skip it, since its real error was already reported.
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let resolved = resolve_operands(instr, *address, &layout_result.layout.labels, &mut errors);
             let bytecode = encode(instr.kind, &resolved);
@@ -91,9 +85,7 @@ fn resolve_operands(
                     }
                     offset
                 }
-                // Label doesn't resolve: semantic analysis already reported
-                // "undefined label" for this line. Don't also report a
-                // spurious range error on top of a meaningless offset.
+                // If the label cannot be found, an undefined label error was already reported, so skip the range check too.
                 None => 0,
             };
             ops[2] = Operand::Immediate(offset);
@@ -115,9 +107,8 @@ fn resolve_operands(
             ops
         }
         Auipc if matches!(&instr.operands[1], Operand::LabelRef(_)) => {
-            // First half of a `la` expansion (see expand.rs): compute hi20
-            // now; the paired `addi` (next instruction, same address+4)
-            // computes lo12 below.
+            // This is the first half of a load address instruction, split into two real instructions.
+            // Here we compute the upper part of the address, the matching instruction right after computes the lower part.
             let offset = label_address(&instr.operands[1], labels)
                 .map(|target| target as i64 - address as i64)
                 .unwrap_or(0);
@@ -127,8 +118,8 @@ fn resolve_operands(
             vec![instr.operands[0].clone(), Operand::Immediate(hi)]
         }
         Addi if matches!(instr.operands.get(2), Some(Operand::LabelRef(_))) => {
-            // Second half of a `la` expansion: same target, same math,
-            // keep only lo12. `address` here is the auipc's address + 4.
+            // This is the second half of the same instruction, same target address, but we only keep the lower part this time.
+            // The address here is 4 bytes after the first instruction's address.
             let offset = label_address(&instr.operands[2], labels)
                 .map(|target| target as i64 - (address as i64 - 4))
                 .unwrap_or(0);
@@ -140,15 +131,8 @@ fn resolve_operands(
     }
 }
 
-/// Resolves a label reference to its address. Semantic analysis normally
-/// guarantees every referenced label exists, but codegen still runs even
-/// when semantic analysis already reported errors (every stage always
-/// runs, so the user sees every problem at once) — in that situation an
-/// undefined label reaches here too. Returns `None` rather than panicking
-/// or reporting a duplicate/misleading error here: semantic analysis has
-/// already reported the real "undefined label" error for this line, so
-/// callers should degrade gracefully (skip range checks, use a placeholder
-/// offset) rather than pile on a second, confusing error.
+/// Finds the address a label points to. An undefined label can still show up here even after the earlier checking step already flagged it.
+/// This returns none instead of crashing, since that error was already reported, and callers just skip the range check.
 fn label_address(op: &Operand, labels: &HashMap<String, u32>) -> Option<u32> {
     match op {
         Operand::LabelRef(name) => labels.get(name).copied(),
@@ -208,8 +192,7 @@ mod tests {
 
     #[test]
     fn branch_target_out_of_range_is_an_error() {
-        // Exercise the range check directly via resolve_operands: a branch
-        // whose target sits far outside a branch's +-4KiB encodable range.
+        // Tests the range check directly, with a branch target far outside what a branch instruction can actually reach.
         let mut labels = HashMap::new();
         labels.insert("far".to_string(), 0x1000 + 100_000);
         let instr = ExpandedInstruction {

@@ -6,7 +6,11 @@ export type SimulationView =
   | { kind: "stats" }
   | { kind: "registers" }
   | { kind: "cache"; levelId: string; side: "unified" | "i" | "d" }
-  | { kind: "ram" };
+  | { kind: "ram" }
+  | { kind: "tlb" }
+  | { kind: "disk" }
+  | { kind: "frames" }
+  | { kind: "pageTable" };
 
 interface SimulationState {
   isActive: boolean;

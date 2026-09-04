@@ -46,8 +46,8 @@ describe("RiscvCompileConfigForm", () => {
     render(RiscvCompileConfigForm);
     const dataInput = screen.getByLabelText(".data base address");
 
-    // HexField already caps typed input at 8 hex digits, but the setter
-    // clamps too as a defense-in-depth measure against u32 overflow.
+    // The hex input field already limits typed input to 8 digits, but the
+    // setter clamps the value too, as an extra safety check against overflow.
     await fireEvent.update(dataInput, "FFFFFFFFF");
 
     expect(useCompileConfigStore().dataBase).toBe(0xffffffff);
@@ -83,7 +83,7 @@ describe("RiscvCompileConfigForm — .text/.data collision warning", () => {
   it("uses the exact compiled .text size once available, instead of the heuristic gap", () => {
     const compileStore = useCompileConfigStore();
     compileStore.setCompiledSizes(0x10, 0);
-    compileStore.setDataBase(0x00400020); // 32 bytes past textBase — beyond a 16-byte .text, so no overlap
+    compileStore.setDataBase(0x00400020); // 32 bytes past the text base, past a 16-byte .text, so no overlap
     render(RiscvCompileConfigForm);
     expect(screen.queryByText(/too close to \.text/)).toBeNull();
   });
@@ -91,7 +91,7 @@ describe("RiscvCompileConfigForm — .text/.data collision warning", () => {
   it("warns using the exact compiled .text size when .data is genuinely inside it", () => {
     const compileStore = useCompileConfigStore();
     compileStore.setCompiledSizes(0x100, 0);
-    compileStore.setDataBase(0x00400010); // inside a 256-byte .text
+    compileStore.setDataBase(0x00400010); // this falls inside a 256-byte .text
     render(RiscvCompileConfigForm);
     expect(screen.getByText(/too close to \.text/)).toBeInTheDocument();
   });
@@ -104,14 +104,14 @@ describe("RiscvCompileConfigForm — .data fits in configured RAM", () => {
   });
 
   it("shows no warning when the compiled .data segment fits", () => {
-    useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0 };
+    useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0, pageTableLevels: 1, frameAllocation: "sequential", frames: 4 };
     useCompileConfigStore().setCompiledSizes(0, 512);
     render(RiscvCompileConfigForm);
     expect(screen.queryByText(/doesn't fit in the configured RAM/)).toBeNull();
   });
 
   it("warns when the compiled .data segment exceeds the configured RAM size", () => {
-    useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0 };
+    useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0, pageTableLevels: 1, frameAllocation: "sequential", frames: 4 };
     useCompileConfigStore().setCompiledSizes(0, 2048);
     render(RiscvCompileConfigForm);
     expect(screen.getByText(/doesn't fit in the configured RAM/)).toBeInTheDocument();

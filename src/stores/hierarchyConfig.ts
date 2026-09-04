@@ -18,6 +18,7 @@ function generateId(): string {
 interface HierarchyConfigState {
   isa: ISA;
   vmEnabled: boolean;
+  pageSize: number;
   seed: number | null;
   hierarchy: Hierarchy;
   tlb: TlbConfig;
@@ -29,11 +30,10 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
   state: (): HierarchyConfigState => ({
     isa: "RV32I",
     vmEnabled: false,
+    pageSize: 4096,
     seed: null,
     hierarchy: [],
     tlb: {
-      pageSize: 4096,
-      pageTableLevels: 1,
       pageWalkStart: "RAM",
       entries: 64,
       associativity: 4,
@@ -56,6 +56,9 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
     },
     setVmEnabled(value: boolean) {
       this.vmEnabled = value;
+    },
+    setPageSize(value: number) {
+      this.pageSize = value;
     },
     setSeed(seed: number | null) {
       this.seed = seed;
@@ -85,10 +88,11 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
         if (level.id !== levelId) return level;
         const entry = chain === "unified" ? level.unified : chain === "i" ? level.i : level.d;
         if (!entry) return level;
-        // 2**exp is the cache's total entry (tag-slot) count — numSets *
-        // associativity — independent of blockSize (see diagram.ts's
-        // byteSizeLabel and the backend's num_sets computation, both of
-        // which multiply/divide only by associativity, never blockSize).
+        // 2 to the power of exp is the cache's total number of entries
+        // (number of sets times associativity), and it doesn't depend on
+        // block size. See diagram.ts's byteSizeLabel and the backend's
+        // set-count calculation, both of which only use associativity, never
+        // block size.
         const maxAssociativity = 2 ** entry.exp;
         if (entry.config.associativity <= maxAssociativity) return level;
         const clampedEntry = { ...entry, config: { ...entry.config, associativity: maxAssociativity } };
@@ -127,9 +131,6 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
     },
     updateDiskConfig(patch: Partial<DiskConfig>) {
       this.disk = { ...this.disk, ...patch };
-    },
-    resetToDefaults() {
-      this.$reset();
     },
   },
 });

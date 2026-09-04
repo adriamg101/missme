@@ -1,16 +1,16 @@
 import { defineStore } from "pinia";
 
-// Matches CodegenConfig::default() in
-// src-tauri/src/models/interpreter/riscv/mod.rs. Fixed by convention, not
-// user-editable — exposed as a getter, not state, so there's no setter to
-// call by mistake.
+// Matches the default codegen setup in
+// src-tauri/src/models/interpreter/riscv/mod.rs. This is fixed by
+// convention and not something the user can edit, so it's exposed as a
+// read-only value rather than editable state.
 const TEXT_BASE = 0x00400000;
 
 interface CompileConfigState {
   dataBase: number;
-  // Populated after a successful compile, from the actual codegen output —
-  // lets validation (e.g. the .data/.text collision check) use real sizes
-  // instead of a guess. Null until the first successful compile.
+  // Filled in after a successful compile, using the real output sizes so
+  // checks (like making sure .data and .text don't overlap) can use actual
+  // numbers instead of a guess. Stays empty until the first successful compile.
   lastCompiledTextSize: number | null;
   lastCompiledDataSize: number | null;
 }

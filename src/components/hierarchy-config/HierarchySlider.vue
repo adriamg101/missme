@@ -17,17 +17,13 @@ const emit = defineEmits<{
   "remove-level": [levelId: string];
 }>();
 
-// The reachable range is [MIN_POSITION, maxPositions(isa) - 1] — MIN_POSITION
-// is 0, so a cache with a single entry (2^0 = 1) is reachable, same as any
-// other power-of-two position.
+// The lowest position lets a cache with just a single entry be reached, the same way any other size can.
 const maxPosition = computed(() => maxPositions(props.isa) - 1);
 const positions = computed(() =>
   Array.from({ length: maxPosition.value - MIN_POSITION + 1 }, (_, i) => i + MIN_POSITION),
 );
 
-// Label every position whose value is itself a power of two, plus position
-// 0 (2^0 = 1, not reachable by doubling from 1) and the maximum reachable
-// position (which is only a power of two for RV64I).
+// Shows a label at every power of two position, plus the first and last positions.
 const labeledPositions = computed<Set<number>>(() => {
   const set = new Set<number>([0]);
   for (let value = 1; value <= maxPosition.value; value *= 2) set.add(value);
@@ -98,9 +94,7 @@ function onPositionClick(position: number) {
 }
 
 const DRAG_THRESHOLD_PX = 4;
-// Fallback when the axis hasn't been laid out yet (e.g. jsdom, which always
-// reports a zero-size getBoundingClientRect) — real browsers use the
-// measured track width instead.
+// Used only before the track has actually been drawn on screen, real browsers measure it instead.
 const FALLBACK_PIXELS_PER_POSITION = 20;
 const axisEl = ref<HTMLElement | null>(null);
 
@@ -138,8 +132,7 @@ function onWindowMouseUp() {
   dragState = null;
 }
 
-// Positioned in fixed viewport coordinates and teleported to <body> so the
-// menu is never clipped by the panel's own overflow:hidden card chrome.
+// Moved outside the panel so the menu never gets cut off by its hidden edges.
 const contextMenu = ref<{ levelId: string; label: string; harvard: boolean; x: number; y: number } | null>(null);
 const contextMenuEl = ref<HTMLElement | null>(null);
 
@@ -297,9 +290,9 @@ onBeforeUnmount(() => {
 .hierarchy-slider-axis {
   position: relative;
   height: 6.5rem;
-  /* Half a marker's own width/height plus room for its focus outline and
-     the is-selected box-shadow, so an edge marker never gets clipped by
-     the panel's overflow:hidden card chrome. */
+  /* Leaves room for half a marker's width/height plus its focus outline and
+     selected-state shadow, so a marker at the very edge never gets cut off
+     by the panel's hidden overflow. */
   margin: 0 1.5rem;
 }
 
@@ -367,9 +360,9 @@ onBeforeUnmount(() => {
   z-index: 5;
 }
 
-/* Harvard i/d markers stack vertically (one above the other) instead of
-   sharing the track's center line, so they read as a pair even when they
-   sit at different horizontal positions. */
+/* The instruction and data markers for a Harvard cache stack one above the
+   other, instead of sharing the track's center line, so they still look
+   like a pair even when they sit at different horizontal spots. */
 .hierarchy-slider-marker.marker-i {
   top: 32%;
 }
