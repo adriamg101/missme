@@ -21,6 +21,7 @@ withDefaults(defineProps<{ ariaLabel: string; size?: "sm" | "md" | "lg" }>(), { 
   background: transparent;
   color: var(--text);
   cursor: pointer;
+  transition: background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .icon-button:hover {

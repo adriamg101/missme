@@ -46,11 +46,14 @@ function selectBase(base: "RV32I" | "RV64I") {
   riscvBase.value = base;
 }
 
+// D extends F in the real spec, so D can never be on without F.
 function toggleExtension(extension: RiscvExtension) {
   if (riscvExtensions.value.has(extension)) {
     riscvExtensions.value.delete(extension);
+    if (extension === "F") riscvExtensions.value.delete("D");
   } else {
     riscvExtensions.value.add(extension);
+    if (extension === "D") riscvExtensions.value.add("F");
   }
 }
 
@@ -464,6 +467,7 @@ defineExpose({ selectedLanguage });
   border: 1px solid var(--secondary);
   background: var(--background);
   box-shadow: var(--shadow);
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, box-shadow var(--theme-transition-duration) ease;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -537,6 +541,10 @@ defineExpose({ selectedLanguage });
   font-size: 0.75rem;
   color: var(--text);
   cursor: pointer;
+}
+
+.editor-options-checkbox input[type="checkbox"] {
+  accent-color: var(--accent);
 }
 
 .editor-body {

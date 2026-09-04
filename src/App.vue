@@ -41,10 +41,11 @@ function handleBoxClick(box: DiagramBox) {
   }
 }
 
-function boxIdsForLevel(levelIndex: number): string[] {
+function boxIdsForLevel(levelIndex: number, accessKind: "fetch" | "load" | "store"): string[] {
   const level = hierarchyConfigStore.hierarchy[levelIndex]
   if (!level) return []
-  return level.harvard ? [`${level.id}-i`, `${level.id}-d`] : [level.id]
+  if (!level.harvard) return [level.id]
+  return [accessKind === "fetch" ? `${level.id}-i` : `${level.id}-d`]
 }
 
 let pendingClear = false
@@ -60,7 +61,8 @@ function handleSimEvent(event: { payload: Record<string, unknown> }) {
   if (kind === "cache_access") {
     const levelIndex = event.payload.levelIndex as number
     const outcome = event.payload.outcome as "hit" | "miss"
-    for (const boxId of boxIdsForLevel(levelIndex)) {
+    const accessKind = event.payload.accessKind as "fetch" | "load" | "store"
+    for (const boxId of boxIdsForLevel(levelIndex, accessKind)) {
       diagramRef.value?.triggerHitMiss(boxId, outcome)
     }
     diagramRef.value?.setStatusMessage(event.payload.accessKind as "fetch" | "load" | "store", event.payload.address as number)

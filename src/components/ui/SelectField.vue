@@ -104,6 +104,7 @@ onBeforeUnmount(() => {
 .select-field-label {
   font-size: 0.875rem;
   color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .select-field-root {
@@ -122,6 +123,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   font-family: inherit;
   cursor: pointer;
+  transition: background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease, border-color var(--theme-transition-duration) ease;
 }
 
 .select-field:hover {
@@ -137,11 +139,13 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: none;
 }
 
 .select-field-chevron {
   flex: 0 0 auto;
   opacity: 0.6;
+  transition: none;
 }
 
 .select-field-listbox {
@@ -163,6 +167,7 @@ onBeforeUnmount(() => {
   z-index: 15;
   max-height: 14rem;
   overflow-y: auto;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, box-shadow var(--theme-transition-duration) ease;
 }
 
 .select-field-option {
@@ -176,6 +181,7 @@ onBeforeUnmount(() => {
   font-size: inherit;
   text-align: left;
   cursor: pointer;
+  transition: none;
 }
 
 .select-field-option:hover,

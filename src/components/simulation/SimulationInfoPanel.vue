@@ -50,6 +50,7 @@ const store = useSimulationStore();
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, box-shadow var(--theme-transition-duration) ease;
 }
 
 .simulation-info-panel-topbar {

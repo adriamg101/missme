@@ -1048,6 +1048,7 @@ mod tests {
                 entries: 4,
                 associativity: 4,
                 replacement: TlbReplacementPolicy::Lru,
+                latency: 1,
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
@@ -1091,6 +1092,7 @@ mod tests {
                 entries: 4,
                 associativity: 4,
                 replacement: TlbReplacementPolicy::Lru,
+                latency: 1,
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
@@ -1444,6 +1446,7 @@ mod tests {
                 outcome: LevelOutcome::Hit,
                 address: 0x10000000,
                 access_kind: AccessKind::Load,
+                page_translation_outcome: None,
             })
         );
         assert!(!first.instruction_complete);
@@ -1511,6 +1514,7 @@ mod tests {
                 outcome: LevelOutcome::Miss,
                 address: 0x10000000,
                 access_kind: AccessKind::Load,
+                page_translation_outcome: None,
             })
         );
         assert!(!first.instruction_complete);
@@ -1526,6 +1530,7 @@ mod tests {
                 outcome: LevelOutcome::Hit,
                 address: 0x10000000,
                 access_kind: AccessKind::Load,
+                page_translation_outcome: None,
             })
         );
         assert!(!second.instruction_complete);

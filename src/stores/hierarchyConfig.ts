@@ -38,6 +38,7 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
       entries: 64,
       associativity: 4,
       replacement: "LRU",
+      latency: 1,
     },
     ram: defaultRamConfig(),
     disk: defaultDiskConfig(),

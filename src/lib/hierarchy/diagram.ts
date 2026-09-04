@@ -49,9 +49,14 @@ export function cacheHue(levelIndex: number, totalLevels: number): number {
 
 // Fixed colors per box kind, from the design spec. Cache is not listed here
 // since its color is worked out per level by cacheHue instead of being fixed.
-const TYPE_CHROMA = 0.07;
-const CACHE_CHROMA = 0.09;
-const HUE_BY_KIND: Record<Exclude<DiagramBoxKind, "cache">, number> = {
+export const TYPE_CHROMA = 0.07;
+export const CACHE_CHROMA = 0.09;
+
+// A Harvard level's instruction side is drawn slightly lighter than its
+// data side, so the two stay visually distinct despite sharing a hue.
+export const HARVARD_INSTRUCTION_LIGHTNESS_DELTA = 0.06;
+
+export const HUE_BY_KIND: Record<Exclude<DiagramBoxKind, "cache">, number> = {
   cpu: 15,
   reg: 95,
   tlb: 330,
@@ -77,6 +82,9 @@ export interface DiagramBox {
   // this just stores the data, not the final look.
   hue: number;
   chroma: number;
+  // How much lighter than this box's plain color to draw it, currently only
+  // set for a Harvard level's instruction side. Left unset everywhere else.
+  lightnessDelta?: number;
   clickable: boolean;
   targetTabId: string | null;
 }
@@ -100,6 +108,7 @@ interface SlotBoxSpec {
   subLabels: string[];
   hue: number;
   chroma: number;
+  lightnessDelta?: number;
   clickable: boolean;
   targetTabId: string | null;
 }
@@ -192,6 +201,7 @@ export function computeLayout(
           subLabels: [`Size: ${byteSizeLabel(iBytes)}`, `Latency: ${cycleLabel(level.i!.config.hitTime)}`],
           hue,
           chroma: CACHE_CHROMA,
+          lightnessDelta: HARVARD_INSTRUCTION_LIGHTNESS_DELTA,
           clickable: true,
           targetTabId: `${level.id}-i`,
         },

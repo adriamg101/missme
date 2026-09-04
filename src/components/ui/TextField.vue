@@ -39,6 +39,7 @@ const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 .text-field-label {
   font-size: 0.875rem;
   color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .text-field {
@@ -47,6 +48,7 @@ const emit = defineEmits<{ "update:modelValue": [value: string] }>();
   background: var(--background);
   color: var(--text);
   font-family: inherit;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .text-field:focus-visible {

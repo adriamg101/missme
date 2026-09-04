@@ -27,6 +27,7 @@ import LevelTabs from "./LevelTabs.vue";
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, box-shadow var(--theme-transition-duration) ease;
 }
 
 .hierarchy-config-panel-body {

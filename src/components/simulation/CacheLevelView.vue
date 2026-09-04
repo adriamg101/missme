@@ -409,6 +409,8 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
+  color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-jump-bar {
@@ -419,6 +421,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   padding: 0.5rem;
   border-bottom: 1px solid var(--secondary);
   font-family: sans-serif;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-jump-bar button {
@@ -430,6 +433,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-jump-bar button:hover {
@@ -447,6 +451,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   font-family: monospace;
   font-size: 0.8rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-jump-input-invalid {
@@ -462,6 +467,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   overflow-x: auto;
   overflow-y: hidden;
   box-sizing: border-box;
+  transition: none;
 }
 
 .simulation-cache-grid-wrapper {
@@ -470,6 +476,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   width: fit-content;
   height: 100%;
   margin: 0 auto;
+  transition: none;
 }
 
 .simulation-cache-grid-header {
@@ -478,6 +485,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   background: var(--background);
   box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.4);
   width: fit-content;
+  transition: background-color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-body {
@@ -485,11 +493,13 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  transition: none;
 }
 
 .simulation-cache-set-block {
   align-items: stretch;
   width: fit-content;
+  transition: none;
 }
 
 .simulation-cache-cell {
@@ -499,6 +509,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   border: 1px solid var(--secondary);
   padding: 0.15rem 0.6rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-cell-header {
@@ -521,5 +532,6 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
 .simulation-cache-cell-empty {
   color: var(--text-muted, var(--text));
   opacity: 0.4;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 </style>

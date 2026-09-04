@@ -69,6 +69,7 @@ const tlb: TlbConfig = {
   entries: 64,
   associativity: 4,
   replacement: "LRU",
+  latency: 4,
 };
 
 describe("computeLayout — base chain", () => {

@@ -24,12 +24,25 @@ const hierarchyStore = useHierarchyConfigStore();
 const hasFloatExtension = computed(
   () => simulationStore.activeExtensions.includes("F") || simulationStore.activeExtensions.includes("D"),
 );
+const hasDoubleExtension = computed(() => simulationStore.activeExtensions.includes("D"));
 
 // Integer registers are padded to the processor's own width, so they never look shorter than a full register.
 const intHexDigits = computed(() => (hierarchyStore.isa === "RV64I" ? 16 : 8));
 function hexInt(value: number): string {
   // Register values arrive as full sized numbers, they must never be shrunk here.
   return `0x${value.toString(16).toUpperCase().padStart(intHexDigits.value, "0")}`;
+}
+
+// Floating point registers show their real bit pattern, a double when D is active or a single float otherwise.
+function hexFp(value: number): string {
+  if (hasDoubleExtension.value) {
+    const view = new DataView(new ArrayBuffer(8));
+    view.setFloat64(0, value);
+    return `0x${view.getBigUint64(0).toString(16).toUpperCase().padStart(16, "0")}`;
+  }
+  const view = new DataView(new ArrayBuffer(4));
+  view.setFloat32(0, value);
+  return `0x${view.getUint32(0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
 const intRegs = reactive<number[]>(Array(32).fill(0));
@@ -89,7 +102,7 @@ onBeforeUnmount(() => {
       <template v-for="(value, i) in fpRegs" :key="`f${i}`">
         <span class="simulation-register-cell simulation-register-name">f{{ i }}</span>
         <span class="simulation-register-cell simulation-register-alias">{{ FP_ABI_NAMES[i] }}</span>
-        <span class="simulation-register-cell">{{ value }}</span>
+        <span class="simulation-register-cell">{{ hexFp(value) }}</span>
       </template>
     </div>
   </div>
@@ -104,6 +117,8 @@ onBeforeUnmount(() => {
   overflow: auto;
   height: 100%;
   box-sizing: border-box;
+  color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .simulation-registers-grid {
@@ -112,6 +127,7 @@ onBeforeUnmount(() => {
   align-items: stretch;
   font-size: 0.75rem;
   font-family: monospace;
+  transition: none;
 }
 
 .simulation-register-cell {
@@ -121,11 +137,13 @@ onBeforeUnmount(() => {
   border: 1px solid var(--secondary);
   padding: 0.15rem 0.35rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .simulation-register-name {
   color: var(--text-muted, var(--text));
   opacity: 0.7;
   justify-content: flex-start;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 </style>

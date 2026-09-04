@@ -1,15 +1,57 @@
 use std::collections::HashSet;
 
-use super::{Action, CpuSimulator, RegisterId};
+use super::memory::config::HierarchyConfig;
+use super::memory::hierarchy::{AccessKind, LevelId, LevelResult};
+use super::stats::{Bucket, Side, StatsAccumulator, StatsSnapshot};
+use super::{Action, ActionKind, CpuSimulator, RegisterId};
+
+// Works out which bucket a memory step belongs to, and its cycle cost.
+fn bucket_and_cost(config: &HierarchyConfig, result: &LevelResult) -> (Bucket, u64) {
+    match result.level {
+        LevelId::Tlb => (Bucket::Tlb, config.tlb.latency as u64),
+        LevelId::Cache(level_index) => {
+            let level = &config.hierarchy[level_index];
+            let side = if level.harvard {
+                match result.access_kind {
+                    AccessKind::Fetch => Side::Instruction,
+                    AccessKind::Load | AccessKind::Store => Side::Data,
+                }
+            } else {
+                Side::Unified
+            };
+            let entry = match side {
+                Side::Instruction => level.i.as_ref(),
+                Side::Data => level.d.as_ref(),
+                Side::Unified => level.unified.as_ref(),
+            };
+            let hit_time = entry.map(|e| e.config.hit_time as u64).unwrap_or(0);
+            (Bucket::Cache { level_index, side }, hit_time)
+        }
+        LevelId::Ram => (Bucket::Ram, config.ram.latency as u64),
+        LevelId::Disk => (Bucket::Disk, config.disk.latency as u64),
+    }
+}
+
+// True only for the TLB under VM, the first cache level otherwise, or RAM
+// when there is no cache level at all to claim that spot.
+fn is_top_of_chain(config: &HierarchyConfig, bucket: Bucket) -> bool {
+    match bucket {
+        Bucket::Tlb => config.vm_enabled,
+        Bucket::Cache { level_index: 0, .. } => !config.vm_enabled,
+        Bucket::Ram => !config.vm_enabled && config.hierarchy.is_empty(),
+        _ => false,
+    }
+}
 
 pub struct SimulationSession {
     simulator: Box<dyn CpuSimulator + Send>,
     breakpoints: HashSet<usize>,
+    stats: StatsAccumulator,
 }
 
 impl SimulationSession {
     pub fn new(simulator: Box<dyn CpuSimulator + Send>, breakpoints: HashSet<usize>) -> Self {
-        Self { simulator, breakpoints }
+        Self { simulator, breakpoints, stats: StatsAccumulator::new() }
     }
 
     pub fn is_finished(&self) -> bool {
@@ -32,6 +74,10 @@ impl SimulationSession {
         self.simulator.memory()
     }
 
+    pub fn stats(&self) -> StatsSnapshot {
+        self.stats.snapshot()
+    }
+
     pub fn is_at_breakpoint(&self) -> bool {
         match self.simulator.current_source_line() {
             Some(line) => self.breakpoints.contains(&line),
@@ -49,7 +95,27 @@ impl SimulationSession {
         if self.simulator.is_finished() {
             return None;
         }
-        Some(self.simulator.step_action())
+        let action = self.simulator.step_action();
+        self.record_stats(&action);
+        Some(action)
+    }
+
+    fn record_stats(&mut self, action: &Action) {
+        if let ActionKind::MemoryLevel(result) = &action.kind {
+            let config = self.simulator.memory().config();
+            let (bucket, cost_cycles) = bucket_and_cost(config, result);
+            let top_of_chain = is_top_of_chain(config, bucket);
+            self.stats.record_access(bucket, result.access_kind, cost_cycles, top_of_chain);
+            if matches!(bucket, Bucket::Tlb | Bucket::Cache { .. }) {
+                self.stats.record_outcome(bucket, result.outcome);
+            }
+            if let Some(page_outcome) = result.page_translation_outcome {
+                self.stats.record_outcome(Bucket::Ram, page_outcome);
+            }
+        }
+        if action.instruction_complete {
+            self.stats.record_instruction_complete();
+        }
     }
 
     pub fn step_instruction(&mut self) -> Vec<Action> {
@@ -90,7 +156,7 @@ mod tests {
             vm_enabled: false,
             page_size: 4096,
             hierarchy: vec![],
-            tlb: TlbConfig { page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru },
+            tlb: TlbConfig { page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru, latency: 1 },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
             seed: None,
@@ -196,5 +262,34 @@ mod tests {
         let session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
         // This read only call should succeed without crashing, showing this method really reaches a working simulator underneath.
         assert!(session.memory().cache_level_info(0, crate::models::simulation::memory::hierarchy::CacheSide::Unified).is_none());
+    }
+
+    #[test]
+    fn a_fresh_session_reports_all_zero_stats() {
+        let session = SimulationSession::new(sim(vec![]), HashSet::new());
+        let snap = session.stats();
+        assert_eq!(snap.instructions_completed, 0);
+        assert_eq!(snap.total_cycles, 0);
+    }
+
+    #[test]
+    fn stats_report_memory_accesses_even_with_no_cache_levels_and_vm_off() {
+        let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
+        session.step_instruction();
+        let snap = session.stats();
+        assert!(snap.total_memory_accesses > 0);
+        assert!(snap.amat > 0.0);
+    }
+
+    #[test]
+    fn stats_grow_one_step_at_a_time_not_only_once_the_run_finishes() {
+        let mut session = SimulationSession::new(sim(vec![add_entry(0x1000, 1)]), HashSet::new());
+        assert_eq!(session.stats().instructions_completed, 0);
+
+        session.step_action(); // fetch, not yet the completing step
+        assert_eq!(session.stats().instructions_completed, 0, "the instruction has not completed yet");
+
+        session.step_action(); // the completing step
+        assert_eq!(session.stats().instructions_completed, 1, "stats must already reflect this, mid-run, not only once the whole program finishes");
     }
 }

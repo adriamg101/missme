@@ -157,6 +157,8 @@ watch(
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
+  color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 .simulation-tlb-outer {
   flex: 1 1 auto;
@@ -167,6 +169,7 @@ watch(
   overflow-x: auto;
   overflow-y: hidden;
   box-sizing: border-box;
+  transition: none;
 }
 .simulation-tlb-grid-wrapper {
   display: flex;
@@ -174,6 +177,7 @@ watch(
   width: fit-content;
   height: 100%;
   margin: 0 auto;
+  transition: none;
 }
 .simulation-tlb-grid-header {
   display: grid;
@@ -181,17 +185,20 @@ watch(
   background: var(--background);
   box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.4);
   width: fit-content;
+  transition: background-color var(--theme-transition-duration) ease;
 }
 .simulation-tlb-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  transition: none;
 }
 .simulation-tlb-set-block {
   display: grid;
   grid-auto-rows: 26px;
   width: fit-content;
+  transition: none;
 }
 .simulation-tlb-cell {
   display: flex;
@@ -200,6 +207,7 @@ watch(
   border: 1px solid var(--secondary);
   padding: 0.15rem 0.6rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 .simulation-tlb-cell-header {
   font-weight: 600;
@@ -212,5 +220,6 @@ watch(
 .simulation-tlb-cell-empty {
   color: var(--text-muted, var(--text));
   opacity: 0.4;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 </style>
