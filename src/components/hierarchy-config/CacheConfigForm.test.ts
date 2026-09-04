@@ -9,7 +9,7 @@ describe("CacheConfigForm", () => {
     const { emitted } = render(CacheConfigForm, {
       props: { config: defaultCacheConfig(), cacheSizeExp: 15, isInstructionCache: false, isa: "RV32I" },
     });
-    await fireEvent.click(screen.getAllByLabelText("Incrementar")[0]);
+    await fireEvent.click(screen.getAllByLabelText("Increment")[0]);
     expect(emitted().update[0]).toEqual([{ blockSize: 128 }]);
   });
 
@@ -18,7 +18,7 @@ describe("CacheConfigForm", () => {
     const { emitted } = render(CacheConfigForm, {
       props: { config, cacheSizeExp: 10 /* 1024 entries */, isInstructionCache: false, isa: "RV32I" },
     });
-    await fireEvent.click(screen.getAllByLabelText("Incrementar")[1]);
+    await fireEvent.click(screen.getAllByLabelText("Increment")[1]);
     expect(emitted().update).toBeUndefined();
   });
 
@@ -43,7 +43,7 @@ describe("CacheConfigForm", () => {
     const { emitted } = render(CacheConfigForm, {
       props: { config, cacheSizeExp: 15, isInstructionCache: false, isa: "RV32I" },
     });
-    await fireEvent.click(screen.getAllByLabelText("Decrementar")[0]);
+    await fireEvent.click(screen.getAllByLabelText("Decrement")[0]);
     expect(emitted().update).toBeUndefined();
   });
 
@@ -52,7 +52,7 @@ describe("CacheConfigForm", () => {
     const { emitted } = render(CacheConfigForm, {
       props: { config, cacheSizeExp: 15, isInstructionCache: false, isa: "RV64I" },
     });
-    await fireEvent.click(screen.getAllByLabelText("Decrementar")[0]);
+    await fireEvent.click(screen.getAllByLabelText("Decrement")[0]);
     expect(emitted().update).toBeUndefined();
   });
 });

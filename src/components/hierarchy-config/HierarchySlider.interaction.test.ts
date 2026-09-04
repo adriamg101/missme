@@ -14,12 +14,12 @@ describe("HierarchySlider interactions", () => {
     const { container, emitted } = render(HierarchySlider, { props: { hierarchy: [], isa: "RV32I" } });
     const slot = container.querySelectorAll("[data-slider-position]")[5];
     await fireEvent.click(slot!);
-    expect(emitted().create[0]).toEqual([6]);
+    expect(emitted().create[0]).toEqual([5]);
   });
 
   it("emits rejected-insert instead of create when clicking on an occupied position", async () => {
     const { container, emitted } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
-    const slot = container.querySelectorAll("[data-slider-position]")[9];
+    const slot = container.querySelectorAll("[data-slider-position]")[10];
     await fireEvent.click(slot!);
     expect(emitted().create).toBeUndefined();
     expect(emitted()["rejected-insert"][0]).toEqual([["a"]]);
@@ -29,7 +29,7 @@ describe("HierarchySlider interactions", () => {
     const { getByLabelText, emitted } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
     const marker = getByLabelText("L1, 1 K");
     await fireEvent.mouseDown(marker, { clientX: 100 });
-    await fireEvent.mouseUp(marker, { clientX: 101 }); // 1px, below the 4px threshold
+    await fireEvent.mouseUp(marker, { clientX: 101 }); // only 1px of movement, below the 4px threshold for a drag
     expect(emitted().move).toBeUndefined();
   });
 
@@ -37,7 +37,7 @@ describe("HierarchySlider interactions", () => {
     const { getByLabelText, emitted } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
     const marker = getByLabelText("L1, 1 K");
     await fireEvent.mouseDown(marker, { clientX: 100 });
-    await fireEvent.mouseMove(document, { clientX: 130 }); // past the 4px threshold
+    await fireEvent.mouseMove(document, { clientX: 130 }); // past the 4px threshold for a drag
     await fireEvent.mouseUp(document, { clientX: 130 });
     expect(emitted().move).toBeTruthy();
     const moveEvents = emitted<[string, string, number]>("move");

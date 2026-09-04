@@ -2,9 +2,10 @@ import type { CacheConfig, CacheEntry, Hierarchy, ISA, Level } from "./model";
 import { defaultCacheConfig, maxPositions } from "./model";
 import { chainPositions, firstChainViolation, insertionIndex, isPositionInsertable } from "./derive";
 
-// The slider never exposes exp=0 (2^0 = 1 byte is not a useful minimum in
-// practice) — the smallest selectable/reachable position is 1.
-export const MIN_POSITION = 1;
+// The smallest position a level can be placed at. 0 is included so that a
+// cache with just a single entry is still reachable, like any other
+// power-of-two size.
+export const MIN_POSITION = 0;
 
 export function inheritedConfigFor(hierarchy: Hierarchy, insertIndex: number): CacheConfig {
   if (insertIndex === 0) return defaultCacheConfig();

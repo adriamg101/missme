@@ -1,7 +1,6 @@
 <!-- src/components/hierarchy-config/TlbConfigForm.vue -->
 <script setup lang="ts">
 import PowerOfTwoStepper from "./PowerOfTwoStepper.vue";
-import NumberStepper from "../ui/NumberStepper.vue";
 import SelectField from "../ui/SelectField.vue";
 import ConfigGrid from "./ConfigGrid.vue";
 import type { TlbConfig, TlbReplacementPolicy } from "../../lib/hierarchy/model";
@@ -11,11 +10,7 @@ const props = defineProps<{ tlb: TlbConfig; pageWalkTargets: PageWalkTarget[] }>
 const emit = defineEmits<{ update: [patch: Partial<TlbConfig>] }>();
 
 const pageWalkOptions = props.pageWalkTargets.map((target) => ({ value: target.id, label: target.label }));
-const replacementOptions = ["LRU", "FIFO", "Random", "PLRU"].map((value) => ({ value, label: value }));
-
-function onPageTableLevelsChange(value: number) {
-  emit("update", { pageTableLevels: Math.max(1, Number.isFinite(value) ? value : 1) });
-}
+const replacementOptions = ["LRU", "FIFO", "Random"].map((value) => ({ value, label: value }));
 
 function onEntriesChange(value: number) {
   const patch: Partial<TlbConfig> = { entries: value };
@@ -27,21 +22,6 @@ function onEntriesChange(value: number) {
 <template>
   <form class="tlb-config-form" @submit.prevent>
     <ConfigGrid>
-      <PowerOfTwoStepper
-        label="Page size"
-        aria-label="Page size"
-        :model-value="tlb.pageSize"
-        @update:model-value="(v) => emit('update', { pageSize: v })"
-      />
-
-      <NumberStepper
-        label="Page table levels"
-        :model-value="tlb.pageTableLevels"
-        :min="1"
-        aria-label="Page table levels"
-        @update:model-value="onPageTableLevelsChange"
-      />
-
       <SelectField
         label="Page walk start"
         :model-value="tlb.pageWalkStart"

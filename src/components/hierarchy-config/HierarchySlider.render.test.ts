@@ -21,17 +21,17 @@ const harvard: Hierarchy = [
 ];
 
 describe("HierarchySlider rendering", () => {
-  it("renders positions 1..31 for RV32I and 1..63 for RV64I (position 0 is never reachable)", () => {
+  it("renders positions 0..31 for RV32I and 0..63 for RV64I", () => {
     const { container: c32 } = render(HierarchySlider, { props: { hierarchy: [], isa: "RV32I" } });
-    expect(c32.querySelectorAll("[data-slider-position]")).toHaveLength(31);
+    expect(c32.querySelectorAll("[data-slider-position]")).toHaveLength(32);
 
     const { container: c64 } = render(HierarchySlider, { props: { hierarchy: [], isa: "RV64I" } });
-    expect(c64.querySelectorAll("[data-slider-position]")).toHaveLength(63);
+    expect(c64.querySelectorAll("[data-slider-position]")).toHaveLength(64);
   });
 
   it("renders a unified level as one marker with a label above the line", () => {
     render(HierarchySlider, { props: { hierarchy: unified, isa: "RV32I" } });
-    expect(screen.getByText("1 K")).toBeTruthy(); // 2^10
+    expect(screen.getByText("1 K")).toBeTruthy(); // 2 to the power of 10
     expect(screen.getByLabelText("L1, 1 K")).toBeTruthy();
   });
 
@@ -47,9 +47,9 @@ describe("HierarchySlider rendering", () => {
     expect(screen.getByLabelText("L1 datos, 1 M").textContent).toContain("1d");
   });
 
-  it("labels power-of-two ruler positions plus the maximum, never position 0", () => {
+  it("labels power-of-two ruler positions plus position 0 and the maximum", () => {
     const { container } = render(HierarchySlider, { props: { hierarchy: [], isa: "RV32I" } });
     const labeled = Array.from(container.querySelectorAll(".hierarchy-slider-tick-label")).map((el) => el.textContent);
-    expect(labeled.sort((a, b) => Number(a) - Number(b))).toEqual(["1", "2", "4", "8", "16", "31"]);
+    expect(labeled.sort((a, b) => Number(a) - Number(b))).toEqual(["0", "1", "2", "4", "8", "16", "31"]);
   });
 });

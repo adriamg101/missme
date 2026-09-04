@@ -117,8 +117,10 @@ describe("toVonNeumann", () => {
 
   it("rejects the merge when moving the data marker would break the data chain, and reports the conflicting index", () => {
     // L1 harvard: i=5, d=8. L2 unified at 6.
-    // Merging L1 keeps i=5 as the unified position, but the data chain was [8, 6] -> becomes [5, 6] (fine)...
-    // so instead test the reverse: L2 harvard i=15,d=9 with L3 unified at 10 -> merging L2 sets d to 15, breaking [15,10].
+    // Merging L1 keeps i=5 as the combined position, and the data chain
+    // goes from [8, 6] to [5, 6], which is still fine. So test the reverse
+    // case instead: L2 harvard i=15,d=9 with L3 unified at 10. Merging L2
+    // sets d to 15, which breaks the order [15, 10].
     const h: Hierarchy = [unifiedLevel("l1", 2), harvardLevel("l2", 15, 9), unifiedLevel("l3", 10)];
     const result = toVonNeumann(h, "l2");
     expect(result.ok).toBe(false);
@@ -141,26 +143,26 @@ describe("moveMarker", () => {
   it("clamps against the previous and next marker in the same chain", () => {
     const h: Hierarchy = [unifiedLevel("a", 5), unifiedLevel("b", 10), unifiedLevel("c", 20)];
     const movedTooFarRight = moveMarker(h, "b", "unified", 25, "RV32I");
-    expect(movedTooFarRight.find((l) => l.id === "b")!.unified!.exp).toBe(19); // stuck just below c(20)
+    expect(movedTooFarRight.find((l) => l.id === "b")!.unified!.exp).toBe(19); // stops just below c(20)
 
     const movedTooFarLeft = moveMarker(h, "b", "unified", 0, "RV32I");
-    expect(movedTooFarLeft.find((l) => l.id === "b")!.unified!.exp).toBe(6); // stuck just above a(5)
+    expect(movedTooFarLeft.find((l) => l.id === "b")!.unified!.exp).toBe(6); // stops just above a(5)
   });
 
   it("clamps against the slider extremes when there is no neighbor", () => {
     const h: Hierarchy = [unifiedLevel("a", 5)];
     const movedLeft = moveMarker(h, "a", "unified", -10, "RV32I");
-    expect(movedLeft.find((l) => l.id === "a")!.unified!.exp).toBe(1); // MIN_POSITION
+    expect(movedLeft.find((l) => l.id === "a")!.unified!.exp).toBe(0); // the smallest allowed position
 
     const movedRight = moveMarker(h, "a", "unified", 999, "RV32I");
-    expect(movedRight.find((l) => l.id === "a")!.unified!.exp).toBe(31); // RV32I max position
+    expect(movedRight.find((l) => l.id === "a")!.unified!.exp).toBe(31); // the largest allowed position for RV32I
   });
 
   it("moves a harvard level's i and d markers independently, each against its own chain", () => {
     const h: Hierarchy = [harvardLevel("a", 5, 25)];
     const movedI = moveMarker(h, "a", "i", 100, "RV32I");
     expect(movedI.find((l) => l.id === "a")!.i!.exp).toBe(31);
-    expect(movedI.find((l) => l.id === "a")!.d!.exp).toBe(25); // d untouched
+    expect(movedI.find((l) => l.id === "a")!.d!.exp).toBe(25); // d stays the same
   });
 });
 

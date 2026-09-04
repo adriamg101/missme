@@ -6,12 +6,14 @@ use serde::Serialize;
 use crate::models::interpreter::error::{CodegenError, LexError, ParseError, SemanticError};
 use crate::models::interpreter::language::Language;
 use crate::models::interpreter::riscv::{CodegenConfig, RiscV, RiscvConfig};
+use crate::models::interpreter::riscv::codegen::ir::CodegenOutput;
 
 #[derive(Debug, Serialize)]
 pub struct CompileResult {
     pub error_count: usize,
     pub error_output: String,
     pub config: RiscvConfig,
+    pub codegen: Option<CodegenOutput>,
 }
 
 enum CompileErrorEntry {
@@ -97,6 +99,14 @@ pub fn compile(
 
     entries.sort_by_key(line_col);
 
+    let codegen = if entries.is_empty() {
+        fs::read_to_string(&codegen_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str(&contents).ok())
+    } else {
+        None
+    };
+
     let error_output = entries
         .iter()
         .map(format_entry)
@@ -107,13 +117,12 @@ pub fn compile(
         error_count: entries.len(),
         error_output,
         config,
+        codegen,
     })
 }
 
-// Both scenarios below share the fixed `missme` work directory by design
-// (see spec), so they are combined into one test and run sequentially to
-// avoid a file-write race that would occur if cargo ran them as separate,
-// parallel tests.
+// The test cases below share the same fixed work directory on purpose, combined into one test run one after another.
+// Running them as separate tests could let them write to the same files at the same time.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,11 +146,8 @@ mod tests {
         };
         let source = ".include \"x.s\"\nadd x1, @x2, x3\n".to_string();
         let err_result = compile(source, err_config, None).unwrap();
-        // 3, not 2: preprocess leaves the unsupported `.include` line intact
-        // (it only reports the error, it doesn't strip the line), so with
-        // all four stages always running, semantic analysis also flags that
-        // same line as an unknown directive, alongside the tokenizer's
-        // "unexpected character '@'" error.
+        // This gives 3 errors, not 2, since the preprocessing step leaves the unsupported line in place after reporting it.
+        // Later checking then also flags that same line as an unknown directive, on top of the other error.
         assert_eq!(err_result.error_count, 3);
         assert!(err_result.error_output.starts_with("1:1: error:"));
         assert!(err_result
@@ -170,5 +176,19 @@ mod tests {
         assert!(codegen_result
             .error_output
             .contains("instruction found in .data section"));
+
+        // Check that a successful compile produces machine code output
+        let success_config = RiscvConfig { base: Base::Rv32i, extensions: HashSet::new() };
+        let success_result = compile("add x1, x2, x3\n".to_string(), success_config, None).unwrap();
+        assert_eq!(success_result.error_count, 0);
+        let codegen = success_result.codegen.expect("successful compile should return codegen");
+        assert_eq!(codegen.entries.len(), 1);
+        assert_eq!(codegen.entries[0].address, codegen.layout.text_base);
+
+        // Check that a failed compile produces no machine code output
+        let error_config = RiscvConfig { base: Base::Rv32i, extensions: HashSet::new() };
+        let error_result = compile("add x1, @x2, x3\n".to_string(), error_config, None).unwrap();
+        assert!(error_result.error_count > 0);
+        assert!(error_result.codegen.is_none());
     }
 }

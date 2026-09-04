@@ -9,25 +9,20 @@ import type { CacheConfig, ISA, ReplacementPolicy, WritePolicy } from "../../lib
 import { defaultCacheConfig } from "../../lib/hierarchy/model";
 
 const props = defineProps<{ config: CacheConfig; cacheSizeExp: number; isInstructionCache: boolean; isa: ISA }>();
-const emit = defineEmits<{ update: [patch: Partial<CacheConfig>] }>();
+const emit = defineEmits<{ update: [patch: Partial<CacheConfig>]; "apply-to-all": [] }>();
 
-// cacheSizeExp is the slider's position — the number of entries (tags) in
-// this cache, not a byte count — so associativity (ways) can't exceed that
-// entry count regardless of block size (sets = entries / associativity >= 1).
+// The associativity can never be higher than the total number of entries this cache holds.
 const maxAssociativity = computed(() => 2 ** props.cacheSizeExp);
 
-// A block must be able to hold at least one word — 4 bytes on RV32I, 8 on RV64I.
+// A block must be able to hold at least one word, 4 bytes on RV32I or 8 on RV64I.
 const minBlockSize = computed(() => (props.isa === "RV32I" ? 4 : 8));
 
-// Defends against a config persisted before CacheConfig gained `dirtyPercent`
-// (e.g. localStorage saved by an older version of this app) — without this,
-// an undefined value here turns every +/- click into a NaN that never visibly
-// changes (NaN === NaN is false, so the stepper never sees "no change").
+// Falls back to the default when an older saved config has no dirty percent value at all.
 const safeDirtyPercent = computed(() =>
   Number.isFinite(props.config.dirtyPercent) ? props.config.dirtyPercent : defaultCacheConfig().dirtyPercent,
 );
 
-const replacementOptions = ["LRU", "FIFO", "Random", "LFU", "PLRU"].map((value) => ({ value, label: value }));
+const replacementOptions = ["LRU", "FIFO", "Random", "LFU"].map((value) => ({ value, label: value }));
 const writePolicyOptions = [
   { value: "write-through", label: "write-through" },
   { value: "write-back", label: "write-back" },
@@ -44,6 +39,10 @@ function onDirtyPercentChange(value: number) {
 
 <template>
   <form class="cache-config-form" @submit.prevent>
+    <div class="cache-config-form-apply-all">
+      <button type="button" @click="emit('apply-to-all')">Apply all</button>
+    </div>
+
     <ConfigGrid>
       <PowerOfTwoStepper
         label="Block size"
@@ -125,5 +124,24 @@ function onDirtyPercentChange(value: number) {
   width: 1.25rem;
   height: 1.25rem;
   accent-color: var(--accent);
+}
+
+.cache-config-form-apply-all {
+  margin-bottom: 0.75rem;
+}
+
+.cache-config-form-apply-all button {
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--secondary);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.cache-config-form-apply-all button:hover {
+  border-color: var(--accent);
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -9,17 +9,27 @@ import SelectField from "./ui/SelectField.vue";
 import IconButton from "./ui/IconButton.vue";
 import ConfirmModal from "./ui/ConfirmModal.vue";
 import { useHierarchyConfigStore } from "../stores/hierarchyConfig";
+import CompileConfigForm from "./compile-config/CompileConfigForm.vue";
+import { useCompileConfigStore } from "../stores/compileConfig";
+import SimulationToolbar from "./simulation/SimulationToolbar.vue";
+import { useSimulationStore } from "../stores/simulation";
 
-// TODO: in the future this list should come from the backend
+// TODO: in the future this list should come from the backend instead of being hardcoded here
 const languages = ["RISC-V"];
 const languageOptions = languages.map((lang) => ({ value: lang, label: lang }));
 
 const selectedLanguage = ref(languages[0]);
 const code = ref("");
 
+// Only these languages have a real compile form to show, right now just RISC-V.
+const languagesWithCompileConfig = new Set(["RISC-V"]);
+const languageHasCompileConfig = computed(() => languagesWithCompileConfig.has(selectedLanguage.value));
+
 type RiscvExtension = "M" | "F" | "D" | "Q";
 
 const hierarchyConfigStore = useHierarchyConfigStore();
+const compileConfigStore = useCompileConfigStore();
+const simulationStore = useSimulationStore();
 const riscvBase = computed({
   get: () => hierarchyConfigStore.isa,
   set: (value) => hierarchyConfigStore.setIsa(value),
@@ -56,11 +66,47 @@ const gutterRef = ref<HTMLDivElement | null>(null);
 
 const lineCount = computed(() => code.value.split("\n").length);
 
+const scrollTop = ref(0);
+
 function syncScroll() {
   if (textareaRef.value && gutterRef.value) {
     gutterRef.value.scrollTop = textareaRef.value.scrollTop;
+    scrollTop.value = textareaRef.value.scrollTop;
   }
 }
+
+const lineHeightPx = ref(20);
+
+// Matches the text area's own top spacing so the highlight lines up with the actual text.
+const TEXTAREA_TOP_PADDING_PX = 8;
+
+function measureLineHeight() {
+  if (!gutterRef.value) return;
+  const firstLine = gutterRef.value.querySelector(".editor-gutter-line");
+  if (firstLine) {
+    lineHeightPx.value = (firstLine as HTMLElement).getBoundingClientRect().height;
+  } else if (lineCount.value > 0) {
+    lineHeightPx.value = gutterRef.value.scrollHeight / lineCount.value;
+  }
+}
+
+const currentLineHighlightStyle = computed(() => {
+  if (simulationStore.currentLine === null) return { display: "none" };
+  const top =
+    (simulationStore.currentLine - 1) * lineHeightPx.value - scrollTop.value + TEXTAREA_TOP_PADDING_PX;
+  return {
+    position: "absolute" as const,
+    left: "0",
+    right: "0",
+    top: `${top}px`,
+    height: `${lineHeightPx.value}px`,
+    background: "var(--accent)",
+    opacity: "0.15",
+    pointerEvents: "none" as const,
+  };
+});
+
+watch(lineCount, measureLineHeight);
 
 const breakpoints = ref(new Set<number>());
 
@@ -130,7 +176,10 @@ function handleNewFileClick() {
   requestLoad({ kind: "new" });
 }
 
+const isCompiling = ref(false);
+
 async function handleStartClick() {
+  isCompiling.value = true;
   errorCount.value = 0;
   errorOutput.value = "";
 
@@ -139,19 +188,47 @@ async function handleStartClick() {
       error_count: number;
       error_output: string;
       config: unknown;
+      codegen: { entries: unknown[]; layout: { initial_data: unknown[] } } | null;
     }>("compile", {
       source: code.value,
       config: {
         base: riscvBase.value,
         extensions: Array.from(riscvExtensions.value),
       },
+      codegenConfig: {
+        text_base: compileConfigStore.textBase,
+        data_base: compileConfigStore.dataBase,
+      },
     });
 
     errorCount.value = result.error_count;
     errorOutput.value = result.error_output;
+
+    if (result.error_count === 0 && result.codegen) {
+      // Every instruction is a fixed 4 bytes, so the code size is just the entry count times 4.
+      compileConfigStore.setCompiledSizes(result.codegen.entries.length * 4, result.codegen.layout.initial_data.length);
+      await simulationStore.start(
+        riscvBase.value,
+        result.codegen,
+        {
+          isa: hierarchyConfigStore.isa,
+          vmEnabled: hierarchyConfigStore.vmEnabled,
+          pageSize: hierarchyConfigStore.pageSize,
+          hierarchy: hierarchyConfigStore.hierarchy,
+          tlb: hierarchyConfigStore.tlb,
+          ram: hierarchyConfigStore.ram,
+          disk: hierarchyConfigStore.disk,
+          seed: hierarchyConfigStore.seed,
+        },
+        Array.from(breakpoints.value),
+        Array.from(riscvExtensions.value),
+      );
+    }
   } catch (err) {
     errorCount.value = 1;
     errorOutput.value = typeof err === "string" ? err : String(err);
+  } finally {
+    isCompiling.value = false;
   }
 }
 
@@ -163,7 +240,7 @@ async function handleOverwrite() {
 
 async function handleSaveThenLoad() {
   const path = await save();
-  if (!path) return; // user cancelled the save dialog, abort the whole load
+  if (!path) return; // the user cancelled the save dialog, so cancel the whole load too
 
   await writeTextFile(path, code.value);
 
@@ -177,7 +254,9 @@ function handleCancel() {
 }
 
 const editorBodyRef = ref<HTMLDivElement | null>(null);
+const currentLineHighlightRef = ref<HTMLDivElement | null>(null);
 let unlistenDragDrop: (() => void) | null = null;
+let unlistenSimEvents: (() => void) | null = null;
 
 function isPointInEditorBody(physicalX: number, physicalY: number): boolean {
   if (!editorBodyRef.value) return false;
@@ -195,9 +274,7 @@ async function handleDroppedPath(path: string) {
 
 onMounted(async () => {
   document.addEventListener("click", handleDocumentClick);
-  // Tauri intercepts OS-level file drag & drop before it reaches the DOM
-  // (dataTransfer.files stays empty for files dragged from a file manager),
-  // so this uses Tauri's own drag & drop event instead of native HTML5 drop events.
+  // This listens for files dragged in from outside the app, since the normal browser drop does not see them.
   unlistenDragDrop = await getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === "drop") {
       isDragOver.value = false;
@@ -213,12 +290,20 @@ onMounted(async () => {
       isDragOver.value = false;
     }
   });
+
+  unlistenSimEvents = await simulationStore.listenForEvents();
+
+  measureLineHeight();
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("click", handleDocumentClick);
   unlistenDragDrop?.();
+  unlistenSimEvents?.();
 });
+
+// Exposed only so tests can pick a language the app itself cannot pick yet.
+defineExpose({ selectedLanguage });
 </script>
 
 <template>
@@ -226,7 +311,7 @@ onBeforeUnmount(() => {
     <div class="editor-header">
       <IconButton
         size="sm"
-        ariaLabel="Nuevo fichero"
+        ariaLabel="New file"
         @click="handleNewFileClick"
       >
         <svg viewBox="0 0 16 16" width="16" height="16">
@@ -244,7 +329,7 @@ onBeforeUnmount(() => {
       <IconButton
         class="editor-open-file-button"
         size="sm"
-        ariaLabel="Abrir fichero"
+        ariaLabel="Open file"
         @click="handleOpenFileClick"
       >
         <svg viewBox="0 0 16 16" width="16" height="16">
@@ -256,8 +341,10 @@ onBeforeUnmount(() => {
       </IconButton>
 
       <IconButton
+        v-if="!simulationStore.isActive"
         size="sm"
-        ariaLabel="Compilar"
+        ariaLabel="Compile"
+        :disabled="isCompiling"
         @click="handleStartClick"
       >
         <svg viewBox="0 0 16 16" width="16" height="16">
@@ -265,51 +352,54 @@ onBeforeUnmount(() => {
         </svg>
       </IconButton>
 
-      <div class="editor-language-group" ref="optionsMenuRef">
-        <SelectField v-model="selectedLanguage" :options="languageOptions" size="sm" aria-label="Language" />
+      <template v-if="!simulationStore.isActive">
+        <div class="editor-language-group" ref="optionsMenuRef">
+          <SelectField v-model="selectedLanguage" :options="languageOptions" size="sm" aria-label="Language" />
 
-        <IconButton
-          size="sm"
-          ariaLabel="Opciones de compilación"
-          @click.stop="toggleOptionsMenu"
-        >
-          <svg viewBox="0 0 16 16" width="16" height="16">
-            <path fill="currentColor" d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
-            <path
-              fill="currentColor"
-              d="M8 1a1 1 0 0 1 1 1v.6a5.98 5.98 0 0 1 1.7.7l.42-.43a1 1 0 0 1 1.42 1.42l-.43.42c.32.5.56 1.08.7 1.7H13a1 1 0 1 1 0 2h-.19a5.98 5.98 0 0 1-.7 1.7l.43.42a1 1 0 1 1-1.42 1.42l-.42-.43a5.98 5.98 0 0 1-1.7.7V13a1 1 0 1 1-2 0v-.19a5.98 5.98 0 0 1-1.7-.7l-.42.43a1 1 0 1 1-1.42-1.42l.43-.42a5.98 5.98 0 0 1-.7-1.7H3a1 1 0 1 1 0-2h.19c.14-.62.38-1.2.7-1.7l-.43-.42A1 1 0 1 1 4.88 3.3l.42.43a5.98 5.98 0 0 1 1.7-.7V2a1 1 0 0 1 1-1Z"
-            />
-          </svg>
-        </IconButton>
-
-        <div v-if="isOptionsMenuOpen" class="editor-options-menu">
-          <button
-            v-for="base in (['RV32I', 'RV64I'] as const)"
-            :key="base"
-            type="button"
-            class="editor-options-radio"
-            :class="{ 'editor-options-radio-active': riscvBase === base }"
-            @click="selectBase(base)"
+          <IconButton
+            size="sm"
+            ariaLabel="Compilation options"
+            @click.stop="toggleOptionsMenu"
           >
-            {{ base }}
-          </button>
+            <svg viewBox="0 0 16 16" width="16" height="16">
+              <path fill="currentColor" d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
+              <path
+                fill="currentColor"
+                d="M8 1a1 1 0 0 1 1 1v.6a5.98 5.98 0 0 1 1.7.7l.42-.43a1 1 0 0 1 1.42 1.42l-.43.42c.32.5.56 1.08.7 1.7H13a1 1 0 1 1 0 2h-.19a5.98 5.98 0 0 1-.7 1.7l.43.42a1 1 0 1 1-1.42 1.42l-.42-.43a5.98 5.98 0 0 1-1.7.7V13a1 1 0 1 1-2 0v-.19a5.98 5.98 0 0 1-1.7-.7l-.42.43a1 1 0 1 1-1.42-1.42l.43-.42a5.98 5.98 0 0 1-.7-1.7H3a1 1 0 1 1 0-2h.19c.14-.62.38-1.2.7-1.7l-.43-.42A1 1 0 1 1 4.88 3.3l.42.43a5.98 5.98 0 0 1 1.7-.7V2a1 1 0 0 1 1-1Z"
+              />
+            </svg>
+          </IconButton>
 
-          <div class="editor-options-divider"></div>
+          <div v-if="isOptionsMenuOpen" class="editor-options-menu">
+            <button
+              v-for="base in (['RV32I', 'RV64I'] as const)"
+              :key="base"
+              type="button"
+              class="editor-options-radio"
+              :class="{ 'editor-options-radio-active': riscvBase === base }"
+              @click="selectBase(base)"
+            >
+              {{ base }}
+            </button>
 
-          <label
-            v-for="extension in (['M', 'F', 'D', 'Q'] as const)"
-            :key="extension"
-            class="editor-options-checkbox"
-          >
-            <input
-              type="checkbox"
-              :checked="riscvExtensions.has(extension)"
-              @change="toggleExtension(extension)"
-            />
-            {{ extension }}
-          </label>
+            <div class="editor-options-divider"></div>
+
+            <label
+              v-for="extension in (['M', 'F', 'D', 'Q'] as const)"
+              :key="extension"
+              class="editor-options-checkbox"
+            >
+              <input
+                type="checkbox"
+                :checked="riscvExtensions.has(extension)"
+                @change="toggleExtension(extension)"
+              />
+              {{ extension }}
+            </label>
+          </div>
         </div>
-      </div>
+      </template>
+      <SimulationToolbar v-else />
     </div>
 
     <div
@@ -322,12 +412,19 @@ onBeforeUnmount(() => {
           v-for="n in lineCount"
           :key="n"
           class="editor-gutter-line"
+          :class="{ 'editor-gutter-line-current': simulationStore.currentLine === n }"
           @click="toggleBreakpoint(n)"
         >
           <span v-if="breakpoints.has(n)" class="editor-breakpoint-dot"></span>
+          <span v-if="simulationStore.currentLine === n" class="editor-current-line-arrow">▶</span>
           {{ n }}
         </div>
       </div>
+      <div
+        class="editor-current-line-highlight"
+        :style="currentLineHighlightStyle"
+        ref="currentLineHighlightRef"
+      ></div>
       <textarea
         ref="textareaRef"
         v-model="code"
@@ -342,9 +439,13 @@ onBeforeUnmount(() => {
 
     <ErrorPanel :count="errorCount" :output="errorOutput" />
 
+    <div v-if="languageHasCompileConfig" class="editor-compile-config">
+      <CompileConfigForm :language="selectedLanguage" />
+    </div>
+
     <ConfirmModal
       v-if="showConfirmModal"
-      message="Hay código sin guardar en el editor. ¿Qué quieres hacer?"
+      message="There is unsaved code in the editor. What do you want to do?"
       @save="handleSaveThenLoad"
       @discard="handleOverwrite"
       @cancel="handleCancel"
@@ -439,9 +540,11 @@ onBeforeUnmount(() => {
 }
 
 .editor-body {
+  position: relative;
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
+  overflow: hidden;
 }
 
 .editor-body-drag-over {
@@ -476,6 +579,25 @@ onBeforeUnmount(() => {
   height: 6px;
   border-radius: 50%;
   background: #e5484d;
+}
+
+.editor-current-line-arrow {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.6rem;
+  color: var(--accent);
+}
+
+.editor-gutter-line-current {
+  color: var(--accent);
+}
+
+.editor-compile-config {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.6rem;
+  border-top: 1px solid var(--secondary);
 }
 
 .editor-textarea {

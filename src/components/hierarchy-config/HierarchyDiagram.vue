@@ -6,7 +6,9 @@ import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 
 const store = useHierarchyConfigStore();
 
-const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.disk, store.tlb, store.vmEnabled));
+const emit = defineEmits<{ boxClick: [box: DiagramBox] }>();
+
+const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.pageSize, store.disk, store.tlb, store.vmEnabled));
 
 const pressedBoxId = ref<string | null>(null);
 
@@ -16,53 +18,55 @@ function onBoxClick(box: DiagramBox) {
   setTimeout(() => {
     if (pressedBoxId.value === box.id) pressedBoxId.value = null;
   }, 150);
+  emit("boxClick", box);
 }
 
 type HitMiss = "hit" | "miss";
-type ReadWrite = "read" | "write";
 interface AccessState {
   hitMiss: HitMiss | null;
-  readWrite: ReadWrite | null;
 }
 
 const accessStates = reactive<Record<string, AccessState>>({});
 
 function stateFor(boxId: string): AccessState {
-  if (!accessStates[boxId]) accessStates[boxId] = { hitMiss: null, readWrite: null };
+  if (!accessStates[boxId]) accessStates[boxId] = { hitMiss: null };
   return accessStates[boxId];
 }
 
-// State changes, not timed effects: a box switches from its normal type
-// color to the hit/miss border and stays there until the (future)
-// simulation step controller calls clearAccessStates() before applying the
-// next step's state — this is a step-through UI, not an auto-reverting
-// flash. The visual "pulse" is just the CSS transition between the two
-// states, not a self-clearing animation.
+// A box keeps its hit or miss color until the next step clears it, it never fades back on its own.
 function triggerHitMiss(boxId: string, kind: HitMiss) {
   stateFor(boxId).hitMiss = kind;
 }
 
-// Instant mode: no transition, so many fast simulation ticks can toggle
-// this without a visible lag — still a persistent state, cleared the same
-// way as hit/miss.
-function triggerReadWrite(boxId: string, kind: ReadWrite) {
-  stateFor(boxId).readWrite = kind;
+// One line describing the most recent access, it stays until the next step clears it.
+const statusMessage = ref<string | null>(null);
+
+type AccessKind = "fetch" | "load" | "store";
+
+function hexAddress(address: number): string {
+  return `0x${(address >>> 0).toString(16)}`;
 }
 
-// Reverts every box to its normal type color — call this before the next
-// step's triggerHitMiss/triggerReadWrite so the previous step's highlight
-// doesn't linger.
+function setStatusMessage(accessKind: AccessKind, address: number) {
+  const text =
+    accessKind === "fetch"
+      ? `Fetching instruction at ${hexAddress(address)}`
+      : accessKind === "load"
+        ? `Reading data at ${hexAddress(address)}`
+        : `Writing data at ${hexAddress(address)}`;
+  statusMessage.value = text;
+}
+
+// Sets every box back to its normal color and clears the status line before the next step.
 function clearAccessStates() {
   for (const state of Object.values(accessStates)) {
     state.hitMiss = null;
-    state.readWrite = null;
   }
+  statusMessage.value = null;
 }
 
-// No caller exists yet (there's no simulation engine driving real access
-// events) — exposed so a future one can trigger these without touching this
-// component again.
-defineExpose({ triggerHitMiss, triggerReadWrite, clearAccessStates });
+// Nothing calls these yet, they are exposed for a future simulation engine to use.
+defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
 </script>
 
 <template>
@@ -100,15 +104,10 @@ defineExpose({ triggerHitMiss, triggerReadWrite, clearAccessStates });
           :y="box.y + 38 + index * 14"
           class="hierarchy-diagram-box-sub"
         >{{ sub }}</text>
-        <circle
-          v-if="accessStates[box.id]?.readWrite"
-          :cx="box.x + box.width - 8"
-          :cy="box.y + 8"
-          r="6"
-          :class="['hierarchy-diagram-box-dot', accessStates[box.id]?.readWrite === 'read' ? 'dot-read' : 'dot-write']"
-        />
       </g>
     </svg>
+
+    <div v-if="statusMessage" class="hierarchy-diagram-status">{{ statusMessage }}</div>
   </div>
 </template>
 
@@ -169,11 +168,12 @@ defineExpose({ triggerHitMiss, triggerReadWrite, clearAccessStates });
   opacity: 0.7;
 }
 
-/* Hit/miss: a state change, not a timed effect — border + glow switch to
-   the outcome color and stay there until clearAccessStates() runs (the
-   future step controller calls it right before the next step). The
-   "pulse" is just the transition above animating the switch, not a
-   self-reverting keyframe animation. */
+/* Hit or miss: this stays on screen, it isn't a timed effect. The border
+   and glow switch to the outcome color and stay there until
+   clearAccessStates() runs (the future step controller will call it right
+   before the next step). The "pulse" look just comes from the transition
+   above animating the color switch, it isn't an animation that reverts by
+   itself. */
 .hierarchy-diagram-box.access-hit .hierarchy-diagram-box-rect {
   stroke: var(--diagram-hit-color);
   filter: drop-shadow(0 0 6px var(--diagram-hit-color));
@@ -184,18 +184,18 @@ defineExpose({ triggerHitMiss, triggerReadWrite, clearAccessStates });
   filter: drop-shadow(0 0 6px var(--diagram-miss-color));
 }
 
-/* Read/write: a small corner dot, shown/hidden with no transition — the
-   "instant" animation mode, for driving many fast simulation ticks. */
-.hierarchy-diagram-box-dot {
-  stroke: var(--background);
-  stroke-width: 2;
-}
-
-.hierarchy-diagram-box-dot.dot-read {
-  fill: var(--diagram-read-color);
-}
-
-.hierarchy-diagram-box-dot.dot-write {
-  fill: var(--diagram-write-color);
+/* Single status line describing the most recent access, replacing the old
+   per-box read/write dot. Stays on screen, like the hit or miss color,
+   until the next clearAccessStates() call. */
+.hierarchy-diagram-status {
+  position: absolute;
+  left: 0.5rem;
+  bottom: 0.5rem;
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: var(--text);
+  background: var(--secondary);
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
 }
 </style>

@@ -12,10 +12,10 @@ export interface CacheConfig {
   writePolicy: WritePolicy;
   writeAllocate: boolean;
   hitTime: number;
-  // Initial-condition knob, not a runtime-tracked bit: the probability (0-100)
-  // that a line is already dirty the first time it's touched. Only meaningful
-  // for write-back caches (write-through lines are never dirty). Resolved
-  // lazily per line, seeded off the global Seed, by the backend when it runs.
+  // This sets the starting condition, it doesn't track the actual state: the
+  // chance (0-100) that a line is already dirty the first time it's touched.
+  // Only matters for write-back caches, since write-through lines are never
+  // dirty. The backend decides this per line when it runs, using the global Seed.
   dirtyPercent: number;
 }
 
@@ -37,9 +37,7 @@ export interface Level {
 export type Hierarchy = Level[];
 
 export interface TlbConfig {
-  pageSize: number;
-  pageTableLevels: number;
-  pageWalkStart: string; // a Level.id, or the literal "RAM"
+  pageWalkStart: string; // either a Level.id, or the literal string "RAM"
   entries: number;
   associativity: number;
   replacement: TlbReplacementPolicy;
@@ -48,15 +46,23 @@ export interface TlbConfig {
 export interface RamConfig {
   latency: number;
   // A plain power-of-two count (same convention as CacheConfig.blockSize),
-  // not a slider position — RAM does not live on the hierarchy slider.
-  // Must be strictly greater than the largest cache level currently
-  // configured; enforced by the form, not here.
+  // not a slider position, since RAM doesn't appear on the hierarchy slider.
+  // Only meaningful when virtual memory is off; VM mode uses `frames`
+  // instead (see below).
   size: number;
-  // Initial-condition knob: the probability (0-100) that a page is already
-  // dirty the first time it's touched. A page property, not a per-cache-line
-  // one — the TLB mirrors this rather than owning its own copy. Only
-  // meaningful with virtual memory enabled.
+  // This sets the starting condition: the chance (0-100) that a page is
+  // already dirty the first time it's touched. It belongs to the page, not
+  // to a specific cache line, so the TLB just copies this value instead of
+  // having its own. Only matters when virtual memory is turned on.
   dirtyPercent: number;
+  pageTableLevels: number;
+  // Which free frame a page fault picks when more than one is available:
+  // fill them in order, or pick a seeded-random one. Once every frame is
+  // occupied, eviction always uses LRU regardless of this setting.
+  frameAllocation: "sequential" | "random";
+  // How many frames the physical frame pool has, a plain power of two the
+  // user picks directly. Only meaningful, and only shown, when VM is on.
+  frames: number;
 }
 
 export interface DiskConfig {
@@ -76,7 +82,7 @@ export function defaultCacheConfig(): CacheConfig {
 }
 
 export function defaultRamConfig(): RamConfig {
-  return { latency: 100, size: 1024, dirtyPercent: 0 };
+  return { latency: 100, size: 1024, dirtyPercent: 0, pageTableLevels: 1, frameAllocation: "sequential", frames: 4 };
 }
 
 export function defaultDiskConfig(): DiskConfig {

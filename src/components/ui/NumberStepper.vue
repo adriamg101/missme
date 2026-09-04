@@ -55,7 +55,7 @@ function onBlur() {
   <div class="number-stepper-field">
     <span v-if="label" class="number-stepper-label">{{ label }}</span>
     <div class="number-stepper" :class="`size-${size}`">
-      <button type="button" class="number-stepper-button" aria-label="Decrementar" @click="decrement">−</button>
+      <button type="button" class="number-stepper-button" aria-label="Decrement" @click="decrement">−</button>
       <input
         type="number"
         role="spinbutton"
@@ -66,7 +66,7 @@ function onBlur() {
         v-model="draft"
         @blur="onBlur"
       />
-      <button type="button" class="number-stepper-button" aria-label="Incrementar" @click="increment">+</button>
+      <button type="button" class="number-stepper-button" aria-label="Increment" @click="increment">+</button>
     </div>
   </div>
 </template>

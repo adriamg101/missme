@@ -3,8 +3,6 @@ import { render, screen, fireEvent } from "@testing-library/vue";
 import TlbConfigForm from "./TlbConfigForm.vue";
 
 const tlb = {
-  pageSize: 4096,
-  pageTableLevels: 1,
   pageWalkStart: "RAM",
   entries: 64,
   associativity: 4,
@@ -35,19 +33,9 @@ describe("TlbConfigForm", () => {
     expect(screen.queryAllByRole("option")).toHaveLength(0);
   });
 
-  it("emits an update patch when page size changes via the stepper", async () => {
+  it("emits an update patch when entries changes via the stepper", async () => {
     const { emitted } = render(TlbConfigForm, { props: { tlb, pageWalkTargets: targets } });
-    await fireEvent.click(screen.getAllByLabelText("Incrementar")[0]);
-    expect(emitted().update[0]).toEqual([{ pageSize: 8192 }]);
-  });
-
-  it("rejects a page-table-levels value below 1", async () => {
-    const { emitted } = render(TlbConfigForm, {
-      props: { tlb: { ...tlb, pageTableLevels: 2 }, pageWalkTargets: targets },
-    });
-    const input = screen.getByLabelText("Page table levels") as HTMLInputElement;
-    await fireEvent.update(input, "0");
-    await fireEvent.blur(input);
-    expect(emitted().update.at(-1)).toEqual([{ pageTableLevels: 1 }]);
+    await fireEvent.click(screen.getAllByLabelText("Increment")[0]);
+    expect(emitted().update[0]).toEqual([{ entries: 128 }]);
   });
 });

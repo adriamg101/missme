@@ -33,6 +33,11 @@ function onCacheUpdate(patch: Partial<CacheConfig>) {
   if (!activeCacheConfig.value) return;
   store.updateCacheConfig(activeCacheConfig.value.level.id, activeCacheConfig.value.chain, patch);
 }
+
+function onApplyCacheConfigToAll() {
+  if (!activeCacheConfig.value) return;
+  store.applyCacheConfigToAllLevels(activeCacheConfig.value.entry.config);
+}
 </script>
 
 <template>
@@ -64,6 +69,7 @@ function onCacheUpdate(patch: Partial<CacheConfig>) {
         :is-instruction-cache="activeCacheConfig.chain === 'i'"
         :isa="store.isa"
         @update="onCacheUpdate"
+        @apply-to-all="onApplyCacheConfigToAll"
       />
       <RamConfigForm
         v-else-if="activeTab?.kind === 'ram'"
@@ -71,6 +77,7 @@ function onCacheUpdate(patch: Partial<CacheConfig>) {
         :hierarchy="store.hierarchy"
         :vm-enabled="store.vmEnabled"
         :isa="store.isa"
+        :page-size="store.pageSize"
         @update="store.updateRamConfig"
       />
       <DiskConfigForm v-else-if="activeTab?.kind === 'disk'" :config="store.disk" @update="store.updateDiskConfig" />

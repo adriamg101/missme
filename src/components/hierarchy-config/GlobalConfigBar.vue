@@ -4,10 +4,15 @@ import { computed } from "vue";
 import HierarchySlider from "./HierarchySlider.vue";
 import TextField from "../ui/TextField.vue";
 import ConfigGrid from "./ConfigGrid.vue";
+import PowerOfTwoStepper from "./PowerOfTwoStepper.vue";
 import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 import { levelName } from "../../lib/hierarchy/derive";
 
 const store = useHierarchyConfigStore();
+
+// Keeps the page size from getting too small to be realistic or too large for the backend to accept.
+const MIN_PAGE_SIZE = 4;
+const MAX_PAGE_SIZE = 65536;
 
 const seedText = computed({
   get: () => (store.seed === null ? "" : String(store.seed)),
@@ -20,7 +25,7 @@ function onConvertToVonNeumann(levelId: string) {
   const result = store.convertToVonNeumann(levelId);
   if (!result.ok) {
     alert(
-      `No se puede convertir a Von Neumann: entraría en conflicto con ${levelName(store.hierarchy, result.conflictIndex)}.`,
+      `Cannot convert to Von Neumann: it would conflict with ${levelName(store.hierarchy, result.conflictIndex)}.`,
     );
   }
 }
@@ -48,6 +53,16 @@ function onConvertToVonNeumann(levelId: string) {
           @change="store.setVmEnabled(($event.target as HTMLInputElement).checked)"
         />
       </div>
+
+      <PowerOfTwoStepper
+        v-if="store.vmEnabled"
+        label="Page size"
+        aria-label="Page size"
+        :model-value="store.pageSize"
+        :min="MIN_PAGE_SIZE"
+        :max="MAX_PAGE_SIZE"
+        @update:model-value="store.setPageSize"
+      />
 
       <TextField type="number" label="Seed" placeholder="fully random" aria-label="Seed" v-model="seedText" />
     </ConfigGrid>

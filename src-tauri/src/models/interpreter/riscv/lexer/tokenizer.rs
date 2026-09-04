@@ -145,8 +145,7 @@ fn scan_word(chars: &[char], leading_dot: bool) -> (String, usize) {
         while end < chars.len() && (chars[end].is_ascii_alphanumeric() || chars[end] == '_') {
             end += 1;
         }
-        // Compound F/D/Q mnemonics like `fadd.s`/`fcvt.w.s` chain dot
-        // segments; directives (leading_dot) never do, so leave those alone.
+        // Instruction names can have several dot separated parts chained together, directives never do.
         if !leading_dot
             && chars.get(end) == Some(&'.')
             && chars.get(end + 1).is_some_and(|c| c.is_ascii_alphabetic())

@@ -79,7 +79,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
     use InstructionKind::*;
 
     match kind {
-        // RV32I base
+        // Base 32-bit instructions
         Lui => "lui",
         Auipc => "auipc",
         Jal => "jal",
@@ -121,7 +121,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
         Ecall => "ecall",
         Ebreak => "ebreak",
 
-        // RV64I additions
+        // Extra instructions added for 64-bit support
         Lwu => "lwu",
         Ld => "ld",
         Sd => "sd",
@@ -135,7 +135,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
         Srlw => "srlw",
         Sraw => "sraw",
 
-        // M extension
+        // Multiplication and division instructions
         Mul => "mul",
         Mulh => "mulh",
         Mulhsu => "mulhsu",
@@ -145,7 +145,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
         Rem => "rem",
         Remu => "remu",
 
-        // F extension
+        // Single-precision floating point instructions
         Flw => "flw",
         Fsw => "fsw",
         FmaddS => "fmadd.s",
@@ -173,7 +173,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
         FcvtSWu => "fcvt.s.wu",
         FmvWX => "fmv.w.x",
 
-        // D extension
+        // Double-precision floating point instructions
         Fld => "fld",
         Fsd => "fsd",
         FmaddD => "fmadd.d",
@@ -201,7 +201,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
         FcvtDW => "fcvt.d.w",
         FcvtDWu => "fcvt.d.wu",
 
-        // Q extension
+        // Quad-precision floating point instructions
         Flq => "flq",
         Fsq => "fsq",
         FmaddQ => "fmadd.q",
@@ -231,7 +231,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
         FcvtQW => "fcvt.q.w",
         FcvtQWu => "fcvt.q.wu",
 
-        // Pseudo-instructions
+        // Shorthand instructions that stand in for a real instruction
         Nop => "nop",
         Li => "li",
         Mv => "mv",

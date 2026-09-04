@@ -18,6 +18,7 @@ function generateId(): string {
 interface HierarchyConfigState {
   isa: ISA;
   vmEnabled: boolean;
+  pageSize: number;
   seed: number | null;
   hierarchy: Hierarchy;
   tlb: TlbConfig;
@@ -29,11 +30,10 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
   state: (): HierarchyConfigState => ({
     isa: "RV32I",
     vmEnabled: false,
+    pageSize: 4096,
     seed: null,
     hierarchy: [],
     tlb: {
-      pageSize: 4096,
-      pageTableLevels: 1,
       pageWalkStart: "RAM",
       entries: 64,
       associativity: 4,
@@ -47,7 +47,7 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
       const result = clampToIsa(this.hierarchy, isa);
       if (result.requiresConfirmation) {
         const confirmed = confirmFn(
-          "Cambiar la ISA obliga a solapar dos niveles de la jerarquía en la misma posición. ¿Aplicar de todas formas?",
+          "Changing the ISA forces two hierarchy levels to overlap at the same position. Apply anyway?",
         );
         if (!confirmed) return;
       }
@@ -56,6 +56,9 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
     },
     setVmEnabled(value: boolean) {
       this.vmEnabled = value;
+    },
+    setPageSize(value: number) {
+      this.pageSize = value;
     },
     setSeed(seed: number | null) {
       this.seed = seed;
@@ -85,7 +88,12 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
         if (level.id !== levelId) return level;
         const entry = chain === "unified" ? level.unified : chain === "i" ? level.i : level.d;
         if (!entry) return level;
-        const maxAssociativity = Math.max(1, Math.floor(2 ** entry.exp / entry.config.blockSize));
+        // 2 to the power of exp is the cache's total number of entries
+        // (number of sets times associativity), and it doesn't depend on
+        // block size. See diagram.ts's byteSizeLabel and the backend's
+        // set-count calculation, both of which only use associativity, never
+        // block size.
+        const maxAssociativity = 2 ** entry.exp;
         if (entry.config.associativity <= maxAssociativity) return level;
         const clampedEntry = { ...entry, config: { ...entry.config, associativity: maxAssociativity } };
         if (chain === "unified") return { ...level, unified: clampedEntry };
@@ -101,6 +109,20 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
         return { ...level, d: { ...level.d!, config: { ...level.d!.config, ...patch } } };
       });
     },
+    applyCacheConfigToAllLevels(config: CacheConfig) {
+      const applyToEntry = <T extends { exp: number; config: CacheConfig } | undefined>(entry: T): T => {
+        if (!entry) return entry;
+        const maxAssociativity = 2 ** entry.exp;
+        const associativity = Math.min(config.associativity, maxAssociativity);
+        return { ...entry, config: { ...config, associativity } };
+      };
+      this.hierarchy = this.hierarchy.map((level) => ({
+        ...level,
+        unified: applyToEntry(level.unified),
+        i: applyToEntry(level.i),
+        d: applyToEntry(level.d),
+      }));
+    },
     updateTlbConfig(patch: Partial<TlbConfig>) {
       this.tlb = { ...this.tlb, ...patch };
     },
@@ -109,9 +131,6 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
     },
     updateDiskConfig(patch: Partial<DiskConfig>) {
       this.disk = { ...this.disk, ...patch };
-    },
-    resetToDefaults() {
-      this.$reset();
     },
   },
 });

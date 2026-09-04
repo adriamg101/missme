@@ -113,10 +113,10 @@ mod tests {
         write_tokens(
             &tokens_path,
             &[
-                // Line 1: invalid statement (a lone comma).
+                // Line 1 is not a valid statement, just a lone comma.
                 Token::new(TokenKind::Comma, ",", 1, 1),
                 Token::new(TokenKind::Newline, "\n", 1, 2),
-                // Line 2: valid instruction.
+                // Line 2 is a valid instruction.
                 Token::new(TokenKind::Instruction(InstructionKind::Ecall), "ecall", 2, 1),
                 Token::new(TokenKind::Newline, "\n", 2, 6),
             ],

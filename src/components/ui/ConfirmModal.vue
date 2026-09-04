@@ -9,10 +9,10 @@ const emit = defineEmits<{ save: []; discard: []; cancel: [] }>();
     <div class="confirm-modal">
       <p class="confirm-modal-text">{{ message }}</p>
       <div class="confirm-modal-actions">
-        <button type="button" class="confirm-modal-button" @click="emit('save')">Guardar</button>
-        <button type="button" class="confirm-modal-button" @click="emit('discard')">Sobrescribir sin guardar</button>
+        <button type="button" class="confirm-modal-button" @click="emit('save')">Save</button>
+        <button type="button" class="confirm-modal-button" @click="emit('discard')">Overwrite without saving</button>
         <button type="button" class="confirm-modal-button confirm-modal-button-cancel" @click="emit('cancel')">
-          Cancelar
+          Cancel
         </button>
       </div>
     </div>

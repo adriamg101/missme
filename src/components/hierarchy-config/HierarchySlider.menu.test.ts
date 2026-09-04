@@ -50,7 +50,7 @@ describe("HierarchySlider context menu", () => {
   it("positions the context menu at the click's viewport coordinates (teleported, not clipped by an ancestor)", async () => {
     const { getByLabelText, container } = render(HierarchySlider, { props: { hierarchy: oneLevel, isa: "RV32I" } });
     await fireEvent.contextMenu(getByLabelText("L1, 1 K"), { clientX: 42, clientY: 84 });
-    // teleported to <body>, so it is NOT inside the component's own container
+    // The menu is placed at the top of the page, so it is NOT inside the component's own container
     expect(container.querySelector(".hierarchy-slider-context-menu")).toBeNull();
     const menu = document.querySelector(".hierarchy-slider-context-menu") as HTMLElement;
     expect(menu).toBeTruthy();
