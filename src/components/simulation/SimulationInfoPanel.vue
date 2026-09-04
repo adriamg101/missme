@@ -4,6 +4,10 @@ import StatsButton from "./StatsButton.vue";
 import RegistersView from "./RegistersView.vue";
 import CacheLevelView from "./CacheLevelView.vue";
 import RamView from "./RamView.vue";
+import TlbView from "./TlbView.vue";
+import DiskView from "./DiskView.vue";
+import FramesView from "./FramesView.vue";
+import PageTableView from "./PageTableView.vue";
 import { useSimulationStore } from "../../stores/simulation";
 
 const store = useSimulationStore();
@@ -24,6 +28,10 @@ const store = useSimulationStore();
         :side="store.activeView.side"
       />
       <RamView v-else-if="store.activeView.kind === 'ram'" />
+      <TlbView v-else-if="store.activeView.kind === 'tlb'" />
+      <DiskView v-else-if="store.activeView.kind === 'disk'" />
+      <FramesView v-else-if="store.activeView.kind === 'frames'" />
+      <PageTableView v-else-if="store.activeView.kind === 'pageTable'" />
     </div>
   </div>
 </template>

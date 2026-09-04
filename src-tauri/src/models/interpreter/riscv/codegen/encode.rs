@@ -279,9 +279,7 @@ pub(super) fn encode(kind: InstructionKind, operands: &[Operand]) -> u32 {
     }
 }
 
-/// Works out the precision code (single=00, double=01, quad=11) used inside
-/// the encoded floating-point instruction word, based on which precision
-/// the instruction name ends with.
+/// Works out the precision code used inside the encoded floating point instruction word, based on the instruction name.
 fn fmt_of(kind: InstructionKind) -> u32 {
     use InstructionKind::*;
     match kind {
@@ -423,8 +421,7 @@ mod tests {
 
     #[test]
     fn encodes_fcvt_w_s() {
-        // The chosen bit code selects converting to a signed integer (a
-        // different code would select unsigned).
+        // The chosen bit code selects converting to a signed integer, a different code would select unsigned.
         let ops = vec![x(1), f(2)];
         assert_eq!(encode(InstructionKind::FcvtWS, &ops), op_fp(0b00, 0b11000, 0, 2, 0b000, 1));
     }
@@ -469,8 +466,7 @@ mod tests {
     fn encodes_fcvt_s_d() {
         let ops = vec![f(1), f(2)];
         let word = encode(InstructionKind::FcvtSD, &ops);
-        // Converting from double to single precision: target format is
-        // single, source format is double.
+        // Converting from double to single precision, target format is single, source format is double.
         let expected = op_fp(0b00, 0b01000, 0b00001, 2, 0b000, 1);
         assert_eq!(word, expected);
     }

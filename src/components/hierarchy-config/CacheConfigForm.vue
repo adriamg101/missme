@@ -11,19 +11,13 @@ import { defaultCacheConfig } from "../../lib/hierarchy/model";
 const props = defineProps<{ config: CacheConfig; cacheSizeExp: number; isInstructionCache: boolean; isa: ISA }>();
 const emit = defineEmits<{ update: [patch: Partial<CacheConfig>]; "apply-to-all": [] }>();
 
-// cacheSizeExp is the slider's position, which is the number of entries
-// (tags) in this cache, not a byte count. So associativity (ways) can't
-// go above that entry count no matter the block size, since the number
-// of sets (entries divided by associativity) must stay at least 1.
+// The associativity can never be higher than the total number of entries this cache holds.
 const maxAssociativity = computed(() => 2 ** props.cacheSizeExp);
 
 // A block must be able to hold at least one word, 4 bytes on RV32I or 8 on RV64I.
 const minBlockSize = computed(() => (props.isa === "RV32I" ? 4 : 8));
 
-// Protects against a saved config from before the dirty percent setting
-// existed (for example, data saved by an older version of this app). Without
-// this fallback, a missing value would turn every plus/minus click into an
-// invalid number that never seems to change on screen.
+// Falls back to the default when an older saved config has no dirty percent value at all.
 const safeDirtyPercent = computed(() =>
   Number.isFinite(props.config.dirtyPercent) ? props.config.dirtyPercent : defaultCacheConfig().dirtyPercent,
 );

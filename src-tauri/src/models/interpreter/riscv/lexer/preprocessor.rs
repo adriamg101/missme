@@ -58,9 +58,7 @@ fn process_line(
             if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '/' {
                 block.active = false;
                 i += 2;
-                // Insert a space so the words on either side of the removed
-                // comment don't accidentally get joined together (so
-                // `a/*c*/b` becomes `a b`, not `ab`).
+                // Insert a space so the words on either side of the removed comment do not accidentally get joined together.
                 kept.push(' ');
                 continue;
             }
@@ -121,10 +119,7 @@ fn process_line(
 }
 
 /// Collapses runs of spaces in the middle of a line down to a single space.
-/// The leading whitespace at the start of the line is kept exactly as-is
-/// (so error positions still line up with what the user sees in the
-/// editor), and whitespace inside `"..."` text is left untouched so string
-/// contents aren't changed.
+/// Leading whitespace stays exactly as is, so error positions still line up, and whitespace inside quoted text is left untouched.
 fn normalize_whitespace_outside_strings(s: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     let leading_len = chars.iter().take_while(|c| c.is_whitespace()).count();
@@ -207,11 +202,8 @@ mod tests {
         let (output, errors) = run_preprocess(
             "add x1, x2, x3 /* start\nstill inside\nend */ sub x4, x5, x6\n",
         );
-        // The closing `*/` on line 3 is right next to the space that
-        // separated it from `sub`. The extra space we insert to avoid
-        // merging words ends up counted as leading whitespace on that line,
-        // since everything before it was inside the comment, so two leading
-        // spaces end up kept instead of being trimmed away.
+        // The comment closes right next to the space that separated it from the next word.
+        // The extra space we insert ends up counted as leading whitespace on that line, so two leading spaces stay instead of one.
         assert_eq!(output, "add x1, x2, x3\n\n  sub x4, x5, x6\n");
         assert!(errors.is_empty());
     }

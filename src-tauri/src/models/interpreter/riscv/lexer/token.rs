@@ -18,11 +18,8 @@ pub enum TokenKind {
     Register(RegisterKind),
 }
 
-/// All the RISC-V instruction names this app recognizes, grouped by which
-/// base instruction set or extension defines them. Every name here is
-/// recognized no matter which extensions are actually turned on for the
-/// current program; checking whether an instruction is actually allowed
-/// happens in a later step, not here.
+/// All the RISC-V instruction names this app recognizes, grouped by which base set or extension defines them.
+/// Every name is recognized no matter which extensions are on, checking whether it is actually allowed happens later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstructionKind {
@@ -206,10 +203,8 @@ pub enum InstructionKind {
     La,
 }
 
-/// Integer (`x0`-`x31`) and floating-point (`f0`-`f31`) registers. Common
-/// name aliases (`sp`, `a0`, `fa0`, ...) point to the same register as their
-/// `xN`/`fN` form. The exact spelling the user typed is kept separately in
-/// `Token::lexeme`.
+/// Integer and floating point registers. Common name aliases point to the same register as their numbered form.
+/// The exact spelling the user typed is kept separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegisterKind {
@@ -217,9 +212,8 @@ pub enum RegisterKind {
     F(u8),
 }
 
-/// Looks up a word as a RISC-V instruction name (must be lowercase, as
-/// assembly code expects). Returns `None` if the word isn't a known
-/// instruction name.
+/// Looks up a word as a RISC-V instruction name, which must be lowercase.
+/// Returns none if the word is not a known instruction name.
 pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
     use InstructionKind::*;
     Some(match word {
@@ -406,9 +400,8 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
     })
 }
 
-/// Looks up a word as an integer or floating-point register name, either
-/// the numbered form (`x5`, `f12`) or a common alias (`sp`, `a0`, `fa0`, ...).
-/// Returns `None` if the word isn't a recognized register name.
+/// Looks up a word as a register name, either its numbered form or a common alias.
+/// Returns none if the word is not a recognized register name.
 pub fn lookup_register(word: &str) -> Option<RegisterKind> {
     use RegisterKind::*;
 

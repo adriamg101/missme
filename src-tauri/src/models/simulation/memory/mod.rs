@@ -3,3 +3,7 @@ pub mod cache;
 pub mod config;
 pub mod hierarchy;
 pub(crate) mod seeded_random;
+pub(crate) mod tlb;
+pub(crate) mod page_table;
+pub(crate) mod frames;
+pub(crate) mod replacement;

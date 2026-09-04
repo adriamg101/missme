@@ -57,9 +57,11 @@ const HUE_BY_KIND: Record<Exclude<DiagramBoxKind, "cache">, number> = {
   tlb: 330,
   ram: 255,
   disk: 290,
+  pt: 285,
+  frames: 215,
 };
 
-export type DiagramBoxKind = "cpu" | "reg" | "cache" | "ram" | "disk" | "tlb";
+export type DiagramBoxKind = "cpu" | "reg" | "cache" | "ram" | "disk" | "tlb" | "pt" | "frames";
 
 export interface DiagramBox {
   id: string;
@@ -121,6 +123,20 @@ const REG_HEIGHT = 28;
 const REG_INSET_BOTTOM = 6;
 const PAGE_WALK_GAP = 24;
 
+// Under VM, RAM's box grows to fit its own header (label + latency) plus
+// two nested boxes stacked below it: PT (just a label, since the page
+// table has no real bounded size to report) and Frames (label plus its
+// real byte capacity). It ends up taller and a bit wider than every other
+// box in the diagram, which is fine, nothing else needs to match it.
+const RAM_VM_WIDTH = 150;
+const RAM_HEADER_HEIGHT = 46;
+const RAM_SUB_GAP = 8;
+const RAM_PT_SUB_HEIGHT = 30;
+const RAM_FRAMES_SUB_HEIGHT = 46;
+const RAM_VM_BOTTOM_PADDING = 6;
+const RAM_SUB_INSET_X = 10;
+const RAM_VM_HEIGHT = RAM_HEADER_HEIGHT + RAM_SUB_GAP + RAM_PT_SUB_HEIGHT + RAM_SUB_GAP + RAM_FRAMES_SUB_HEIGHT + RAM_VM_BOTTOM_PADDING;
+
 // Right-angle routing: draw a straight line when both ends already line up,
 // otherwise bend the line through the midpoint so it only goes sideways and
 // up or down, never diagonally, per the design spec.
@@ -140,6 +156,7 @@ function laneRoutePath(x1: number, y1: number, laneY: number, x2: number, y2: nu
 export function computeLayout(
   hierarchy: Hierarchy,
   ram: RamConfig,
+  pageSize: number,
   disk: DiskConfig,
   tlb: TlbConfig,
   vmEnabled: boolean,
@@ -148,7 +165,13 @@ export function computeLayout(
   // actually present, so a diagram without any splits isn't padded for a
   // shape it doesn't have.
   const hasHarvard = hierarchy.some((level) => level.harvard);
-  const CENTER_Y = hasHarvard ? TOP_PADDING + HARVARD_OFFSET + BOX_HEIGHT / 2 : TOP_PADDING + BOX_HEIGHT / 2;
+  const centerYForHarvard = hasHarvard ? TOP_PADDING + HARVARD_OFFSET + BOX_HEIGHT / 2 : TOP_PADDING + BOX_HEIGHT / 2;
+  // Under VM, RAM's own box is taller than the rest (see RAM_VM_HEIGHT
+  // above), so it needs its own minimum center too - otherwise, with no
+  // split cache pushing the center down, RAM's top edge would land above
+  // y=0 and get clipped by the diagram's own top edge.
+  const centerYForRam = vmEnabled ? TOP_PADDING + RAM_VM_HEIGHT / 2 : 0;
+  const CENTER_Y = Math.max(centerYForHarvard, centerYForRam);
 
   const slots: Slot[] = [];
 
@@ -200,9 +223,10 @@ export function computeLayout(
     }
   });
 
-  const ramSubLabels = vmEnabled
-    ? [`Size: ${byteSizeLabel(ram.size)}`, `Latency: ${cycleLabel(ram.latency)}`]
-    : [`Latency: ${cycleLabel(ram.latency)}`];
+  // Under VM, RAM's own frame count moves into the Frames sub-box's own
+  // "Size" line below (see the ram-frames box further down), so RAM's own
+  // header shows just its latency, the same as when VM is off.
+  const ramSubLabels = [`Latency: ${cycleLabel(ram.latency)}`];
   slots.push([
     { id: "ram", kind: "ram", label: "RAM", subLabels: ramSubLabels, hue: HUE_BY_KIND.ram, chroma: TYPE_CHROMA, clickable: true, targetTabId: "ram" },
   ]);
@@ -223,25 +247,33 @@ export function computeLayout(
   }
 
   // The first box (CPU) in the main chain is never clickable, and neither
-  // is the last box, except RAM, which always stays clickable whether or
-  // not it happens to be the last box in the chain.
+  // is the last box, except RAM and DISK, which always stay clickable
+  // whether or not they happen to be the last box in the chain.
   slots[0][0].clickable = false;
   slots[slots.length - 1].forEach((box) => {
-    if (box.kind !== "ram") box.clickable = false;
+    if (box.kind !== "ram" && box.kind !== "disk") box.clickable = false;
   });
 
   const boxes: DiagramBox[] = [];
   const slotX: number[] = [];
+  const slotWidths: number[] = [];
   let cursorX = 2;
   slots.forEach((slot) => {
     slotX.push(cursorX);
+    // Under VM, RAM's box is wider and taller than every other box (see
+    // RAM_VM_WIDTH/RAM_VM_HEIGHT above), to make room for its nested PT and
+    // Frames sub-boxes.
+    const isVmRam = vmEnabled && slot.length === 1 && slot[0].kind === "ram";
+    const boxWidth = isVmRam ? RAM_VM_WIDTH : BOX_WIDTH;
+    const boxHeight = isVmRam ? RAM_VM_HEIGHT : BOX_HEIGHT;
+    slotWidths.push(boxWidth);
     if (slot.length === 1) {
-      boxes.push({ ...slot[0], x: cursorX, y: CENTER_Y - BOX_HEIGHT / 2, width: BOX_WIDTH, height: BOX_HEIGHT });
+      boxes.push({ ...slot[0], x: cursorX, y: CENTER_Y - boxHeight / 2, width: boxWidth, height: boxHeight });
     } else {
       boxes.push({ ...slot[0], x: cursorX, y: CENTER_Y - HARVARD_OFFSET - BOX_HEIGHT / 2, width: BOX_WIDTH, height: BOX_HEIGHT });
       boxes.push({ ...slot[1], x: cursorX, y: CENTER_Y + HARVARD_OFFSET - BOX_HEIGHT / 2, width: BOX_WIDTH, height: BOX_HEIGHT });
     }
-    cursorX += BOX_WIDTH + SLOT_GAP;
+    cursorX += boxWidth + SLOT_GAP;
   });
 
   const connectors: DiagramConnector[] = [];
@@ -277,7 +309,7 @@ export function computeLayout(
   for (let i = 0; i < slots.length - 1; i++) {
     const a = slots[i];
     const b = slots[i + 1];
-    const aRightX = slotX[i] + BOX_WIDTH;
+    const aRightX = slotX[i] + slotWidths[i];
     const bLeftX = slotX[i + 1];
     const topY = CENTER_Y - HARVARD_OFFSET;
     const bottomY = CENTER_Y + HARVARD_OFFSET;
@@ -300,7 +332,11 @@ export function computeLayout(
     }
   }
 
-  const mainAxisBottom = hasHarvard ? CENTER_Y + HARVARD_OFFSET + BOX_HEIGHT / 2 : CENTER_Y + BOX_HEIGHT / 2;
+  const mainAxisBottomBase = hasHarvard ? CENTER_Y + HARVARD_OFFSET + BOX_HEIGHT / 2 : CENTER_Y + BOX_HEIGHT / 2;
+  // RAM's box is taller than the rest under VM, so the bottom of the main
+  // chain (and everything positioned relative to it, like the page-walk
+  // lane below) has to account for that too, not just the shared BOX_HEIGHT.
+  const mainAxisBottom = vmEnabled ? Math.max(mainAxisBottomBase, CENTER_Y + RAM_VM_HEIGHT / 2) : mainAxisBottomBase;
   const tlbBottom = tlbBox ? tlbBox.y + TLB_HEIGHT : 0;
 
   // Line from the TLB to its page-walk target: only drawn when virtual
@@ -326,6 +362,53 @@ export function computeLayout(
         });
       });
     }
+  }
+
+  // Once VM is on, RAM's own box stops being directly clickable and instead
+  // shows two nested boxes stacked below its own header (page table on top,
+  // frames below, since the page table is what's consulted first), each
+  // routing to its own view. RAM's box was already sized to fit them (see
+  // RAM_VM_HEIGHT above), so this only has to place them, not resize RAM.
+  const ramBoxForVm = boxes.find((b) => b.id === "ram") ?? null;
+  if (vmEnabled && ramBoxForVm) {
+    ramBoxForVm.clickable = false;
+    const subWidth = ramBoxForVm.width - RAM_SUB_INSET_X * 2;
+    const subX = ramBoxForVm.x + RAM_SUB_INSET_X;
+    const ptY = ramBoxForVm.y + RAM_HEADER_HEIGHT + RAM_SUB_GAP;
+    const framesY = ptY + RAM_PT_SUB_HEIGHT + RAM_SUB_GAP;
+    boxes.push({
+      id: "ram-pt",
+      kind: "pt",
+      label: "PT",
+      // The page table has no real bounded size to report (see the PT
+      // view's own design), so there's nothing meaningful to put here.
+      subLabels: [],
+      x: subX,
+      y: ptY,
+      width: subWidth,
+      height: RAM_PT_SUB_HEIGHT,
+      hue: HUE_BY_KIND.pt,
+      chroma: TYPE_CHROMA,
+      clickable: true,
+      targetTabId: "pageTable",
+    });
+    boxes.push({
+      id: "ram-frames",
+      kind: "frames",
+      label: "Frames",
+      // This is the frame pool's real byte capacity (frames * page size);
+      // it deliberately doesn't include the page table, which has no
+      // physical size of its own in this model.
+      subLabels: [`Size: ${byteSizeLabel(ram.frames * pageSize)}`],
+      x: subX,
+      y: framesY,
+      width: subWidth,
+      height: RAM_FRAMES_SUB_HEIGHT,
+      hue: HUE_BY_KIND.frames,
+      chroma: TYPE_CHROMA,
+      clickable: true,
+      targetTabId: "frames",
+    });
   }
 
   // REG sits inside the CPU box rather than being its own slot, so there's

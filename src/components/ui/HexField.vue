@@ -6,9 +6,7 @@ const props = withDefaults(
     ariaLabel?: string;
     readonly?: boolean;
     size?: "sm" | "md" | "lg";
-    // Every current use case is a 32-bit hex address, so 8 hex digits is a
-    // sensible default limit, it stops values bigger than the max 32-bit
-    // number from being typed in.
+    // A sensible default limit that stops the value from getting too big to type in.
     maxLength?: number;
   }>(),
   { size: "sm", maxLength: 8 },
@@ -23,11 +21,7 @@ function onInput(event: Event) {
     .toUpperCase()
     .slice(0, props.maxLength);
 
-  // The input field only gets updated automatically when the value passed
-  // in from outside actually changes. If the cleaned-up value ends up the
-  // same as what was already there, that automatic update never happens,
-  // so the field would keep showing whatever the user typed. To avoid
-  // that, we set the cleaned value on the field directly here.
+  // Sets the cleaned value on the field directly, or it would keep showing whatever the user typed.
   if (input.value !== clean) {
     input.value = clean;
   }

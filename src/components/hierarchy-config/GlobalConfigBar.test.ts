@@ -62,4 +62,26 @@ describe("GlobalConfigBar", () => {
     expect(alertSpy).toHaveBeenCalled();
     alertSpy.mockRestore();
   });
+
+  it("does not step the page size past a bounded maximum", async () => {
+    const store = useHierarchyConfigStore();
+    store.setVmEnabled(true);
+    store.setPageSize(65536); // already at the intended max
+    render(GlobalConfigBar);
+
+    await fireEvent.click(screen.getByLabelText("Increment"));
+
+    expect(useHierarchyConfigStore().pageSize).toBe(65536);
+  });
+
+  it("does not step the page size below a bounded minimum", async () => {
+    const store = useHierarchyConfigStore();
+    store.setVmEnabled(true);
+    store.setPageSize(4); // already at the intended min
+    render(GlobalConfigBar);
+
+    await fireEvent.click(screen.getByLabelText("Decrement"));
+
+    expect(useHierarchyConfigStore().pageSize).toBe(4);
+  });
 });

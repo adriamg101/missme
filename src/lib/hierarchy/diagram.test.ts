@@ -65,8 +65,6 @@ describe("cacheHue", () => {
 });
 
 const tlb: TlbConfig = {
-  pageSize: 4096,
-  pageTableLevels: 1,
   pageWalkStart: "RAM",
   entries: 64,
   associativity: 4,
@@ -75,7 +73,7 @@ const tlb: TlbConfig = {
 
 describe("computeLayout — base chain", () => {
   it("without VM: CPU, RAM, REG only — RAM is terminal, has no Size line, but stays clickable", () => {
-    const layout = computeLayout([], defaultRamConfig(), defaultDiskConfig(), tlb, false);
+    const layout = computeLayout([], defaultRamConfig(), 4096, defaultDiskConfig(), tlb, false);
     expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "ram", "reg"]);
 
     const cpu = layout.boxes.find((b) => b.id === "cpu")!;
@@ -103,19 +101,40 @@ describe("computeLayout — base chain", () => {
     expect(layout.connectors.some((c) => c.id.includes("reg"))).toBe(false);
   });
 
-  it("with VM: adds TLB (branch, below CPU) and DISK (terminal); RAM shows Size and is clickable", () => {
-    const layout = computeLayout([], defaultRamConfig(), defaultDiskConfig(), tlb, true);
-    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "ram", "disk", "tlb", "reg"]);
+  it("under VM with no Harvard-split cache, RAM's taller box still fits inside the diagram (never a negative y)", () => {
+    // RAM's box is much taller than the rest under VM. With no split cache
+    // to push the shared vertical center down, RAM's top edge used to land
+    // above y=0 and get clipped by the diagram's own edge.
+    const layout = computeLayout([], defaultRamConfig(), 4096, defaultDiskConfig(), tlb, true);
+    const ram = layout.boxes.find((b) => b.id === "ram")!;
+    expect(ram.y).toBeGreaterThanOrEqual(0);
+  });
+
+  it("with VM: adds TLB (branch, below CPU) and DISK (terminal); RAM shows Size and splits into PT/Frames", () => {
+    const layout = computeLayout([], defaultRamConfig(), 4096, defaultDiskConfig(), tlb, true);
+    expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "ram", "disk", "tlb", "ram-pt", "ram-frames", "reg"]);
 
     const ram = layout.boxes.find((b) => b.id === "ram")!;
-    expect(ram.subLabels).toEqual(["Size: 1 KB", "Latency: 100 cy"]);
-    expect(ram.clickable).toBe(true);
+    // The frame count now shows on the Frames sub-box instead, see below.
+    expect(ram.subLabels).toEqual(["Latency: 100 cy"]);
+    // Once VM is enabled, RAM's own box stops being clickable in favor of
+    // its PT/Frames sub-blocks, drawn inside it.
+    expect(ram.clickable).toBe(false);
     expect(ram.targetTabId).toBe("ram");
+
+    // defaultRamConfig() sets frames to 4, and this test's page size is
+    // 4096, so the frame pool's real byte capacity is 4 * 4096 = 16 KB.
+    const framesBox = layout.boxes.find((b) => b.id === "ram-frames")!;
+    expect(framesBox.subLabels).toEqual(["Size: 16 KB"]);
+    const ptBox = layout.boxes.find((b) => b.id === "ram-pt")!;
+    expect(ptBox.subLabels).toEqual([]);
 
     const disk = layout.boxes.find((b) => b.id === "disk")!;
     expect(disk.label).toBe("DISK");
     expect(disk.subLabels).toEqual(["Latency: 10K cy"]);
-    expect(disk.clickable).toBe(false);
+    // DISK has its own inspection view now (TT4.6), so unlike a generic
+    // terminal box it stays clickable even though it's last in the chain.
+    expect(disk.clickable).toBe(true);
 
     const tlbBox = layout.boxes.find((b) => b.id === "tlb")!;
     expect(tlbBox.label).toBe("TLB");
@@ -138,7 +157,7 @@ describe("computeLayout — base chain", () => {
   it("routes TLB -> page-walk target through a shared lane below the main chain, all at right angles", () => {
     const hierarchy = [unifiedLevel("l1", 10, 64, 1), unifiedLevel("l2", 13, 64, 10)];
     const customTlb: TlbConfig = { ...tlb, pageWalkStart: "l2" };
-    const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), customTlb, true);
+    const layout = computeLayout(hierarchy, defaultRamConfig(), 4096, defaultDiskConfig(), customTlb, true);
 
     const pageWalkConnector = layout.connectors.find((c) => c.id === "pagewalk-l2")!;
     expect(pageWalkConnector).toBeTruthy();
@@ -173,10 +192,40 @@ describe("computeLayout — base chain", () => {
   it("fans a page-walk target out to both boxes when it's a Harvard-split level", () => {
     const hierarchy = [harvardLevel("l1", 10, 11, 64)];
     const customTlb: TlbConfig = { ...tlb, pageWalkStart: "l1" };
-    const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), customTlb, true);
+    const layout = computeLayout(hierarchy, defaultRamConfig(), 4096, defaultDiskConfig(), customTlb, true);
 
     expect(layout.connectors.some((c) => c.id === "pagewalk-l1-i")).toBe(true);
     expect(layout.connectors.some((c) => c.id === "pagewalk-l1-d")).toBe(true);
+  });
+
+  it("splits the RAM box into PT and Frames sub-blocks when VM is enabled, drawn on top of a non-clickable outer RAM box", () => {
+    const layout = computeLayout([], defaultRamConfig(), 4096, defaultDiskConfig(), tlb, true);
+    const ramBox = layout.boxes.find((b) => b.id === "ram")!;
+    const ptBox = layout.boxes.find((b) => b.id === "ram-pt")!;
+    const framesBox = layout.boxes.find((b) => b.id === "ram-frames")!;
+
+    expect(ramBox.clickable).toBe(false);
+    expect(ptBox.clickable).toBe(true);
+    expect(framesBox.clickable).toBe(true);
+    expect(ptBox.kind).toBe("pt");
+    expect(framesBox.kind).toBe("frames");
+    // Both sub-blocks must sit inside the outer RAM box's rect.
+    expect(ptBox.x).toBeGreaterThanOrEqual(ramBox.x);
+    expect(ptBox.x + ptBox.width).toBeLessThanOrEqual(ramBox.x + ramBox.width);
+    expect(framesBox.x).toBeGreaterThanOrEqual(ramBox.x);
+    expect(framesBox.x + framesBox.width).toBeLessThanOrEqual(ramBox.x + ramBox.width);
+    // They must be drawn after the outer RAM box (so they paint on top).
+    const ramDrawIndex = layout.boxes.indexOf(ramBox);
+    expect(layout.boxes.indexOf(ptBox)).toBeGreaterThan(ramDrawIndex);
+    expect(layout.boxes.indexOf(framesBox)).toBeGreaterThan(ramDrawIndex);
+  });
+
+  it("RAM stays a single clickable box with no PT/Frames sub-blocks when VM is disabled", () => {
+    const layout = computeLayout([], defaultRamConfig(), 4096, defaultDiskConfig(), tlb, false);
+    const ramBox = layout.boxes.find((b) => b.id === "ram")!;
+    expect(ramBox.clickable).toBe(true);
+    expect(layout.boxes.find((b) => b.id === "ram-pt")).toBeUndefined();
+    expect(layout.boxes.find((b) => b.id === "ram-frames")).toBeUndefined();
   });
 });
 
@@ -196,7 +245,7 @@ function unifiedLevel(id: string, exp: number, blockSize: number, hitTime: numbe
 describe("computeLayout — unified cache levels", () => {
   it("inserts one box per unified level, in order, between CPU and RAM", () => {
     const hierarchy = [unifiedLevel("l1", 10, 64, 1), unifiedLevel("l2", 13, 64, 10)];
-    const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), tlb, false);
+    const layout = computeLayout(hierarchy, defaultRamConfig(), 4096, defaultDiskConfig(), tlb, false);
 
     expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "l1", "l2", "ram", "reg"]);
 
@@ -234,7 +283,7 @@ function harvardLevel(id: string, iExp: number, dExp: number, blockSize: number)
 describe("computeLayout — Harvard-split cache levels", () => {
   it("produces two stacked boxes (i above, d below) instead of one, both clickable", () => {
     const hierarchy = [harvardLevel("l1", 10, 11, 64)];
-    const layout = computeLayout(hierarchy, defaultRamConfig(), defaultDiskConfig(), tlb, false);
+    const layout = computeLayout(hierarchy, defaultRamConfig(), 4096, defaultDiskConfig(), tlb, false);
 
     expect(layout.boxes.map((b) => b.id)).toEqual(["cpu", "l1-i", "l1-d", "ram", "reg"]);
 

@@ -37,8 +37,6 @@ export interface Level {
 export type Hierarchy = Level[];
 
 export interface TlbConfig {
-  pageSize: number;
-  pageTableLevels: number;
   pageWalkStart: string; // either a Level.id, or the literal string "RAM"
   entries: number;
   associativity: number;
@@ -49,14 +47,22 @@ export interface RamConfig {
   latency: number;
   // A plain power-of-two count (same convention as CacheConfig.blockSize),
   // not a slider position, since RAM doesn't appear on the hierarchy slider.
-  // Must be strictly bigger than the largest cache level currently
-  // configured; that rule is enforced by the form, not here.
+  // Only meaningful when virtual memory is off; VM mode uses `frames`
+  // instead (see below).
   size: number;
   // This sets the starting condition: the chance (0-100) that a page is
   // already dirty the first time it's touched. It belongs to the page, not
   // to a specific cache line, so the TLB just copies this value instead of
   // having its own. Only matters when virtual memory is turned on.
   dirtyPercent: number;
+  pageTableLevels: number;
+  // Which free frame a page fault picks when more than one is available:
+  // fill them in order, or pick a seeded-random one. Once every frame is
+  // occupied, eviction always uses LRU regardless of this setting.
+  frameAllocation: "sequential" | "random";
+  // How many frames the physical frame pool has, a plain power of two the
+  // user picks directly. Only meaningful, and only shown, when VM is on.
+  frames: number;
 }
 
 export interface DiskConfig {
@@ -76,7 +82,7 @@ export function defaultCacheConfig(): CacheConfig {
 }
 
 export function defaultRamConfig(): RamConfig {
-  return { latency: 100, size: 1024, dirtyPercent: 0 };
+  return { latency: 100, size: 1024, dirtyPercent: 0, pageTableLevels: 1, frameAllocation: "sequential", frames: 4 };
 }
 
 export function defaultDiskConfig(): DiskConfig {

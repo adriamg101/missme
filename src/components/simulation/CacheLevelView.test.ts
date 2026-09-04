@@ -25,7 +25,8 @@ interface CacheWay {
   valid: boolean;
   dirty: boolean;
   tag: number;
-  recencyRank: number | null;
+  isPhantom: boolean;
+  orderValue: number | null;
   words: number[];
 }
 interface CacheSet {
@@ -63,14 +64,23 @@ function mockCacheLevel(info: CacheLevelInfo, allSets: CacheSet[]) {
   });
 }
 
+// The Set index cell occupies rowCells[0] (it's written once per set block,
+// before the way loop), so a way's own cells start after it. header.length
+// is Set + one way's worth of columns (V/D/LRU/Tag/words), which is exactly
+// the offset of way 1's first cell within a two-way block.
+function way1FirstCellIndex(container: Element): number {
+  const header = container.querySelectorAll(".simulation-cache-grid-header .simulation-cache-cell");
+  return header.length;
+}
+
 function defaultInfo(): CacheLevelInfo {
   return { associativity: 1, blockSize: 4, numSets: 2, wordsPerLine: 1 };
 }
 
 function defaultSets(): CacheSet[] {
   return [
-    { setIndex: 0, ways: [{ valid: true, dirty: false, tag: 5, recencyRank: 0, words: [0xdeadbeef] }] },
-    { setIndex: 1, ways: [{ valid: false, dirty: false, tag: 0, recencyRank: null, words: [] }] },
+    { setIndex: 0, ways: [{ valid: true, dirty: false, tag: 5, isPhantom: false, orderValue: 0, words: [0xdeadbeef] }] },
+    { setIndex: 1, ways: [{ valid: false, dirty: false, tag: 0, isPhantom: false, orderValue: null, words: [] }] },
   ];
 }
 
@@ -166,23 +176,54 @@ describe("CacheLevelView — empty and dirty-seeded ways", () => {
     expect(Array.from(dashes).every((cell) => cell.textContent === "-")).toBe(true);
   });
 
-  it("shows a phantom (dirty-seeded, recencyRank null) way's dirty bit but hides its tag/data as dashes", async () => {
+  it("shows a phantom (dirty-seeded, never-accessed) way's dirty bit but hides its tag/data as dashes", async () => {
     // The program hasn't actually touched this way yet, only the dirty bit
     // is real. The tag and words must never be shown, since there's nothing
     // meaningful there and it would look like real data otherwise.
     seedOneLevel();
     mockCacheLevel(
       { associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1 },
-      [{ setIndex: 0, ways: [{ valid: true, dirty: true, tag: 0xabc, recencyRank: null, words: [] }] }],
+      [{ setIndex: 0, ways: [{ valid: true, dirty: true, tag: 0xabc, isPhantom: true, orderValue: null, words: [] }] }],
     );
     const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await flush();
 
     expect(screen.queryByText("0x00000ABC")).toBeNull();
-    const dashes = await screen.findAllByText("-");
-    expect(dashes.length).toBeGreaterThan(0);
     const rowCells = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell");
-    expect(rowCells[1]?.textContent).toBe("1");
+    // rowCells[0] is the Set index cell; the phantom way's own cells follow:
+    // V, then D, then dashes for LRU/Tag/Offset/words - every remaining
+    // column in the block, none left blank.
+    expect(rowCells[1]?.textContent).toBe("1"); // V
+    expect(rowCells[2]?.textContent).toBe("1"); // D
+    const dashes = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell-empty");
+    expect(dashes.length).toBe(11); // LRU, Tag, Offset, and 8 word columns
+    expect(Array.from(dashes).every((cell) => cell.textContent === "-")).toBe(true);
+  });
+});
+
+describe("CacheLevelView — V column", () => {
+  it("shows an explicit V column with 1 for a real way and 0 for an invalid one", async () => {
+    seedOneLevel();
+    mockCacheLevel(
+      { associativity: 2, blockSize: 4, numSets: 1, wordsPerLine: 1 },
+      [
+        {
+          setIndex: 0,
+          ways: [
+            { valid: true, dirty: false, tag: 1, isPhantom: false, orderValue: 0, words: [0x11111111] },
+            { valid: false, dirty: false, tag: 0, isPhantom: false, orderValue: null, words: [] },
+          ],
+        },
+      ],
+    );
+    const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    expect(await screen.findByText("V")).toBeTruthy(); // the new header cell
+    const rowCells = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell");
+    // columns are: Set(spans, index 0), then per-way V, D, LRU, Tag, words...
+    expect(rowCells[1]?.textContent).toBe("1"); // way 0's V
+    expect(rowCells[way1FirstCellIndex(container)]?.textContent).toBe("0"); // way 1's V
   });
 });
 
@@ -195,8 +236,8 @@ describe("CacheLevelView — set-associative layout", () => {
         {
           setIndex: 0,
           ways: [
-            { valid: true, dirty: false, tag: 1, recencyRank: 0, words: [0x11111111] },
-            { valid: true, dirty: true, tag: 2, recencyRank: 1, words: [0x22222222] },
+            { valid: true, dirty: false, tag: 1, isPhantom: false, orderValue: 0, words: [0x11111111] },
+            { valid: true, dirty: true, tag: 2, isPhantom: false, orderValue: 1, words: [0x22222222] },
           ],
         },
       ],
@@ -228,7 +269,7 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
         const count = args.count as number;
         const sets: CacheSet[] = Array.from({ length: count }, (_, i) => ({
           setIndex: startSet + i,
-          ways: [{ valid: true, dirty: false, tag: startSet + i, recencyRank: 0, words: [startSet + i] }],
+          ways: [{ valid: true, dirty: false, tag: startSet + i, isPhantom: false, orderValue: 0, words: [startSet + i] }],
         }));
         return Promise.resolve(sets);
       }
@@ -256,5 +297,82 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
     // The new position is well past the initial window, which shows that
     // scrolling isn't limited to whatever the first window happened to cover.
     expect(args.startSet).toBeGreaterThan(1000);
+  });
+});
+
+describe("CacheLevelView — wide lines split into 8-word sub-rows", () => {
+  it("splits a line bigger than 8 words into multiple sub-rows with an Offset column", async () => {
+    seedOneLevel();
+    mockCacheLevel(
+      { associativity: 1, blockSize: 64, numSets: 1, wordsPerLine: 16 },
+      [{ setIndex: 0, ways: [{ valid: true, dirty: false, tag: 1, isPhantom: false, orderValue: 0, words: Array.from({ length: 16 }, (_, i) => i) }] }],
+    );
+    const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    expect(await screen.findByText("Offset")).toBeTruthy();
+    expect(await screen.findByText("0x0000")).toBeTruthy(); // first sub-row's offset
+    expect(await screen.findByText("0x0020")).toBeTruthy(); // second sub-row's offset (8 words * 4 bytes)
+    // Only 8 word-header columns ever show, never one per real word.
+    const headerWordCells = container.querySelectorAll(".simulation-cache-grid-header .simulation-cache-cell-word");
+    expect(headerWordCells.length).toBe(8);
+  });
+
+  it("shows a dash instead of a made-up word for a column past the line's real word count", async () => {
+    seedOneLevel();
+    mockCacheLevel(
+      { associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1 },
+      [{ setIndex: 0, ways: [{ valid: true, dirty: false, tag: 1, isPhantom: false, orderValue: 0, words: [0xdeadbeef] }] }],
+    );
+    const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
+    // 7 of the 8 word columns in this single sub-row have no real data.
+    const dashes = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell-empty");
+    expect(dashes.length).toBe(7);
+  });
+});
+
+describe("CacheLevelView — replacement policy column", () => {
+  function seedLevelWithPolicy(replacement: string) {
+    const store = useHierarchyConfigStore();
+    store.hierarchy = [
+      {
+        id: "l1",
+        harvard: false,
+        unified: { exp: 1, config: { blockSize: 4, associativity: 1, replacement, writePolicy: "WriteBack", writeAllocate: true, hitTime: 2, dirtyPercent: 0 } },
+        inclusion: "NonInclusive",
+        busWidth: 32,
+      },
+    ] as unknown as ReturnType<typeof useHierarchyConfigStore>["hierarchy"];
+  }
+
+  it("labels the order column after the active policy (FIFO)", async () => {
+    seedLevelWithPolicy("FIFO");
+    mockCacheLevel(defaultInfo(), defaultSets());
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    expect(await screen.findByText("FIFO")).toBeTruthy();
+    expect(screen.queryByText("LRU")).toBeNull();
+  });
+
+  it("hides the order column entirely when the policy is Random", async () => {
+    seedLevelWithPolicy("Random");
+    mockCacheLevel(defaultInfo(), [
+      { setIndex: 0, ways: [{ valid: true, dirty: false, tag: 5, isPhantom: false, orderValue: null, words: [0xdeadbeef] }] },
+      { setIndex: 1, ways: [{ valid: false, dirty: false, tag: 0, isPhantom: false, orderValue: null, words: [] }] },
+    ]);
+    const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    expect(screen.queryByText("LRU")).toBeNull();
+    expect(screen.queryByText("FIFO")).toBeNull();
+    expect(screen.queryByText("LFU")).toBeNull();
+    // Real data must still show normally, just with no order column.
+    expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
+    const headerCells = container.querySelectorAll(".simulation-cache-grid-header .simulation-cache-cell");
+    expect(headerCells.length).toBe(13); // Set, V, D, Tag, Offset, 8 words - one fewer than the default 14
   });
 });

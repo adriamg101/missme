@@ -8,7 +8,7 @@ const store = useHierarchyConfigStore();
 
 const emit = defineEmits<{ boxClick: [box: DiagramBox] }>();
 
-const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.disk, store.tlb, store.vmEnabled));
+const layout = computed(() => computeLayout(store.hierarchy, store.ram, store.pageSize, store.disk, store.tlb, store.vmEnabled));
 
 const pressedBoxId = ref<string | null>(null);
 
@@ -33,17 +33,12 @@ function stateFor(boxId: string): AccessState {
   return accessStates[boxId];
 }
 
-// This isn't a timed flash effect. A box switches to the hit or miss color
-// and stays there until clearAccessStates() is called before the next step
-// (once the simulation step controls exist). The "pulse" look just comes
-// from the CSS transition between colors, it doesn't revert on its own.
+// A box keeps its hit or miss color until the next step clears it, it never fades back on its own.
 function triggerHitMiss(boxId: string, kind: HitMiss) {
   stateFor(boxId).hitMiss = kind;
 }
 
-// A single status line replacing the old per-box read/write dot. It shows
-// one message about the most recent access, like "Reading data at 0x1000",
-// and stays until clearAccessStates() runs.
+// One line describing the most recent access, it stays until the next step clears it.
 const statusMessage = ref<string | null>(null);
 
 type AccessKind = "fetch" | "load" | "store";
@@ -62,9 +57,7 @@ function setStatusMessage(accessKind: AccessKind, address: number) {
   statusMessage.value = text;
 }
 
-// Sets every box back to its normal color and clears the status line. Call
-// this before the next step's triggerHitMiss/setStatusMessage so the
-// previous step's highlight doesn't stay on screen.
+// Sets every box back to its normal color and clears the status line before the next step.
 function clearAccessStates() {
   for (const state of Object.values(accessStates)) {
     state.hitMiss = null;
@@ -72,9 +65,7 @@ function clearAccessStates() {
   statusMessage.value = null;
 }
 
-// Nothing calls these functions yet, since there's no simulation engine
-// wired up to trigger real access events. They're exposed here so a future
-// one can use them without changing this component again.
+// Nothing calls these yet, they are exposed for a future simulation engine to use.
 defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
 </script>
 

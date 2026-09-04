@@ -78,6 +78,36 @@ describe("App simulation panel swap", () => {
     expect(store.activeView).toEqual({ kind: "ram" });
   });
 
+  it("clicking the PT sub-block while active and VM enabled opens the page table view", async () => {
+    const store = useSimulationStore();
+    store.isActive = true;
+    const hierarchyStore = useHierarchyConfigStore();
+    hierarchyStore.vmEnabled = true;
+
+    const { container } = render(App);
+    await Promise.resolve();
+    await Promise.resolve();
+    const ptBox = container.querySelector('[data-box-id="ram-pt"]');
+    expect(ptBox).toBeTruthy();
+    await (ptBox as HTMLElement).dispatchEvent(new Event("click", { bubbles: true }));
+    expect(store.activeView).toEqual({ kind: "pageTable" });
+  });
+
+  it("clicking the TLB box while active and VM enabled opens the TLB view", async () => {
+    const store = useSimulationStore();
+    store.isActive = true;
+    const hierarchyStore = useHierarchyConfigStore();
+    hierarchyStore.vmEnabled = true;
+
+    const { container } = render(App);
+    await Promise.resolve();
+    await Promise.resolve();
+    const tlbBox = container.querySelector('[data-box-id="tlb"]');
+    expect(tlbBox).toBeTruthy();
+    await (tlbBox as HTMLElement).dispatchEvent(new Event("click", { bubbles: true }));
+    expect(store.activeView).toEqual({ kind: "tlb" });
+  });
+
   it("triggers a hit pulse on the matching cache box for a cache_access event", async () => {
     const store = useSimulationStore();
     store.isActive = true;

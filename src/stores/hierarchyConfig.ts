@@ -18,6 +18,7 @@ function generateId(): string {
 interface HierarchyConfigState {
   isa: ISA;
   vmEnabled: boolean;
+  pageSize: number;
   seed: number | null;
   hierarchy: Hierarchy;
   tlb: TlbConfig;
@@ -29,11 +30,10 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
   state: (): HierarchyConfigState => ({
     isa: "RV32I",
     vmEnabled: false,
+    pageSize: 4096,
     seed: null,
     hierarchy: [],
     tlb: {
-      pageSize: 4096,
-      pageTableLevels: 1,
       pageWalkStart: "RAM",
       entries: 64,
       associativity: 4,
@@ -56,6 +56,9 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
     },
     setVmEnabled(value: boolean) {
       this.vmEnabled = value;
+    },
+    setPageSize(value: number) {
+      this.pageSize = value;
     },
     setSeed(seed: number | null) {
       this.seed = seed;
@@ -128,9 +131,6 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
     },
     updateDiskConfig(patch: Partial<DiskConfig>) {
       this.disk = { ...this.disk, ...patch };
-    },
-    resetToDefaults() {
-      this.$reset();
     },
   },
 });

@@ -52,13 +52,8 @@ pub(super) fn build(program: &Program, config: &CodegenConfig) -> Result<LayoutR
                     errors.push(CodegenError::new(*line, *column, "instruction found in .data section"));
                     continue;
                 }
-                // The earlier checking step normally makes sure an instruction is
-                // shaped correctly before this step ever sees it, but this step
-                // still runs even after that step already found errors elsewhere.
-                // Expanding the instruction assumes a valid shape and could crash
-                // on one that isn't, so we skip just this instruction instead of
-                // letting one bad line crash the whole build. Its real error was
-                // already reported earlier.
+                // This step still runs even after an earlier check already found errors, so a wrongly shaped instruction can reach here.
+                // We skip just this instruction instead of letting one bad line crash the whole build, its real error was already reported.
                 let expanded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| expand(node)));
                 if let Ok(expanded) = expanded {
                     for instr in expanded {
@@ -71,10 +66,8 @@ pub(super) fn build(program: &Program, config: &CodegenConfig) -> Result<LayoutR
                 const DATA_DIRECTIVES: [&str; 6] =
                     [".word", ".byte", ".half", ".string", ".asciz", ".ascii"];
                 if !DATA_DIRECTIVES.contains(&name.as_str()) {
-                    // This isn't a section marker or a known data directive.
-                    // Either it's harmless and unrecognized, or an earlier step
-                    // already reported it as unknown. Either way there's nothing
-                    // to place here and nothing more to say about it.
+                    // This is not a section marker or a known data directive, and an earlier step already reported unknown ones.
+                    // Either way there is nothing to place here.
                     continue;
                 }
                 if section == Section::Text {

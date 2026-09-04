@@ -31,7 +31,7 @@ beforeEach(() => {
   invokeMock.mockReset();
   mockWordAtRequestedAddress(0x12345678);
   capturedHandler = null;
-  useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0 };
+  useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0, pageTableLevels: 1, frameAllocation: "sequential", frames: 4 };
   useCompileConfigStore().dataBase = 0x10000000;
 });
 

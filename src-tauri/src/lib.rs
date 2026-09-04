@@ -29,6 +29,13 @@ pub fn run() {
             controllers::memory_contents_controller::get_cache_level_info,
             controllers::memory_contents_controller::get_cache_sets,
             controllers::memory_contents_controller::get_ram_blocks,
+            controllers::memory_contents_controller::get_tlb_info,
+            controllers::memory_contents_controller::get_tlb_sets,
+            controllers::memory_contents_controller::get_frames,
+            controllers::memory_contents_controller::get_page_table_entries,
+            controllers::memory_contents_controller::get_page_table_levels,
+            controllers::memory_contents_controller::get_page_table_level_bits,
+            controllers::memory_contents_controller::get_disk_pages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

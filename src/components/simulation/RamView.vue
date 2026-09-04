@@ -10,38 +10,22 @@ import { touchAndPrune } from "../../lib/lruCache";
 const store = useHierarchyConfigStore();
 const compileConfigStore = useCompileConfigStore();
 
-// This number must match DEFAULT_BLOCK_SIZE in src-tauri/src/controllers/simulation_controller.rs,
-// which also expects blocks to be this size when it steps through memory.
+// This must match the block size the backend already uses when it steps through memory.
 const RAM_BLOCK_SIZE = 32;
 const ROW_HEIGHT = 26;
 const MAX_CACHED_BLOCKS = 4000;
 
-// We show one grid with one scrollbar, but it can't cover the whole address space directly:
-// the gap between .text and .data alone is about 252MB, and no matter how short we make
-// each row, that's too tall for a browser to handle as a single element. So instead the
-// scrollbar only shows a smaller window of WINDOW_ROWS rows, anchored at `baseAddress`.
-// When the user scrolls near the top or bottom edge of that window, we quietly move the
-// window to a new position without changing what's on screen, so scrolling still feels
-// endless in either direction instead of stopping at some arbitrary limit.
-// The window is kept much smaller than the browser would technically allow, because at
-// very large scroll positions the browser starts losing precision when it redraws sticky
-// elements, causing a small visible flicker while scrolling. Keeping the window in the low
-// hundreds of thousands of pixels avoids that, even though it means we have to reposition
-// the window more often during a long scroll (which is cheap and invisible to the user).
-const WINDOW_ROWS = 20_000; // 20,000 rows * ROW_HEIGHT = 520,000px window height
-const RECENTER_MARGIN_ROWS = 500; // reposition the window before the user reaches its edge, so it's never visible
+// Shows only a smaller window of rows and quietly slides it as the user scrolls, so it never has to draw the whole address space at once.
+const WINDOW_ROWS = 20_000;
+// Repositions the window before the user reaches its edge, so it is never seen happening.
+const RECENTER_MARGIN_ROWS = 500;
 const totalBlocks = WINDOW_ROWS;
 
 function absoluteRow(address: number): number {
   return Math.floor(address / RAM_BLOCK_SIZE);
 }
 
-// Places `targetRow` in the middle of the window, but never lets the window
-// start below address 0. This is used both when the view first opens and
-// whenever we jump somewhere, so there's always equal room to scroll up or
-// down from that point. If we simply put the target row at the very top of
-// the window instead, there would be no room to scroll up, and the view
-// would immediately reposition itself again on the next scroll.
+// Places the target row in the middle of the window, so there is room to scroll either way.
 function centeredBaseRow(targetRow: number): number {
   return Math.max(0, targetRow - Math.floor(WINDOW_ROWS / 2));
 }
@@ -58,11 +42,7 @@ interface RamBlock {
   dirty: boolean;
 }
 
-// Blocks are stored using the row's real address, not its position within
-// the window, so previously loaded blocks stay valid even after the window
-// moves. touchAndPrune keeps memory from growing without bound: blocks that
-// haven't been needed in a while, because the window moved away from them,
-// eventually get removed.
+// Blocks are stored by their real address, so they stay valid even after the window moves.
 const blocks = reactive(new Map<number, RamBlock>());
 const containerRef = ref<HTMLDivElement | null>(null);
 const scrollTop = ref((initialTargetRow - initialBaseRow) * ROW_HEIGHT);
@@ -91,12 +71,7 @@ async function fetchVisibleWindow() {
   }
 }
 
-// When we move the scroll position in code, the browser fires its own
-// scroll event for it a moment later. Without this flag, that extra event
-// would trigger our scroll handling again and could make the view jitter
-// back and forth near an edge. So we mark that the next scroll event was
-// caused by us and should be ignored; our own values are already correct
-// by the time we touch the DOM.
+// Stops moving the scroll position ourselves from triggering our own scroll handling again.
 let ignoreNextScrollEvent = false;
 
 function setContainerScrollTop(value: number) {
@@ -107,9 +82,7 @@ function setContainerScrollTop(value: number) {
   }
 }
 
-// Moves the window so the row that's currently at the top of the screen
-// ends up roughly in the middle instead, leaving equal room to keep
-// scrolling either way. Never moves the window below address 0.
+// Moves the window so the row at the top of the screen ends up roughly in the middle.
 function recenterOn(topAbsoluteRow: number) {
   const newBaseRow = centeredBaseRow(topAbsoluteRow);
   const deltaRows = newBaseRow - baseRow.value;
@@ -126,12 +99,7 @@ function maybeRecenter() {
   recenterOn(topAbsoluteRow);
 }
 
-// Smooth trackpad scrolling (or certain screens) can leave the scroll
-// position sitting between whole pixels, even though every row is placed
-// at a whole-pixel position. When that happens, the browser rounds each
-// cell's border slightly differently, and you see thin flickering gaps
-// between cells while scrolling settles. Once scrolling stops, we snap
-// back to a whole pixel so there's nothing left to round inconsistently.
+// Snaps the scroll position back to a whole pixel once scrolling stops, to stop flickering gaps between cells.
 let scrollEndTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function snapScrollToWholePixel() {
@@ -154,10 +122,7 @@ function onScroll(event: Event) {
   scrollEndTimeout = setTimeout(snapScrollToWholePixel, 100);
 }
 
-// Unlike recenterOn, which keeps whatever is currently on screen while
-// quietly sliding the window, this deliberately moves the view: the target
-// address ends up right in the middle of the window, with equal room to
-// scroll either direction from there.
+// Deliberately moves the view so the target address ends up in the middle of the window.
 function jumpToAddress(address: number) {
   const targetRow = absoluteRow(Math.max(0, address));
   const newBaseRow = centeredBaseRow(targetRow);
@@ -192,18 +157,12 @@ function hex(value: number): string {
   return (value >>> 0).toString(16);
 }
 
-// A word is always 4 bytes, even if the value stored in it is small (say,
-// only the lowest byte was ever written), so we pad it to 8 hex digits to
-// make that clear. The block address, on the other hand, doesn't have a
-// fixed width and is left unpadded.
+// A word is always padded to 8 hex digits, a block address is left unpadded.
 function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
-// A word is always 4 bytes in this simulator, so a word column's byte
-// offset is always wordIndex * 4. The processor's own natural word size (4
-// bytes on RV32I, 8 bytes on RV64I) is expressed here as how many word
-// columns should be grouped together.
+// A word is always 4 bytes, so a word column's byte offset is always its index times 4.
 const WORD_SIZE = 4;
 const wordsPerGroup = computed(() => (store.isa === "RV32I" ? 1 : 2));
 
@@ -211,8 +170,7 @@ function offsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * WORD_SIZE).toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
-// Only matters when a group covers more than one word column (RV64I): adds
-// a dashed left border marking where the next group starts.
+// Marks where a new group of words starts, for a border only.
 function isGroupStart(wordIndex: number): boolean {
   return wordsPerGroup.value > 1 && wordIndex > 0 && wordIndex % wordsPerGroup.value === 0;
 }
@@ -230,8 +188,7 @@ let disposed = false;
 onMounted(async () => {
   if (containerRef.value) {
     viewportHeight.value = containerRef.value.clientHeight;
-    // The element always starts scrolled to the top, so we move it to
-    // match the already-centered starting position computed above.
+    // The element always starts scrolled to the top, so we move it to the centered starting position.
     containerRef.value.scrollTop = scrollTop.value;
   }
   await fetchVisibleWindow();

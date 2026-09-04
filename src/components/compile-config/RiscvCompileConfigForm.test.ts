@@ -104,14 +104,14 @@ describe("RiscvCompileConfigForm — .data fits in configured RAM", () => {
   });
 
   it("shows no warning when the compiled .data segment fits", () => {
-    useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0 };
+    useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0, pageTableLevels: 1, frameAllocation: "sequential", frames: 4 };
     useCompileConfigStore().setCompiledSizes(0, 512);
     render(RiscvCompileConfigForm);
     expect(screen.queryByText(/doesn't fit in the configured RAM/)).toBeNull();
   });
 
   it("warns when the compiled .data segment exceeds the configured RAM size", () => {
-    useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0 };
+    useHierarchyConfigStore().ram = { latency: 100, size: 1024, dirtyPercent: 0, pageTableLevels: 1, frameAllocation: "sequential", frames: 4 };
     useCompileConfigStore().setCompiledSizes(0, 2048);
     render(RiscvCompileConfigForm);
     expect(screen.getByText(/doesn't fit in the configured RAM/)).toBeInTheDocument();

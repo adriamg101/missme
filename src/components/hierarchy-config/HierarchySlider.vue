@@ -17,17 +17,13 @@ const emit = defineEmits<{
   "remove-level": [levelId: string];
 }>();
 
-// The usable range is [MIN_POSITION, maxPositions(isa) - 1]. MIN_POSITION is
-// 0, so a cache with just a single entry (2^0 = 1) can be reached, same as
-// any other power-of-two size.
+// The lowest position lets a cache with just a single entry be reached, the same way any other size can.
 const maxPosition = computed(() => maxPositions(props.isa) - 1);
 const positions = computed(() =>
   Array.from({ length: maxPosition.value - MIN_POSITION + 1 }, (_, i) => i + MIN_POSITION),
 );
 
-// Show a label at every position whose value is itself a power of two, plus
-// position 0 (2^0 = 1, which you can't reach by doubling from 1) and the
-// highest reachable position (which is only a power of two for RV64I).
+// Shows a label at every power of two position, plus the first and last positions.
 const labeledPositions = computed<Set<number>>(() => {
   const set = new Set<number>([0]);
   for (let value = 1; value <= maxPosition.value; value *= 2) set.add(value);
@@ -98,9 +94,7 @@ function onPositionClick(position: number) {
 }
 
 const DRAG_THRESHOLD_PX = 4;
-// Used only when the track hasn't been drawn on screen yet (for example in
-// tests, where the measured size always comes back as zero). Real browsers
-// use the actual measured track width instead.
+// Used only before the track has actually been drawn on screen, real browsers measure it instead.
 const FALLBACK_PIXELS_PER_POSITION = 20;
 const axisEl = ref<HTMLElement | null>(null);
 
@@ -138,8 +132,7 @@ function onWindowMouseUp() {
   dragState = null;
 }
 
-// Placed using fixed screen coordinates and moved out to sit directly under
-// <body>, so the menu never gets cut off by the panel's own hidden overflow.
+// Moved outside the panel so the menu never gets cut off by its hidden edges.
 const contextMenu = ref<{ levelId: string; label: string; harvard: boolean; x: number; y: number } | null>(null);
 const contextMenuEl = ref<HTMLElement | null>(null);
 

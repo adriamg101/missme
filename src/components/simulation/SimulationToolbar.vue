@@ -14,13 +14,7 @@ function togglePlayPause() {
   }
 }
 
-// The slider doesn't move at an even pace. If it went straight from 10 to
-// 1000 milliseconds, the fast end (10-50ms) would be squeezed into the first
-// tiny bit of the track, while the rest of the track would all feel equally
-// "slow" with barely any difference. People notice speed changes as ratios,
-// not flat amounts, so the slider itself still moves over a plain 0 to
-// SLIDER_MAX range, but that position gets converted to and from milliseconds
-// using an exponential curve.
+// The slider moves evenly, but its position is turned into a speed on a curve, so fast speeds still feel spread out.
 const MIN_MS = 10;
 const MAX_MS = 1000;
 const SLIDER_MAX = 100;

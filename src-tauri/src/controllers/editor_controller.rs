@@ -121,9 +121,8 @@ pub fn compile(
     })
 }
 
-// The test cases below all share the same fixed work directory on purpose,
-// so they're combined into one test and run one after another. Running them
-// as separate tests could let them write to the same files at the same time.
+// The test cases below share the same fixed work directory on purpose, combined into one test run one after another.
+// Running them as separate tests could let them write to the same files at the same time.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,11 +146,8 @@ mod tests {
         };
         let source = ".include \"x.s\"\nadd x1, @x2, x3\n".to_string();
         let err_result = compile(source, err_config, None).unwrap();
-        // This gives 3 errors, not 2: the preprocessing step leaves the
-        // unsupported `.include` line in place (it only reports an error, it
-        // doesn't remove the line), so later checking also flags that same
-        // line as an unknown directive, on top of the "unexpected character
-        // '@'" error.
+        // This gives 3 errors, not 2, since the preprocessing step leaves the unsupported line in place after reporting it.
+        // Later checking then also flags that same line as an unknown directive, on top of the other error.
         assert_eq!(err_result.error_count, 3);
         assert!(err_result.error_output.starts_with("1:1: error:"));
         assert!(err_result

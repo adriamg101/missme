@@ -21,10 +21,7 @@ const languageOptions = languages.map((lang) => ({ value: lang, label: lang }));
 const selectedLanguage = ref(languages[0]);
 const code = ref("");
 
-// Keep this in sync with the languages CompileConfigForm actually knows how
-// to show a form for (currently only RISC-V). This stops an empty bordered
-// box from showing up if a second language is added before it has its own
-// compile-config form.
+// Only these languages have a real compile form to show, right now just RISC-V.
 const languagesWithCompileConfig = new Set(["RISC-V"]);
 const languageHasCompileConfig = computed(() => languagesWithCompileConfig.has(selectedLanguage.value));
 
@@ -80,8 +77,7 @@ function syncScroll() {
 
 const lineHeightPx = ref(20);
 
-// Matches the top padding set on .editor-textarea (0.5rem) so the highlight
-// lines up with the text instead of the top of .editor-body.
+// Matches the text area's own top spacing so the highlight lines up with the actual text.
 const TEXTAREA_TOP_PADDING_PX = 8;
 
 function measureLineHeight() {
@@ -209,8 +205,7 @@ async function handleStartClick() {
     errorOutput.value = result.error_output;
 
     if (result.error_count === 0 && result.codegen) {
-      // Every instruction is a fixed 4-byte word in this engine (see the
-      // S4 plan's rulings), so the real size of .text is just entry count * 4.
+      // Every instruction is a fixed 4 bytes, so the code size is just the entry count times 4.
       compileConfigStore.setCompiledSizes(result.codegen.entries.length * 4, result.codegen.layout.initial_data.length);
       await simulationStore.start(
         riscvBase.value,
@@ -218,6 +213,7 @@ async function handleStartClick() {
         {
           isa: hierarchyConfigStore.isa,
           vmEnabled: hierarchyConfigStore.vmEnabled,
+          pageSize: hierarchyConfigStore.pageSize,
           hierarchy: hierarchyConfigStore.hierarchy,
           tlb: hierarchyConfigStore.tlb,
           ram: hierarchyConfigStore.ram,
@@ -278,10 +274,7 @@ async function handleDroppedPath(path: string) {
 
 onMounted(async () => {
   document.addEventListener("click", handleDocumentClick);
-  // Tauri catches file drag and drop from the operating system before it
-  // reaches the web page (the file list stays empty for files dragged from
-  // a file manager), so this listens to Tauri's own drag and drop event
-  // instead of the browser's normal drop event.
+  // This listens for files dragged in from outside the app, since the normal browser drop does not see them.
   unlistenDragDrop = await getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === "drop") {
       isDragOver.value = false;
@@ -309,9 +302,7 @@ onBeforeUnmount(() => {
   unlistenSimEvents?.();
 });
 
-// Exposed for tests only: `languages` currently has just one entry, so there
-// is no way in the app itself to pick an "unsupported" language yet. This
-// lets tests check the languageHasCompileConfig behavior directly.
+// Exposed only so tests can pick a language the app itself cannot pick yet.
 defineExpose({ selectedLanguage });
 </script>
 

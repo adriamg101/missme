@@ -3,34 +3,36 @@
 import { computed } from "vue";
 import PowerOfTwoStepper from "./PowerOfTwoStepper.vue";
 import NumberStepper from "../ui/NumberStepper.vue";
+import SelectField from "../ui/SelectField.vue";
 import ConfigGrid from "./ConfigGrid.vue";
 import type { Hierarchy, ISA, RamConfig } from "../../lib/hierarchy/model";
 import { defaultRamConfig, maxPositions } from "../../lib/hierarchy/model";
 import { maxCacheByteCapacity } from "../../lib/hierarchy/derive";
 
-const props = defineProps<{ config: RamConfig; hierarchy: Hierarchy; vmEnabled: boolean; isa: ISA }>();
+const props = defineProps<{ config: RamConfig; hierarchy: Hierarchy; vmEnabled: boolean; isa: ISA; pageSize: number }>();
 const emit = defineEmits<{ update: [patch: Partial<RamConfig>] }>();
 
-// RAM must always be a power of two, and strictly bigger than the biggest
-// cache level's actual byte capacity currently configured (for example, if
-// L3 is the biggest, RAM is the next power of two above L3's real size in
-// bytes, not its entry count). Doubling maxCacheByteCapacity, which is
-// already a power of two, gives exactly that next power of two.
-const minSize = computed(() => maxCacheByteCapacity(props.hierarchy) * 2);
+const frameAllocationOptions = ["sequential", "random"].map((value) => ({ value, label: value }));
 
-// RAM can't be bigger than the address space the ISA can actually reach
-// (2^32 for RV32I, 2^64 for RV64I).
-const maxSize = computed(() => 2 ** maxPositions(props.isa));
+// RAM must always hold more than the biggest cache configured, so frames cannot go below this.
+const minFrames = computed(() => Math.max(1, (maxCacheByteCapacity(props.hierarchy) * 2) / props.pageSize));
 
-// Protects against a saved config from before RamConfig had `size` in this
-// shape (for example, data saved by an older version of the app). Without
-// this, a missing value here would show up as "NaN" instead of a number.
-const safeSize = computed(() => (Number.isFinite(props.config.size) ? props.config.size : defaultRamConfig().size));
+// RAM can never be bigger than the address space the chosen ISA can reach.
+const maxFrames = computed(() => 2 ** maxPositions(props.isa) / props.pageSize);
+
+// A page table level can never claim more bits than the address has left after the page offset.
+const maxLevels = computed(() => Math.max(1, maxPositions(props.isa) - Math.log2(props.pageSize)));
+
+// Falls back to the default when an older saved config is missing these fields.
+const safeFrames = computed(() => (Number.isFinite(props.config.frames) ? props.config.frames : defaultRamConfig().frames));
 const safeLatency = computed(() =>
   Number.isFinite(props.config.latency) ? props.config.latency : defaultRamConfig().latency,
 );
 const safeDirtyPercent = computed(() =>
   Number.isFinite(props.config.dirtyPercent) ? props.config.dirtyPercent : defaultRamConfig().dirtyPercent,
+);
+const safePageTableLevels = computed(() =>
+  Number.isFinite(props.config.pageTableLevels) ? props.config.pageTableLevels : defaultRamConfig().pageTableLevels,
 );
 
 function onDirtyPercentChange(value: number) {
@@ -43,12 +45,12 @@ function onDirtyPercentChange(value: number) {
     <ConfigGrid>
       <PowerOfTwoStepper
         v-if="vmEnabled"
-        label="Size"
-        :model-value="safeSize"
-        :min="minSize"
-        :max="maxSize"
-        aria-label="RAM size"
-        @update:model-value="emit('update', { size: $event })"
+        label="Frames"
+        :model-value="safeFrames"
+        :min="minFrames"
+        :max="maxFrames"
+        aria-label="RAM frame count"
+        @update:model-value="emit('update', { frames: $event })"
       />
 
       <NumberStepper
@@ -60,6 +62,25 @@ function onDirtyPercentChange(value: number) {
         :step="5"
         aria-label="RAM dirty pages at start"
         @update:model-value="onDirtyPercentChange"
+      />
+
+      <NumberStepper
+        v-if="vmEnabled"
+        label="Page table levels"
+        :model-value="safePageTableLevels"
+        :min="1"
+        :max="maxLevels"
+        aria-label="Page table levels"
+        @update:model-value="(v) => emit('update', { pageTableLevels: Math.max(1, Number.isFinite(v) ? v : 1) })"
+      />
+
+      <SelectField
+        v-if="vmEnabled"
+        label="Frame allocation"
+        :model-value="config.frameAllocation"
+        :options="frameAllocationOptions"
+        aria-label="RAM frame allocation"
+        @update:model-value="emit('update', { frameAllocation: $event as RamConfig['frameAllocation'] })"
       />
 
       <NumberStepper
