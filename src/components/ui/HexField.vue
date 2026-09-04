@@ -59,6 +59,7 @@ function onInput(event: Event) {
 .hex-field-label {
   font-size: 0.875rem;
   color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .hex-field-input-row {
@@ -68,6 +69,7 @@ function onInput(event: Event) {
   border-radius: 6px;
   background: var(--background);
   overflow: hidden;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease;
 }
 
 .hex-field-input-row:focus-within {
@@ -77,6 +79,7 @@ function onInput(event: Event) {
 
 .hex-field-readonly {
   opacity: 0.6;
+  transition: none;
 }
 
 .hex-field-prefix {
@@ -84,6 +87,7 @@ function onInput(event: Event) {
   color: var(--secondary);
   font-family: 'IBM Plex Mono', monospace;
   user-select: none;
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .hex-field-input {
@@ -94,6 +98,7 @@ function onInput(event: Event) {
   font-family: 'IBM Plex Mono', monospace;
   flex: 1 1 auto;
   min-width: 0;
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .hex-field-input.size-sm {

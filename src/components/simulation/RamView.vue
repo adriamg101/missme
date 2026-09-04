@@ -270,6 +270,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
+  color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .simulation-ram-jump-bar {
@@ -279,6 +281,7 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
   padding: 0.5rem;
   border-bottom: 1px solid var(--secondary);
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .simulation-ram-jump-bar button {
@@ -290,6 +293,7 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .simulation-ram-jump-bar button:hover {
@@ -307,6 +311,7 @@ onBeforeUnmount(() => {
   font-family: monospace;
   font-size: 0.8rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .simulation-ram-jump-input-invalid {
@@ -345,6 +350,7 @@ onBeforeUnmount(() => {
   background: var(--background);
   box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.4);
   width: fit-content;
+  transition: background-color var(--theme-transition-duration) ease;
 }
 
 .simulation-ram-body {
@@ -366,6 +372,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--secondary);
   padding: 0.15rem 0.6rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .simulation-ram-cell-header {
@@ -379,6 +386,7 @@ onBeforeUnmount(() => {
 
 .simulation-ram-group-start {
   border-left: 2px dashed var(--secondary);
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .simulation-ram-address {

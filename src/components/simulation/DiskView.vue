@@ -232,6 +232,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
+  color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 .simulation-disk-jump-bar {
   flex: 0 0 auto;
@@ -240,6 +242,7 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
   padding: 0.5rem;
   border-bottom: 1px solid var(--secondary);
+  transition: border-color var(--theme-transition-duration) ease;
 }
 .simulation-disk-jump-bar button {
   padding: 0.3rem 0.7rem;
@@ -250,6 +253,7 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-disk-jump-bar button:hover {
   border-color: var(--accent);
@@ -265,6 +269,7 @@ onBeforeUnmount(() => {
   font-family: monospace;
   font-size: 0.8rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-disk-jump-input-invalid {
   border-color: var(--diagram-miss-color);
@@ -278,6 +283,7 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   overflow-y: hidden;
   box-sizing: border-box;
+  transition: none;
 }
 .simulation-disk-grid-wrapper {
   display: flex;
@@ -285,6 +291,7 @@ onBeforeUnmount(() => {
   width: fit-content;
   height: 100%;
   margin: 0 auto;
+  transition: none;
 }
 .simulation-disk-grid-header {
   align-items: stretch;
@@ -292,10 +299,12 @@ onBeforeUnmount(() => {
   background: var(--background);
   box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.4);
   width: fit-content;
+  transition: background-color var(--theme-transition-duration) ease;
 }
 .simulation-disk-group {
   align-items: stretch;
   width: fit-content;
+  transition: none;
 }
 .simulation-disk-cell {
   display: flex;
@@ -304,6 +313,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--secondary);
   padding: 0.15rem 0.6rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 .simulation-disk-cell-header {
   font-weight: 600;
@@ -314,15 +324,18 @@ onBeforeUnmount(() => {
 }
 .simulation-disk-address {
   color: var(--text-muted, var(--text));
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-disk-cell-empty {
   color: var(--text-muted, var(--text));
   opacity: 0.4;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-disk-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  transition: none;
 }
 </style>

@@ -1,6 +1,7 @@
 pub mod cpu;
 pub mod memory;
 pub mod session;
+pub mod stats;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegisterId(pub u8);

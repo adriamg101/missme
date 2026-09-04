@@ -73,17 +73,20 @@ function close() {
   color: var(--text);
   border-bottom: 1px solid var(--secondary);
   user-select: none;
+  transition: background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease, border-color var(--theme-transition-duration) ease;
 }
 
 .titlebar-title {
   font-size: 0.8rem;
   font-weight: 700;
+  transition: none;
 }
 
 .titlebar-controls {
   display: flex;
   align-items: stretch;
   height: 100%;
+  transition: none;
 }
 
 .titlebar-button {
@@ -96,6 +99,7 @@ function close() {
   background: transparent;
   color: var(--text);
   cursor: pointer;
+  transition: background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .titlebar-button:hover {

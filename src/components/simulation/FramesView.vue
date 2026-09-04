@@ -191,6 +191,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
+  color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 .simulation-frames-jump-bar {
   flex: 0 0 auto;
@@ -199,6 +201,7 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
   padding: 0.5rem;
   border-bottom: 1px solid var(--secondary);
+  transition: border-color var(--theme-transition-duration) ease;
 }
 .simulation-frames-jump-bar button {
   padding: 0.3rem 0.7rem;
@@ -209,6 +212,7 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-frames-jump-bar button:hover {
   border-color: var(--accent);
@@ -224,6 +228,7 @@ onBeforeUnmount(() => {
   font-family: monospace;
   font-size: 0.8rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-frames-jump-input-invalid {
   border-color: var(--diagram-miss-color);
@@ -237,6 +242,7 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   overflow-y: hidden;
   box-sizing: border-box;
+  transition: none;
 }
 .simulation-frames-grid-wrapper {
   display: flex;
@@ -244,10 +250,12 @@ onBeforeUnmount(() => {
   width: fit-content;
   height: 100%;
   margin: 0 auto;
+  transition: none;
 }
 .simulation-frames-grid-header,
 .simulation-frames-block {
   width: fit-content;
+  transition: none;
 }
 .simulation-frames-cell {
   display: flex;
@@ -256,6 +264,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--secondary);
   padding: 0.15rem 0.6rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 .simulation-frames-cell-header {
   font-weight: 600;
@@ -267,11 +276,13 @@ onBeforeUnmount(() => {
 .simulation-frames-cell-empty {
   color: var(--text-muted, var(--text));
   opacity: 0.4;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-frames-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  transition: none;
 }
 </style>

@@ -12,7 +12,7 @@ import { maxCacheByteCapacity } from "../../lib/hierarchy/derive";
 const props = defineProps<{ config: RamConfig; hierarchy: Hierarchy; vmEnabled: boolean; isa: ISA; pageSize: number }>();
 const emit = defineEmits<{ update: [patch: Partial<RamConfig>] }>();
 
-const frameAllocationOptions = ["sequential", "random"].map((value) => ({ value, label: value }));
+const frameAllocationOptions = ["sequential", "random"].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) }));
 
 // RAM must always hold more than the biggest cache configured, so frames cannot go below this.
 const minFrames = computed(() => Math.max(1, (maxCacheByteCapacity(props.hierarchy) * 2) / props.pageSize));

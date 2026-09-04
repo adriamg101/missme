@@ -41,6 +41,7 @@ export interface TlbConfig {
   entries: number;
   associativity: number;
   replacement: TlbReplacementPolicy;
+  latency: number;
 }
 
 export interface RamConfig {

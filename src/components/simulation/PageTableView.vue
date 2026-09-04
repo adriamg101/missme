@@ -202,6 +202,8 @@ onBeforeUnmount(() => {
   height: 100%;
   padding: 0.5rem;
   box-sizing: border-box;
+  color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
   font-size: 0.75rem;
   font-family: monospace;
 }
@@ -210,6 +212,7 @@ onBeforeUnmount(() => {
   opacity: 0.85;
   text-align: center;
   white-space: nowrap;
+  transition: none;
 }
 .simulation-page-table-toolbar {
   flex: 0 0 auto;
@@ -220,12 +223,14 @@ onBeforeUnmount(() => {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   padding-bottom: 0.5rem;
+  transition: none;
 }
 .simulation-page-table-toolbar-left {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   justify-self: start;
+  transition: none;
 }
 .simulation-page-table-toolbar button:hover {
   border-color: var(--accent);
@@ -241,6 +246,7 @@ onBeforeUnmount(() => {
   font-family: monospace;
   font-size: 0.8rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-page-table-jump-input-invalid {
   border-color: var(--diagram-miss-color);
@@ -254,6 +260,7 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-page-table-header,
 .simulation-page-table-row {
@@ -261,6 +268,7 @@ onBeforeUnmount(() => {
   grid-template-columns: 8rem calc(10ch + 0.6rem) 2.5rem 2.5rem;
   width: fit-content;
   margin: 0 auto;
+  transition: none;
 }
 .simulation-page-table-row {
   /* The row is absolutely positioned (see the template's :style), so
@@ -274,6 +282,7 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   background: var(--background);
   box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  transition: background-color var(--theme-transition-duration) ease;
 }
 .simulation-page-table-header .simulation-page-table-cell {
   border-top: 1px solid var(--secondary);
@@ -291,6 +300,7 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--secondary);
   padding: 0.15rem 0.6rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 .simulation-page-table-cell-header {
   font-weight: 600;
@@ -299,11 +309,13 @@ onBeforeUnmount(() => {
 .simulation-page-table-cell-empty {
   color: var(--text-muted, var(--text));
   opacity: 0.4;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-page-table-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  transition: none;
 }
 </style>

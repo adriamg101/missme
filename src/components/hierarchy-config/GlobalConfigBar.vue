@@ -86,6 +86,7 @@ function onConvertToVonNeumann(levelId: string) {
   gap: 0.375rem;
   font-size: 0.875rem;
   color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .global-config-bar-field input[type="checkbox"] {

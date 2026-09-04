@@ -109,6 +109,7 @@ function onApplyCacheConfigToAll() {
   color: var(--text);
   font: inherit;
   cursor: pointer;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .level-tabs-strip button[aria-selected="true"] {

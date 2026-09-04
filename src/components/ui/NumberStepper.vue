@@ -81,6 +81,7 @@ function onBlur() {
 .number-stepper-label {
   font-size: 0.875rem;
   color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .number-stepper {
@@ -89,6 +90,7 @@ function onBlur() {
   border: 1px solid var(--secondary);
   border-radius: 6px;
   overflow: hidden;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .number-stepper-button {
@@ -101,6 +103,7 @@ function onBlur() {
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
+  transition: background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .number-stepper-button:hover {
@@ -122,6 +125,7 @@ function onBlur() {
   color: var(--text);
   font: inherit;
   text-align: center;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .number-stepper-input:focus-visible {

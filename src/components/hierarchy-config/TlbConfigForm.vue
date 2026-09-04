@@ -1,6 +1,7 @@
 <!-- src/components/hierarchy-config/TlbConfigForm.vue -->
 <script setup lang="ts">
 import PowerOfTwoStepper from "./PowerOfTwoStepper.vue";
+import NumberStepper from "../ui/NumberStepper.vue";
 import SelectField from "../ui/SelectField.vue";
 import ConfigGrid from "./ConfigGrid.vue";
 import type { TlbConfig, TlbReplacementPolicy } from "../../lib/hierarchy/model";
@@ -51,6 +52,14 @@ function onEntriesChange(value: number) {
         :options="replacementOptions"
         aria-label="TLB replacement policy"
         @update:model-value="emit('update', { replacement: $event as TlbReplacementPolicy })"
+      />
+
+      <NumberStepper
+        label="Latency (cycles)"
+        :model-value="tlb.latency"
+        :min="1"
+        aria-label="TLB latency"
+        @update:model-value="emit('update', { latency: $event })"
       />
     </ConfigGrid>
   </form>

@@ -64,6 +64,7 @@ function decrement() {
 .power-of-two-stepper-label {
   font-size: 0.875rem;
   color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .power-of-two-stepper {
@@ -72,6 +73,7 @@ function decrement() {
   border: 1px solid var(--secondary);
   border-radius: 6px;
   overflow: hidden;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .power-of-two-stepper-button {
@@ -84,6 +86,7 @@ function decrement() {
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
+  transition: background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .power-of-two-stepper-button:hover {
@@ -106,6 +109,7 @@ function decrement() {
   font: inherit;
   text-align: center;
   cursor: default;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .power-of-two-stepper input:focus-visible {
