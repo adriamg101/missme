@@ -12,10 +12,8 @@ export interface CacheConfig {
   writePolicy: WritePolicy;
   writeAllocate: boolean;
   hitTime: number;
-  // This sets the starting condition, it doesn't track the actual state: the
-  // chance (0-100) that a line is already dirty the first time it's touched.
-  // Only matters for write-back caches, since write-through lines are never
-  // dirty. The backend decides this per line when it runs, using the global Seed.
+  // The chance from 0 to 100 that a line starts out dirty the first time it
+  // is touched. Only matters for write back caches, since write through lines are never dirty.
   dirtyPercent: number;
 }
 
@@ -46,20 +44,15 @@ export interface TlbConfig {
 
 export interface RamConfig {
   latency: number;
-  // A plain power-of-two count (same convention as CacheConfig.blockSize),
-  // not a slider position, since RAM doesn't appear on the hierarchy slider.
-  // Only meaningful when virtual memory is off; VM mode uses `frames`
-  // instead (see below).
+  // A plain power of two count, not a slider position, since RAM does not
+  // appear on the hierarchy slider. Only meaningful when virtual memory is off.
   size: number;
-  // This sets the starting condition: the chance (0-100) that a page is
-  // already dirty the first time it's touched. It belongs to the page, not
-  // to a specific cache line, so the TLB just copies this value instead of
-  // having its own. Only matters when virtual memory is turned on.
+  // The chance from 0 to 100 that a page starts out dirty the first time it
+  // is touched. Only matters when virtual memory is turned on.
   dirtyPercent: number;
   pageTableLevels: number;
-  // Which free frame a page fault picks when more than one is available:
-  // fill them in order, or pick a seeded-random one. Once every frame is
-  // occupied, eviction always uses LRU regardless of this setting.
+  // Which free frame a page fault picks when more than one is available,
+  // either in order or a random one. Once all frames fill up, eviction always uses LRU.
   frameAllocation: "sequential" | "random";
   // How many frames the physical frame pool has, a plain power of two the
   // user picks directly. Only meaningful, and only shown, when VM is on.

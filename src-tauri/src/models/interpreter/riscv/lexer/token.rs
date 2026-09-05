@@ -89,7 +89,7 @@ pub enum InstructionKind {
     Rem,
     Remu,
 
-    // Single-precision floating point instructions
+    // Single precision floating point instructions
     Flw,
     Fsw,
     FmaddS,
@@ -117,7 +117,7 @@ pub enum InstructionKind {
     FcvtSWu,
     FmvWX,
 
-    // Double-precision floating point instructions
+    // Double precision floating point instructions
     Fld,
     Fsd,
     FmaddD,
@@ -145,7 +145,7 @@ pub enum InstructionKind {
     FcvtDW,
     FcvtDWu,
 
-    // Quad-precision floating point instructions
+    // Quad precision floating point instructions
     Flq,
     Fsq,
     FmaddQ,
@@ -283,7 +283,7 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
         "rem" => Rem,
         "remu" => Remu,
 
-        // Single-precision floating point instructions
+        // Single precision floating point instructions
         "flw" => Flw,
         "fsw" => Fsw,
         "fmadd.s" => FmaddS,
@@ -311,7 +311,7 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
         "fcvt.s.wu" => FcvtSWu,
         "fmv.w.x" => FmvWX,
 
-        // Double-precision floating point instructions
+        // Double precision floating point instructions
         "fld" => Fld,
         "fsd" => Fsd,
         "fmadd.d" => FmaddD,
@@ -339,7 +339,7 @@ pub fn lookup_instruction(word: &str) -> Option<InstructionKind> {
         "fcvt.d.w" => FcvtDW,
         "fcvt.d.wu" => FcvtDWu,
 
-        // Quad-precision floating point instructions
+        // Quad precision floating point instructions
         "flq" => Flq,
         "fsq" => Fsq,
         "fmadd.q" => FmaddQ,

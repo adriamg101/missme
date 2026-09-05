@@ -1,16 +1,13 @@
 import { defineStore } from "pinia";
 
-// Matches the default codegen setup in
-// src-tauri/src/models/interpreter/riscv/mod.rs. This is fixed by
-// convention and not something the user can edit, so it's exposed as a
-// read-only value rather than editable state.
+// Matches the default setup in src-tauri/src/models/interpreter/riscv/mod.rs.
+// This is fixed by convention, so it is exposed as a read only value.
 const TEXT_BASE = 0x00400000;
 
 interface CompileConfigState {
   dataBase: number;
   // Filled in after a successful compile, using the real output sizes so
-  // checks (like making sure .data and .text don't overlap) can use actual
-  // numbers instead of a guess. Stays empty until the first successful compile.
+  // overlap checks can use actual numbers instead of a guess.
   lastCompiledTextSize: number | null;
   lastCompiledDataSize: number | null;
 }

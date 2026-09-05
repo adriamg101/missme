@@ -2,11 +2,7 @@
 import { computed } from "vue";
 import { sizeLabel } from "../../lib/hierarchy/derive";
 
-/**
- * A number field for choosing powers of two.
- * Important: min and max must themselves be powers of two, the component does not check this itself.
- * The value only ever changes through the plus/minus buttons (the input can't be typed into), so it always stays a power of two.
- */
+// A number field for choosing powers of two, changed only with the plus and minus buttons so it always stays a power of two.
 const props = withDefaults(
   defineProps<{
     modelValue: number;

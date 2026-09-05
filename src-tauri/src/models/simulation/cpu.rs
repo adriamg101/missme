@@ -10,7 +10,7 @@ use super::{Action, ActionKind, CpuSimulator, RegisterId};
 struct PendingMemoryOp {
     source_line: usize,
     register: RegisterId,
-    #[allow(dead_code)] // kept alongside the other access details for consistency; nothing reads it yet, but something probably will soon
+    #[allow(dead_code)] // kept alongside the other access details for consistency, nothing reads it yet but something probably will soon
     size: u8,
     sign_extend: bool,
     is_fp: bool,
@@ -1390,7 +1390,7 @@ mod tests {
         sim.registers[1] = 0xFFFF_FFFF; // huge unsigned, would be -1 signed
         sim.registers[2] = 1;
         run_to_finished_action(&mut sim);
-        assert_eq!(sim.pc(), 0x1004); // not taken: 0xFFFFFFFF is NOT < 1 unsigned
+        assert_eq!(sim.pc(), 0x1004); // not taken, 0xFFFFFFFF is NOT < 1 unsigned
     }
 
     #[test]
@@ -1399,7 +1399,7 @@ mod tests {
         sim.registers[1] = 0xFFFF_FFFF; // -1 signed
         sim.registers[2] = 1;
         run_to_finished_action(&mut sim);
-        assert_eq!(sim.pc(), 0x1020); // taken: -1 < 1 signed
+        assert_eq!(sim.pc(), 0x1020); // taken, -1 < 1 signed
     }
 
     #[test]
@@ -1408,7 +1408,7 @@ mod tests {
         sim.registers[1] = 0xFFFF_FFFF; // -1 signed
         sim.registers[2] = 1;
         run_to_finished_action(&mut sim);
-        assert_eq!(sim.pc(), 0x1004); // not taken: -1 >= 1 is false
+        assert_eq!(sim.pc(), 0x1004); // not taken, -1 >= 1 is false
     }
 
     fn load_entry(kind: InstructionKind, address: u32, rd: u8, base: u8, imm: i64) -> IrEntry {
@@ -1428,7 +1428,7 @@ mod tests {
     #[test]
     fn lw_reads_a_previously_stored_word() {
         let mut mem = mem();
-        mem.preload_ram(0x10000000, &[0xEF, 0xBE, 0xAD, 0xDE]); // little-endian 0xDEADBEEF
+        mem.preload_ram(0x10000000, &[0xEF, 0xBE, 0xAD, 0xDE]); // little endian 0xDEADBEEF
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![load_entry(InstructionKind::Lw, 0x1000, 1, 2, 0)]), mem);
         sim.registers[2] = 0x10000000;
 
@@ -1496,7 +1496,7 @@ mod tests {
         // Regression test, with one cache level a fresh load misses the cache first, then a later step reaches RAM.
         // That RAM step must be reported as its own action, not silently combined with the final register write.
         let mut mem = mem_with_one_cache_level();
-        mem.preload_ram(0x10000000, &[0xEF, 0xBE, 0xAD, 0xDE]); // little-endian 0xDEADBEEF
+        mem.preload_ram(0x10000000, &[0xEF, 0xBE, 0xAD, 0xDE]); // little endian 0xDEADBEEF
         let mut sim = RiscvCpuSimulator::new(Base::Rv32i, codegen(vec![load_entry(InstructionKind::Lw, 0x1000, 1, 2, 0)]), mem);
         sim.registers[2] = 0x10000000;
 
@@ -2350,7 +2350,7 @@ mod tests {
         // Regression test, this conversion extends its 32 bit result using the sign bit, like the signed version does.
         // A result with the top bit set comes back with all the upper bits set to one as well.
         let mut sim = RiscvCpuSimulator::new(Base::Rv64i, codegen(vec![fclass_entry(InstructionKind::FcvtWuS, 0x1000, 1, 2)]), mem());
-        sim.f_registers[2] = 4294967295.0; // 2^32 - 1: the top bit of the 32-bit result is set
+        sim.f_registers[2] = 4294967295.0; // 2^32 minus 1, the top bit of the 32 bit result is set
         run_to_finished_action(&mut sim);
         assert_eq!(sim.register(RegisterId(1)), 0xFFFF_FFFF_FFFF_FFFF);
     }

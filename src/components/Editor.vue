@@ -14,7 +14,7 @@ import { useCompileConfigStore } from "../stores/compileConfig";
 import SimulationToolbar from "./simulation/SimulationToolbar.vue";
 import { useSimulationStore } from "../stores/simulation";
 
-// TODO: in the future this list should come from the backend instead of being hardcoded here
+// In the future this list should come from the backend instead of being fixed here in the code.
 const languages = ["RISC-V"];
 const languageOptions = languages.map((lang) => ({ value: lang, label: lang }));
 
@@ -149,7 +149,8 @@ async function performLoad(source: PendingSource) {
     return;
   }
 
-  const path = await open({ multiple: false });
+  const defaultPath = await invoke<string | null>("default_open_dir").catch(() => null);
+  const path = await open({ multiple: false, defaultPath: defaultPath ?? undefined });
   if (!path || Array.isArray(path)) return;
 
   const text = await readTextFile(path);

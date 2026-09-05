@@ -8,23 +8,23 @@ describe("IntegerStat", () => {
     expect(screen.getByText("42")).toBeTruthy();
   });
 
-  it("formats thousands with a k suffix", () => {
+  it("groups thousands with a space", () => {
     render(IntegerStat, { props: { label: "Cycles", value: 1500 } });
-    expect(screen.getByText("1.5k")).toBeTruthy();
+    expect(screen.getByText("1 500")).toBeTruthy();
   });
 
-  it("formats millions with an M suffix", () => {
+  it("groups millions with a space every three digits", () => {
     render(IntegerStat, { props: { label: "Cycles", value: 2_300_000 } });
-    expect(screen.getByText("2.3M")).toBeTruthy();
+    expect(screen.getByText("2 300 000")).toBeTruthy();
   });
 
-  it("formats billions with a G suffix", () => {
+  it("groups billions with a space every three digits", () => {
     render(IntegerStat, { props: { label: "Cycles", value: 4_000_000_000 } });
-    expect(screen.getByText("4G")).toBeTruthy();
+    expect(screen.getByText("4 000 000 000")).toBeTruthy();
   });
 
-  it("rolls over to the next unit instead of showing 1000 of the current one", () => {
-    render(IntegerStat, { props: { label: "Cycles", value: 999_999 } });
-    expect(screen.getByText("1M")).toBeTruthy();
+  it("rounds to the nearest whole number", () => {
+    render(IntegerStat, { props: { label: "Cycles", value: 999_999.6 } });
+    expect(screen.getByText("1 000 000")).toBeTruthy();
   });
 });

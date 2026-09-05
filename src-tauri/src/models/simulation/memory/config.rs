@@ -132,7 +132,7 @@ pub struct HierarchyConfig {
     pub tlb: TlbConfig,
     pub ram: RamConfig,
     pub disk: DiskConfig,
-    /// The seed the user chose for randomly pre-marking some cache lines as dirty, or none to pick a fresh one each session.
+    /// The seed the user chose for randomly marking some cache lines dirty ahead of time, or none to pick a fresh one each session.
     pub seed: Option<u64>,
 }
 

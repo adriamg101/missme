@@ -2,12 +2,8 @@ import { computed, onBeforeUnmount, ref, type ComputedRef, type Ref } from "vue"
 import { computeVirtualRange, type VirtualRange } from "./virtualScroll";
 
 export interface VirtualizedWindowOptions {
-  // A plain number for views where every row is the same fixed height
-  // (RAM, Frames, Disk). A function for views where the row height depends
-  // on data that only arrives after mount (the TLB's associativity isn't
-  // known until `get_tlb_info` resolves, and each set's block is
-  // `associativity * ROW_HEIGHT` tall, mirroring CacheLevelView.vue's
-  // existing `setBlockHeight`).
+  // A plain number for views where every row is the same fixed height.
+  // A function for views where the row height depends on data that only arrives after mount.
   rowHeight: number | (() => number);
   windowRows: number;
   recenterMarginRows: number;
@@ -27,11 +23,8 @@ export interface VirtualizedWindow {
   measureViewport: () => void;
 }
 
-// Shared by every windowed grid view (RAM, cache, TLB, frames, page table,
-// disk): shows only a bounded window of rows at a time and quietly slides
-// that window when the user scrolls near either edge, instead of trying to
-// represent a possibly enormous address or set range as one giant scroll
-// area. See RamView.vue's original comment for why this is necessary.
+// Shared by every windowed grid view. Shows only a bounded window of rows at
+// a time and slides that window when the user scrolls near either edge.
 export function useVirtualizedWindow(options: VirtualizedWindowOptions): VirtualizedWindow {
   const { rowHeight, windowRows, recenterMarginRows, totalRows, fetchPage } = options;
 
@@ -44,10 +37,8 @@ export function useVirtualizedWindow(options: VirtualizedWindowOptions): Virtual
   const viewportHeight = ref(0);
   const baseIndex = ref(0);
 
-  // The window is only ever as tall as it needs to be: when the real total
-  // (e.g. how many frames actually exist) is smaller than the configured
-  // sliding-window size, the scrollable area must match the real total, or
-  // the user could scroll far past the last real row into empty space.
+  // The window is only ever as tall as it needs to be. When the real total
+  // is smaller than the configured window size, the scrollable area must match it.
   const range = computed(() =>
     computeVirtualRange(scrollTop.value, viewportHeight.value, currentRowHeight(), Math.min(windowRows, totalRows())),
   );

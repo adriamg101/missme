@@ -52,7 +52,7 @@ fn phantom_dirty_roll(dirty_percent: u8, seed: u64, set_index: u64, way: u64) ->
     dirty_percent > 0 && seeded_random::percent_roll(seed, &[3, set_index, way]) < dirty_percent
 }
 
-/// The fake tag a pre-loaded dirty way shows or evicts.
+/// The fake tag an already loaded dirty way shows or evicts.
 /// It looks random and will basically never clash with a tag a real address produces.
 fn phantom_tag(seed: u64, set_index: u64, way: u64) -> u64 {
     seeded_random::value(seed, &[4, set_index, way])
@@ -139,8 +139,8 @@ impl SetAssociativeCache {
         evicted
     }
 
-    /// Drops the line matching `tag` in `set_index`, if any. A no-op if
-    /// nothing there currently has that tag.
+    /// Drops the line matching `tag` in `set_index`, if any. Does nothing
+    /// if nothing there currently has that tag.
     pub fn invalidate(&mut self, set_index: u64, tag: u64) {
         if let Some(lines) = self.sets.get_mut(&set_index) {
             lines.retain(|l| !(l.valid && l.tag == tag));
@@ -366,8 +366,8 @@ mod tests {
         let evicted = cache.insert(0, 999, false);
 
         assert_eq!(evicted, Some(Eviction { tag: phantom_tag, dirty: true }));
-        // The set now holds one real line, only the still-untouched way
-        // rolls as pre-loaded dirty.
+        // The set now holds one real line, only the way that is still untouched
+        // rolls as already loaded dirty.
         let snap = cache.snapshot_set(0);
         assert_eq!(snap[0].tag, 999);
         assert!(!snap[0].dirty);
@@ -412,7 +412,7 @@ mod tests {
     fn lfu_breaks_a_frequency_tie_by_least_recently_used() {
         let mut cache = SetAssociativeCache::with_policy_and_dirty_seed(2, replacement::Policy::Lfu, 0, 0);
         cache.insert(0, 1, false); // frequency 1, never touched again
-        cache.insert(0, 2, false); // frequency 1, tied with tag 1, but inserted (and so last-used) later
+        cache.insert(0, 2, false); // frequency 1, tied with tag 1, but inserted and last used later
 
         let evicted = cache.insert(0, 3, false);
 
