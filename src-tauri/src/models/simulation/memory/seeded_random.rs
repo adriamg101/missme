@@ -37,14 +37,14 @@ pub fn percent_roll(seed: u64, coords: &[u64]) -> u8 {
     (hash(seed, coords) % 100) as u8
 }
 
-/// A repeatable random-looking byte, used to fill in garbage content for a
-/// pre-loaded dirty RAM cell.
+/// A repeatable byte that looks random, used to fill in garbage content for an
+/// already loaded dirty RAM cell.
 pub fn byte(seed: u64, coords: &[u64]) -> u8 {
     (hash(seed, coords) & 0xff) as u8
 }
 
-/// A repeatable random-looking 64-bit value, used for example as a fake tag
-/// for a pre-loaded dirty cache line.
+/// A repeatable value that looks random, using 64 bits, used for example as a fake tag
+/// for an already loaded dirty cache line.
 pub fn value(seed: u64, coords: &[u64]) -> u64 {
     hash(seed, coords)
 }

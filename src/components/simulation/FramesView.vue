@@ -58,7 +58,7 @@ function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
-// Which byte within a row of 8 words a given column is.
+// Works out which byte offset a given column represents within a row of 8 words.
 function columnOffsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * 4).toString(16).toUpperCase().padStart(2, "0")}`;
 }
@@ -71,7 +71,7 @@ function wordAt(frame: Frame, subRow: number, column: number): number {
   return frame.words[subRow * WORDS_PER_SUBROW + column] ?? 0;
 }
 
-// Tells a word that was never really written apart from one that really holds a zero.
+// True only if this word was actually written, so an unwritten spot does not look like a real zero.
 function wordPopulatedAt(frame: Frame, subRow: number, column: number): boolean {
   return frame.populated[subRow * WORDS_PER_SUBROW + column] ?? false;
 }
@@ -191,6 +191,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
+  color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 .simulation-frames-jump-bar {
   flex: 0 0 auto;
@@ -199,6 +201,7 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
   padding: 0.5rem;
   border-bottom: 1px solid var(--secondary);
+  transition: border-color var(--theme-transition-duration) ease;
 }
 .simulation-frames-jump-bar button {
   padding: 0.3rem 0.7rem;
@@ -209,6 +212,7 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-frames-jump-bar button:hover {
   border-color: var(--accent);
@@ -224,6 +228,7 @@ onBeforeUnmount(() => {
   font-family: monospace;
   font-size: 0.8rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-frames-jump-input-invalid {
   border-color: var(--diagram-miss-color);
@@ -237,6 +242,7 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   overflow-y: hidden;
   box-sizing: border-box;
+  transition: none;
 }
 .simulation-frames-grid-wrapper {
   display: flex;
@@ -244,10 +250,12 @@ onBeforeUnmount(() => {
   width: fit-content;
   height: 100%;
   margin: 0 auto;
+  transition: none;
 }
 .simulation-frames-grid-header,
 .simulation-frames-block {
   width: fit-content;
+  transition: none;
 }
 .simulation-frames-cell {
   display: flex;
@@ -256,6 +264,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--secondary);
   padding: 0.15rem 0.6rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 .simulation-frames-cell-header {
   font-weight: 600;
@@ -267,11 +276,13 @@ onBeforeUnmount(() => {
 .simulation-frames-cell-empty {
   color: var(--text-muted, var(--text));
   opacity: 0.4;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 .simulation-frames-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  transition: none;
 }
 </style>

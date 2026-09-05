@@ -285,6 +285,7 @@ onBeforeUnmount(() => {
   padding: 0 1.5rem;
   font-size: 0.875rem;
   color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .hierarchy-slider-axis {
@@ -340,6 +341,7 @@ onBeforeUnmount(() => {
   opacity: 0.6;
   white-space: nowrap;
   pointer-events: none;
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .hierarchy-slider-marker {
@@ -358,6 +360,7 @@ onBeforeUnmount(() => {
   padding: 0;
   cursor: grab;
   z-index: 5;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease;
 }
 
 /* The instruction and data markers for a Harvard cache stack one above the
@@ -377,6 +380,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--text);
   pointer-events: none;
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .hierarchy-slider-marker:hover {
@@ -405,6 +409,7 @@ onBeforeUnmount(() => {
   color: var(--text);
   white-space: nowrap;
   pointer-events: none;
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .hierarchy-slider-marker.marker-above .hierarchy-slider-marker-label {
@@ -426,6 +431,7 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   box-shadow: var(--shadow);
   z-index: 1000;
+  transition: background-color var(--theme-transition-duration) ease, border-color var(--theme-transition-duration) ease, box-shadow var(--theme-transition-duration) ease;
 }
 
 .hierarchy-slider-context-menu button {
@@ -439,6 +445,7 @@ onBeforeUnmount(() => {
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .hierarchy-slider-context-menu button:hover,

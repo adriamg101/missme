@@ -14,10 +14,8 @@ export function persistPlugin({ store }: PiniaPluginContext) {
     }
   }
 
-  // Save immediately when a change happens, instead of waiting and batching
-  // it with other updates. Otherwise a read that happens right after a write
-  // (like in the save-and-reload test, and during normal app navigation)
-  // could run before the save actually finishes.
+  // Save immediately when a change happens, instead of waiting and grouping
+  // it with other updates. Otherwise a read right after a write could run before the save finishes.
   store.$subscribe(
     (_mutation, state) => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));

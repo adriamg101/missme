@@ -2,11 +2,7 @@
 import { computed } from "vue";
 import { sizeLabel } from "../../lib/hierarchy/derive";
 
-/**
- * A number field for choosing powers of two.
- * Important: min and max must themselves be powers of two, the component does not check this itself.
- * The value only ever changes through the plus/minus buttons (the input can't be typed into), so it always stays a power of two.
- */
+// A number field for choosing powers of two, changed only with the plus and minus buttons so it always stays a power of two.
 const props = withDefaults(
   defineProps<{
     modelValue: number;
@@ -64,6 +60,7 @@ function decrement() {
 .power-of-two-stepper-label {
   font-size: 0.875rem;
   color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .power-of-two-stepper {
@@ -72,6 +69,7 @@ function decrement() {
   border: 1px solid var(--secondary);
   border-radius: 6px;
   overflow: hidden;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .power-of-two-stepper-button {
@@ -84,6 +82,7 @@ function decrement() {
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
+  transition: background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .power-of-two-stepper-button:hover {
@@ -106,6 +105,7 @@ function decrement() {
   font: inherit;
   text-align: center;
   cursor: default;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .power-of-two-stepper input:focus-visible {

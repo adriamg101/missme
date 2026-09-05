@@ -188,7 +188,7 @@ function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
-// Which byte within a row of 8 words a given column is.
+// Works out which byte offset a given column represents within a row of 8 words.
 function offsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * WORD_SIZE).toString(16).toUpperCase().padStart(2, "0")}`;
 }
@@ -331,21 +331,13 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
                 :style="{ position: 'absolute', top: `${(range.start + i) * setBlockHeight}px`, height: `${setBlockHeight}px`, ...setGridStyle }"
               >
                 <template v-if="sets.get(setIndex)">
-                  <!--
-                    The Set number is placed first and stretches down to cover
-                    every way's full block (subRowsPerLine rows each) in this
-                    set, taking up the first column for the whole block. Every
-                    other cell gets an explicit column and row instead of
-                    relying on the grid's auto-placement, since each way now
-                    spans several rows (one per 8 words) rather than exactly
-                    one, which auto-placement can't express on its own.
-                  -->
+                  <!-- The set number spans the whole block and every other cell gets its own column and row since each way now covers several rows. -->
                   <span
                     class="simulation-cache-cell simulation-cache-set-index"
                     :style="{ gridColumn: 1, gridRow: `1 / span ${sets.get(setIndex)!.ways.length * subRowsPerLine}` }"
                   >{{ setIndex }}</span>
                   <template v-for="(way, wi) in sets.get(setIndex)!.ways" :key="wi">
-                    <!-- A real line: one that an actual access put there. -->
+                    <!-- A real line is one that an actual access put there. -->
                     <template v-if="way.valid && !way.isPhantom">
                       <span class="simulation-cache-cell" :style="{ gridColumn: 2, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">1</span>
                       <span class="simulation-cache-cell" :style="{ gridColumn: 3, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">{{ way.dirty ? "1" : "0" }}</span>
@@ -361,10 +353,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
                         >{{ wordExistsAt(sr - 1, wj - 1) ? hexWord(wordAt(way, sr - 1, wj - 1)) : "-" }}</span>
                       </template>
                     </template>
-                    <!-- A phantom line: it was marked dirty from the start but
-                         never actually accessed. The dirty bit is real, but
-                         its tag and data are never shown since the program
-                         hasn't touched it yet. -->
+                    <!-- A phantom line was marked dirty from the start but never actually accessed, so its tag and data are never shown. -->
                     <template v-else-if="way.valid">
                       <span class="simulation-cache-cell" :style="{ gridColumn: 2, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">1</span>
                       <span class="simulation-cache-cell" :style="{ gridColumn: 3, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">1</span>
@@ -409,6 +398,8 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
+  color: var(--text);
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-jump-bar {
@@ -419,6 +410,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   padding: 0.5rem;
   border-bottom: 1px solid var(--secondary);
   font-family: sans-serif;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-jump-bar button {
@@ -430,6 +422,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-jump-bar button:hover {
@@ -447,6 +440,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   font-family: monospace;
   font-size: 0.8rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-jump-input-invalid {
@@ -462,6 +456,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   overflow-x: auto;
   overflow-y: hidden;
   box-sizing: border-box;
+  transition: none;
 }
 
 .simulation-cache-grid-wrapper {
@@ -470,6 +465,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   width: fit-content;
   height: 100%;
   margin: 0 auto;
+  transition: none;
 }
 
 .simulation-cache-grid-header {
@@ -478,6 +474,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   background: var(--background);
   box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.4);
   width: fit-content;
+  transition: background-color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-body {
@@ -485,11 +482,13 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  transition: none;
 }
 
 .simulation-cache-set-block {
   align-items: stretch;
   width: fit-content;
+  transition: none;
 }
 
 .simulation-cache-cell {
@@ -499,6 +498,7 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
   border: 1px solid var(--secondary);
   padding: 0.15rem 0.6rem;
   box-sizing: border-box;
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .simulation-cache-cell-header {
@@ -521,5 +521,6 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
 .simulation-cache-cell-empty {
   color: var(--text-muted, var(--text));
   opacity: 0.4;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 </style>

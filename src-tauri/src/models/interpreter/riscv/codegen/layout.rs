@@ -52,8 +52,8 @@ pub(super) fn build(program: &Program, config: &CodegenConfig) -> Result<LayoutR
                     errors.push(CodegenError::new(*line, *column, "instruction found in .data section"));
                     continue;
                 }
-                // This step still runs even after an earlier check already found errors, so a wrongly shaped instruction can reach here.
-                // We skip just this instruction instead of letting one bad line crash the whole build, its real error was already reported.
+                // This runs even after an earlier check found errors, so a wrongly shaped instruction can still reach here.
+                // We just skip this one instruction so one bad line does not crash the whole build, since its error was already reported.
                 let expanded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| expand(node)));
                 if let Ok(expanded) = expanded {
                     for instr in expanded {

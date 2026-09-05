@@ -47,6 +47,18 @@ fn work_dir() -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// Where the open file dialog should start, the project's own example programs
+/// if this build can still find them, or the normal default folder otherwise.
+#[tauri::command]
+pub fn default_open_dir() -> Option<String> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/riscv");
+    if dir.is_dir() {
+        dir.canonicalize().ok().map(|p| p.to_string_lossy().into_owned())
+    } else {
+        None
+    }
+}
+
 #[tauri::command]
 pub fn compile(
     source: String,

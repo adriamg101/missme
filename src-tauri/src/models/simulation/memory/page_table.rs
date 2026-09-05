@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use super::seeded_random;
 use serde::Serialize;
+
+/// The size of one page table entry in bytes, used to work out real addresses.
+const ENTRY_SIZE: u64 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageTableEntry {
@@ -27,7 +29,12 @@ pub struct PageTable {
     levels: u8,
     /// How many address bits each level uses, from the leaf first to the root last.
     level_bits: Vec<u32>,
-    seed: u64,
+    /// Where the page table's own real address space starts, right after the frame pool.
+    pt_base: u64,
+    /// How many bytes of that space have been handed out to tables so far.
+    next_table_offset: u64,
+    /// The real base address already given to each table, so it is only assigned once.
+    table_addresses: HashMap<(u8, u64), u64>,
     entries: HashMap<(u8, u64), PageTableEntry>,
 }
 
@@ -43,16 +50,16 @@ impl PageTable {
 
     /// address_bits is the full address width for the ISA.
     /// The bits left after the page offset are the ones split across the levels.
-    pub fn new(levels: u8, page_size: u32, address_bits: u32, seed: u64) -> Self {
+    pub fn new(levels: u8, page_size: u32, address_bits: u32, pt_base: u64) -> Self {
         let offset_bits = page_size.max(1).trailing_zeros();
         let total_vpn_bits = address_bits.saturating_sub(offset_bits);
-        Self::with_level_bits(Self::distribute_index_bits(total_vpn_bits, levels), seed)
+        Self::with_level_bits(Self::distribute_index_bits(total_vpn_bits, levels), pt_base)
     }
 
     /// Builds a page table with a specific bit width for each level, instead of splitting them evenly.
-    pub fn with_level_bits(level_bits: Vec<u32>, seed: u64) -> Self {
+    pub fn with_level_bits(level_bits: Vec<u32>, pt_base: u64) -> Self {
         let levels = (level_bits.len().max(1)) as u8;
-        Self { levels, level_bits, seed, entries: HashMap::new() }
+        Self { levels, level_bits, pt_base, next_table_offset: 0, table_addresses: HashMap::new(), entries: HashMap::new() }
     }
 
     pub fn levels(&self) -> u8 {
@@ -86,15 +93,30 @@ impl PageTable {
     }
 
     /// The page number masked down to just this level's own bits.
-    /// Use this for display or the made up address, never as a storage key.
+    /// Use this for display or the entry address, never as a storage key.
     fn prefix_at_level(&self, vpn: u64, level: u8) -> u64 {
         self.key_prefix_at_level(vpn, level) & self.mask_for_level(level)
     }
 
-    /// A stable made up address for this level and page, only so a cache can match a lookup the same way it matches real data.
-    /// Never a real physical address.
-    pub fn synthetic_address(&self, level: u8, vpn: u64) -> u64 {
-        seeded_random::value(self.seed, &[6, level as u64, self.prefix_at_level(vpn, level)])
+    /// The real address of the table that holds this level and page's own entry.
+    /// Given out the first time that table is needed, right after every table already handed out.
+    fn table_base_address(&mut self, level: u8, vpn: u64) -> u64 {
+        let own_bits = self.level_bits.get(level.saturating_sub(1) as usize).copied().unwrap_or(0);
+        let table_key = (level, self.key_prefix_at_level(vpn, level) >> own_bits);
+        if let Some(&address) = self.table_addresses.get(&table_key) {
+            return address;
+        }
+        let address = self.pt_base + self.next_table_offset;
+        // One extra entry of padding after each table, so two tables never end up an exact multiple of a cache's set count apart.
+        self.next_table_offset += (1u64 << own_bits) * ENTRY_SIZE + ENTRY_SIZE;
+        self.table_addresses.insert(table_key, address);
+        address
+    }
+
+    /// The real physical address of this level and page's own entry, used so a cache lookup for a page table walk behaves like a real memory access.
+    pub fn entry_address(&mut self, level: u8, vpn: u64) -> u64 {
+        let base = self.table_base_address(level, vpn);
+        base + self.prefix_at_level(vpn, level) * ENTRY_SIZE
     }
 
     /// Marks that this branch of the walk has been reached before, and keeps that mark forever.
@@ -198,17 +220,36 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_address_is_stable_for_the_same_level_and_vpn() {
-        let table = PageTable::new(2, 4096, 32, 1);
-        assert_eq!(table.synthetic_address(1, 9), table.synthetic_address(1, 9));
+    fn entry_address_is_stable_for_the_same_level_and_vpn() {
+        let mut table = PageTable::new(2, 4096, 32, 1024);
+        assert_eq!(table.entry_address(1, 9), table.entry_address(1, 9));
     }
 
     #[test]
-    fn two_vpns_sharing_the_same_higher_level_prefix_get_the_same_synthetic_address_at_that_level() {
-        // These two pages share every bit except the lowest 10, so they land in the same entry at level 2 but not level 1.
-        let table = PageTable::new(2, 4096, 32, 1);
-        assert_eq!(table.synthetic_address(2, 0), table.synthetic_address(2, 1));
-        assert_ne!(table.synthetic_address(1, 0), table.synthetic_address(1, 1), "but at the leaf level they're different entries");
+    fn entries_in_the_one_root_table_get_different_addresses_by_their_own_index() {
+        // With only 2 levels, level 2 is the root, and there is exactly one root table.
+        // Pages of 4096 bytes over 32 address bits split into two levels of 10 bits each, so a VPN needs to differ in its top 10 bits to land on a different root entry.
+        let mut table = PageTable::new(2, 4096, 32, 1024);
+        assert_ne!(table.entry_address(2, 0), table.entry_address(2, 1u64 << 10));
+        assert_ne!(table.entry_address(1, 0), table.entry_address(1, 1), "and at the leaf level they're different entries too");
+    }
+
+    #[test]
+    fn entries_in_different_tables_never_collide_even_with_the_same_index_within_their_own_table() {
+        // 3 levels so level 2 is a real intermediate level, with more than one possible table.
+        let mut table = PageTable::with_level_bits(vec![4, 4, 4], 1024);
+        let vpn_a = 0u64;
+        let vpn_b = 1u64 << 8; // a different level 3 branch, but the same masked index at level 2
+        assert_ne!(table.entry_address(2, vpn_a), table.entry_address(2, vpn_b), "different tables must never share an address just because their own index matches");
+    }
+
+    #[test]
+    fn a_new_tables_address_starts_right_after_every_table_already_handed_out() {
+        let mut table = PageTable::with_level_bits(vec![4, 4], 1024);
+        let first_table_entry = table.entry_address(1, 0); // creates the first, and only, level 1 table
+        let root_entry = table.entry_address(2, 0); // creates the root table, right after the level 1 table's own 16 entries plus one padding entry
+        assert_eq!(first_table_entry, 1024);
+        assert_eq!(root_entry, 1024 + 17 * 8);
     }
 
     #[test]
@@ -220,7 +261,7 @@ mod tests {
     #[test]
     fn entries_under_reports_each_entrys_real_unmasked_key() {
         let mut table = PageTable::with_level_bits(vec![4, 4], 1);
-        table.set_leaf_present(20, 70); // key 20 (0b10100), masked index 20 & 15 = 4
+        table.set_leaf_present(20, 70); // key 20, which is 0b10100, masked index 20 & 15 = 4
         let rows = table.entries_under(1, Some(1), 0, 100);
         assert_eq!(rows[0].key, 20);
         assert_eq!(rows[0].index, 4);

@@ -59,7 +59,7 @@ pub(crate) fn build_session(
     let seed = hierarchy.seed.unwrap_or_else(seeded_random::generate_seed);
 
     // Under VM, disk plays the role plain RAM plays otherwise, the final store covering the whole address space.
-    // So disk gets the pre-loaded garbage treatment instead of RAM, which VM never reads through directly.
+    // So disk gets the already loaded garbage treatment instead of RAM, which VM never reads through directly.
     let (ram_store_dirty_percent, disk_store_dirty_percent, disk_store_block_size) =
         if vm_enabled { (0, ram_dirty_percent, page_size) } else { (ram_dirty_percent, 0, disk_block_size) };
 
@@ -388,6 +388,7 @@ mod tests {
                 outcome: LevelOutcome::Hit,
                 address: 0x1000,
                 access_kind: AccessKind::Load,
+                page_translation_outcome: None,
             }),
             source_line: 9,
             instruction_complete: false,
@@ -409,6 +410,7 @@ mod tests {
                 outcome: LevelOutcome::Hit,
                 address: 0x2000,
                 access_kind: AccessKind::Store,
+                page_translation_outcome: None,
             }),
             source_line: 9,
             instruction_complete: false,
@@ -428,6 +430,7 @@ mod tests {
                 outcome: LevelOutcome::Miss,
                 address: 0x3000,
                 access_kind: AccessKind::Fetch,
+                page_translation_outcome: None,
             }),
             source_line: 9,
             instruction_complete: false,
@@ -462,7 +465,7 @@ mod tests {
             vm_enabled: false,
             page_size: 4096,
             hierarchy: vec![],
-            tlb: TlbConfig { page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru },
+            tlb: TlbConfig { page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru, latency: 1 },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
             seed: None,

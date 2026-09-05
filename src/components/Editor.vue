@@ -14,7 +14,7 @@ import { useCompileConfigStore } from "../stores/compileConfig";
 import SimulationToolbar from "./simulation/SimulationToolbar.vue";
 import { useSimulationStore } from "../stores/simulation";
 
-// TODO: in the future this list should come from the backend instead of being hardcoded here
+// In the future this list should come from the backend instead of being fixed here in the code.
 const languages = ["RISC-V"];
 const languageOptions = languages.map((lang) => ({ value: lang, label: lang }));
 
@@ -46,11 +46,14 @@ function selectBase(base: "RV32I" | "RV64I") {
   riscvBase.value = base;
 }
 
+// D extends F in the real spec, so D can never be on without F.
 function toggleExtension(extension: RiscvExtension) {
   if (riscvExtensions.value.has(extension)) {
     riscvExtensions.value.delete(extension);
+    if (extension === "F") riscvExtensions.value.delete("D");
   } else {
     riscvExtensions.value.add(extension);
+    if (extension === "D") riscvExtensions.value.add("F");
   }
 }
 
@@ -146,7 +149,8 @@ async function performLoad(source: PendingSource) {
     return;
   }
 
-  const path = await open({ multiple: false });
+  const defaultPath = await invoke<string | null>("default_open_dir").catch(() => null);
+  const path = await open({ multiple: false, defaultPath: defaultPath ?? undefined });
   if (!path || Array.isArray(path)) return;
 
   const text = await readTextFile(path);
@@ -464,6 +468,7 @@ defineExpose({ selectedLanguage });
   border: 1px solid var(--secondary);
   background: var(--background);
   box-shadow: var(--shadow);
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, box-shadow var(--theme-transition-duration) ease;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -537,6 +542,10 @@ defineExpose({ selectedLanguage });
   font-size: 0.75rem;
   color: var(--text);
   cursor: pointer;
+}
+
+.editor-options-checkbox input[type="checkbox"] {
+  accent-color: var(--accent);
 }
 
 .editor-body {

@@ -154,7 +154,7 @@ mod tests {
     fn invalidate_only_removes_the_matching_vpn_within_its_set() {
         let mut tlb = Tlb::new(4, 2); // 2 sets, associativity 2
         tlb.insert(0, 10);
-        tlb.insert(2, 20); // shares set 0 with vpn 0 (0 % 2 == 2 % 2 == 0)
+        tlb.insert(2, 20); // shares set 0 with vpn 0, since 0 % 2 equals 2 % 2
         tlb.invalidate(0);
         assert_eq!(tlb.lookup(0), None);
         assert_eq!(tlb.lookup(2), Some(20), "a sibling entry in the same set must survive");
@@ -234,7 +234,7 @@ mod tests {
     fn fifo_evicts_the_first_inserted_entry_even_after_a_later_hit() {
         let mut tlb = Tlb::with_policy_and_seed(4, 2, replacement::Policy::Fifo, 0); // 2 sets, associativity 2
         tlb.insert(0, 10);
-        tlb.insert(2, 20); // shares set 0 with vpn 0 (0 % 2 == 2 % 2 == 0)
+        tlb.insert(2, 20); // shares set 0 with vpn 0, since 0 % 2 equals 2 % 2
         tlb.lookup(0); // a hit on vpn 0 must not save it from FIFO eviction
         tlb.insert(4, 40); // also lands in set 0, forces an eviction
 

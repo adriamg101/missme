@@ -91,6 +91,7 @@ pub struct TlbConfig {
     pub entries: u32,
     pub associativity: u32,
     pub replacement: TlbReplacementPolicy,
+    pub latency: u32,
 }
 
 /// Which free frame a page fault picks, either the next one in order or a seeded random pick.
@@ -131,7 +132,7 @@ pub struct HierarchyConfig {
     pub tlb: TlbConfig,
     pub ram: RamConfig,
     pub disk: DiskConfig,
-    /// The seed the user chose for randomly pre-marking some cache lines as dirty, or none to pick a fresh one each session.
+    /// The seed the user chose for randomly marking some cache lines dirty ahead of time, or none to pick a fresh one each session.
     pub seed: Option<u64>,
 }
 
@@ -172,6 +173,7 @@ mod tests {
                 entries: 64,
                 associativity: 4,
                 replacement: TlbReplacementPolicy::Lru,
+                latency: 1,
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
@@ -203,6 +205,7 @@ mod tests {
         assert_eq!(json["tlb"]["entries"], 64);
         assert_eq!(json["tlb"]["associativity"], 4);
         assert_eq!(json["tlb"]["replacement"], "LRU");
+        assert_eq!(json["tlb"]["latency"], 1);
         assert!(json["tlb"].get("pageSize").is_none());
         assert!(json["tlb"].get("pageTableLevels").is_none());
         assert_eq!(json["ram"]["latency"], 100);
@@ -272,7 +275,7 @@ mod tests {
             vm_enabled: true,
             page_size: 4096,
             hierarchy: vec![],
-            tlb: TlbConfig { page_walk_start: "RAM".into(), entries: 64, associativity: 4, replacement: TlbReplacementPolicy::Lru },
+            tlb: TlbConfig { page_walk_start: "RAM".into(), entries: 64, associativity: 4, replacement: TlbReplacementPolicy::Lru, latency: 1 },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
             seed: None,

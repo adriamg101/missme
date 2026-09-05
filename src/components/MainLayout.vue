@@ -76,11 +76,13 @@ onBeforeUnmount(stopDrag);
   height: 100%;
   background: var(--background);
   color: var(--text);
+  transition: background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .pane-left {
   flex-grow: 0;
   flex-shrink: 0;
+  transition: none;
 }
 
 .pane-right {
@@ -89,22 +91,26 @@ onBeforeUnmount(stopDrag);
   display: flex;
   flex-direction: column;
   min-width: 0;
+  transition: none;
 }
 
 .pane-top-right {
   flex-grow: 0;
   flex-shrink: 0;
+  transition: none;
 }
 
 .pane-bottom-right {
   flex-grow: 0;
   flex-shrink: 0;
   min-height: 0;
+  transition: none;
 }
 
 .pane {
   overflow: auto;
   min-width: 0;
+  transition: none;
 }
 
 .resize-handle {

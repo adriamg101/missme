@@ -38,6 +38,7 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
       entries: 64,
       associativity: 4,
       replacement: "LRU",
+      latency: 1,
     },
     ram: defaultRamConfig(),
     disk: defaultDiskConfig(),
@@ -88,11 +89,8 @@ export const useHierarchyConfigStore = defineStore("hierarchyConfig", {
         if (level.id !== levelId) return level;
         const entry = chain === "unified" ? level.unified : chain === "i" ? level.i : level.d;
         if (!entry) return level;
-        // 2 to the power of exp is the cache's total number of entries
-        // (number of sets times associativity), and it doesn't depend on
-        // block size. See diagram.ts's byteSizeLabel and the backend's
-        // set-count calculation, both of which only use associativity, never
-        // block size.
+        // 2 to the power of exp is the cache's total number of entries and
+        // does not depend on block size.
         const maxAssociativity = 2 ** entry.exp;
         if (entry.config.associativity <= maxAssociativity) return level;
         const clampedEntry = { ...entry, config: { ...entry.config, associativity: maxAssociativity } };

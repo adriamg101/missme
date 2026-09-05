@@ -33,8 +33,8 @@ export function chainLabel(hierarchy: Hierarchy, index: number, chain: "i" | "d"
   return chain === "i" ? `${base}i` : `${base}d`;
 }
 
-// The slider counts entries (tags), not bytes, so there's no "B" suffix.
-// K/M/G and so on only show up once the plain number would be too big to read easily.
+// The slider counts entries, not bytes, so there is no B suffix.
+// K, M, G and so on only show up once the plain number would be too big to read easily.
 const SIZE_UNITS = ["", "K", "M", "G", "T", "P", "E"];
 
 export function sizeLabel(exp: number): string {
@@ -114,11 +114,8 @@ export function pageWalkTargets(hierarchy: Hierarchy): PageWalkTarget[] {
   return targets;
 }
 
-// The size of the biggest cache (as an entry count, not the exponent)
-// anywhere in the hierarchy, across both the instruction and data sides.
-// Returns 1 (2^0) if the hierarchy is empty, so code that wants "the next
-// power of two above this" never has to worry about dividing by zero or
-// starting from a negative exponent.
+// The biggest cache size as an entry count, across every level and both
+// instruction and data sides. Returns 1 when the hierarchy is empty.
 export function maxCacheSize(hierarchy: Hierarchy): number {
   let maxExp = 0;
   hierarchy.forEach((level) => {
@@ -131,11 +128,8 @@ export function maxCacheSize(hierarchy: Hierarchy): number {
   return 2 ** maxExp;
 }
 
-// The biggest cache capacity in bytes (entries times block size) anywhere in
-// the hierarchy, across both the instruction and data sides. Returns 1 if
-// the hierarchy is empty. This is different from maxCacheSize, which returns
-// the entry count, not bytes: this one returns real bytes, matching how
-// RamConfig.size and CacheConfig.blockSize are also measured in bytes.
+// The biggest cache capacity in bytes, entries times block size, across
+// every level and both sides. Unlike maxCacheSize, this counts real bytes.
 export function maxCacheByteCapacity(hierarchy: Hierarchy): number {
   let maxBytes = 1;
   hierarchy.forEach((level) => {

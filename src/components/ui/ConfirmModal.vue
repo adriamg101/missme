@@ -37,11 +37,13 @@ const emit = defineEmits<{ save: []; discard: []; cancel: [] }>();
   border: 1px solid var(--secondary);
   background: var(--background);
   color: var(--text);
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .confirm-modal-text {
   margin: 0 0 0.75rem;
   font-size: 0.85rem;
+  transition: none;
 }
 
 .confirm-modal-actions {
@@ -59,6 +61,7 @@ const emit = defineEmits<{ save: []; discard: []; cancel: [] }>();
   font-family: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
 .confirm-modal-button:hover {

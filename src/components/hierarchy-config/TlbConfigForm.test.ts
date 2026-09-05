@@ -7,6 +7,7 @@ const tlb = {
   entries: 64,
   associativity: 4,
   replacement: "LRU" as const,
+  latency: 1,
 };
 
 const targets = [
@@ -37,5 +38,14 @@ describe("TlbConfigForm", () => {
     const { emitted } = render(TlbConfigForm, { props: { tlb, pageWalkTargets: targets } });
     await fireEvent.click(screen.getAllByLabelText("Increment")[0]);
     expect(emitted().update[0]).toEqual([{ entries: 128 }]);
+  });
+
+  it("shows the TLB latency field and emits an update patch when changed", async () => {
+    const { getByLabelText, emitted } = render(TlbConfigForm, { props: { tlb, pageWalkTargets: targets } });
+    const field = getByLabelText("TLB latency") as HTMLInputElement;
+    expect(field.value).toBe("1");
+    await fireEvent.update(field, "4");
+    await fireEvent.blur(field);
+    expect(emitted().update.at(-1)).toEqual([{ latency: 4 }]);
   });
 });

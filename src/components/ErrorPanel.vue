@@ -39,6 +39,7 @@ function toggle() {
   flex-direction: column;
   max-height: 75%;
   border-top: 1px solid var(--secondary);
+  transition: border-color var(--theme-transition-duration) ease;
 }
 
 .error-panel-header {
@@ -54,6 +55,7 @@ function toggle() {
   font-family: inherit;
   font-size: 0.75rem;
   cursor: pointer;
+  transition: color var(--theme-transition-duration) ease;
 }
 
 .error-panel-header:hover {
@@ -62,7 +64,7 @@ function toggle() {
 }
 
 .error-panel-chevron {
-  transition: transform 0.2s ease;
+  transition: transform 0.2s ease, stroke var(--theme-transition-duration) ease;
 }
 
 .error-panel-chevron-expanded {
@@ -80,5 +82,6 @@ function toggle() {
   font-size: 0.75rem;
   color: var(--text);
   border-top: 1px solid var(--secondary);
+  transition: color var(--theme-transition-duration) ease, border-color var(--theme-transition-duration) ease;
 }
 </style>

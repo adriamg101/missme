@@ -47,7 +47,7 @@ impl FrameTable {
         Self {
             page_size,
             num_frames,
-            // Small, word-sized blocks, so a frame can tell a really written word from one that just defaults to zero.
+            // Small blocks the size of a word, so a frame can tell a really written word from one that just defaults to zero.
             bytes: DataStore::new(4),
             meta: HashMap::new(),
             tick: 0,
@@ -254,14 +254,14 @@ mod tests {
 
     #[test]
     fn a_fresh_frame_reports_every_word_as_unpopulated() {
-        let mut table = FrameTable::new(4, 4 * 2, FrameAllocationPolicy::Sequential, 1); // page_size 4 -> 1 word/page
+        let mut table = FrameTable::new(4, 4 * 2, FrameAllocationPolicy::Sequential, 1); // page size 4 gives 1 word per page
         let (frame, _) = table.allocate(1);
         assert_eq!(table.read_page_populated(frame), vec![false]);
     }
 
     #[test]
     fn write_page_bytes_only_marks_the_words_the_source_actually_had_populated() {
-        let mut table = FrameTable::new(8, 8 * 2, FrameAllocationPolicy::Sequential, 1); // page_size 8 -> 2 words/page
+        let mut table = FrameTable::new(8, 8 * 2, FrameAllocationPolicy::Sequential, 1); // page size 8 gives 2 words per page
         let (frame, _) = table.allocate(1);
         // Only the second word is populated on the source side, the first word's bytes are just the default zero fill.
         table.write_page_bytes(frame, &[0, 0, 0, 0, 9, 8, 7, 6], &[false, true]);
@@ -287,7 +287,7 @@ mod tests {
         let (frame_c, _) = table.allocate(30); // frame 2, table now full
         table.read_byte(0, 0);
         table.read_byte(frame_c, 0);
-        let (_, evicted) = table.allocate(40); // must evict frame_b (the untouched one)
+        let (_, evicted) = table.allocate(40); // must evict frame_b, the untouched one
         assert_eq!(evicted.unwrap().frame, frame_b);
 
         // This mostly checks that allocate never panics or reuses a frame that is still occupied.

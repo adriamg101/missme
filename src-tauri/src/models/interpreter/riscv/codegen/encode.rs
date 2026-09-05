@@ -449,8 +449,8 @@ mod tests {
 
     #[test]
     fn encodes_fmadd_s() {
-        // Checks the fields land in the right spots for a four-operand
-        // floating-point instruction like "fmadd.s".
+        // Checks the fields land in the right spots for a four operand
+        // floating point instruction like fmadd.s.
         let ops = vec![f(1), f(2), f(3), f(4)];
         assert_eq!(encode(InstructionKind::FmaddS, &ops), r4_type(0b1000011, 0b00, 4, 3, 2, 0b000, 1));
     }

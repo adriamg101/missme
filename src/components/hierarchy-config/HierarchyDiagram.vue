@@ -83,7 +83,7 @@ defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
         v-for="box in layout.boxes"
         :key="box.id"
         :data-box-id="box.id"
-        :style="{ '--box-hue': box.hue, '--box-chroma': box.chroma }"
+        :style="{ '--box-hue': box.hue, '--box-chroma': box.chroma, '--box-lightness-delta': box.lightnessDelta ?? 0 }"
         :class="[
           'hierarchy-diagram-box',
           {
@@ -125,6 +125,7 @@ defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
   box-shadow: var(--shadow);
   overflow-x: auto;
   overflow-y: auto;
+  transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, box-shadow var(--theme-transition-duration) ease;
 }
 
 .hierarchy-diagram-svg {
@@ -135,20 +136,21 @@ defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
   fill: none;
   stroke: var(--secondary);
   stroke-width: 3;
+  transition: stroke var(--theme-transition-duration) ease;
 }
 
 .hierarchy-diagram-box-rect {
-  stroke: oklch(var(--diagram-lightness-border) var(--box-chroma) var(--box-hue));
+  stroke: oklch(calc(var(--diagram-lightness-border) + var(--box-lightness-delta, 0)) var(--box-chroma) var(--box-hue));
   stroke-width: 1.5;
-  fill: oklch(var(--diagram-lightness-fill) calc(var(--box-chroma) * var(--diagram-fill-chroma-mult)) var(--box-hue));
-  transition: stroke 0.2s ease, filter 0.2s ease;
+  fill: oklch(calc(var(--diagram-lightness-fill) + var(--box-lightness-delta, 0)) calc(var(--box-chroma) * var(--diagram-fill-chroma-mult)) var(--box-hue));
+  transition: fill var(--theme-transition-duration) ease, stroke 0.2s ease, filter 0.2s ease;
 }
 
 .hierarchy-diagram-box-label,
 .hierarchy-diagram-box-sub {
   text-anchor: middle;
   pointer-events: none;
-  fill: oklch(var(--diagram-lightness-text) calc(var(--box-chroma) * var(--diagram-text-chroma-mult)) var(--box-hue));
+  fill: oklch(calc(var(--diagram-lightness-text) + var(--box-lightness-delta, 0)) calc(var(--box-chroma) * var(--diagram-text-chroma-mult)) var(--box-hue));
 }
 
 .hierarchy-diagram-box-label {
@@ -197,5 +199,6 @@ defineExpose({ triggerHitMiss, setStatusMessage, clearAccessStates });
   background: var(--secondary);
   padding: 0.25rem 0.5rem;
   border-radius: 6px;
+  transition: color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease;
 }
 </style>

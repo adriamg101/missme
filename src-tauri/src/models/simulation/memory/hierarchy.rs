@@ -42,6 +42,7 @@ pub struct LevelResult {
     pub outcome: LevelOutcome,
     pub address: u64,
     pub access_kind: AccessKind,
+    pub page_translation_outcome: Option<LevelOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,7 +134,7 @@ struct CacheLevelState {
     d: Option<(CacheConfig, u32, SetAssociativeCache)>,
 }
 
-/// The side tag stops two sides of the same level from starting with the same pre-loaded dirty pattern.
+/// The side tag stops two sides of the same level from starting with the same already loaded dirty pattern.
 /// A level with separate instruction and data caches gets a different starting pattern for each side.
 fn cache_state_for(level: &Level, level_index: usize, session_seed: u64) -> CacheLevelState {
     let build = |entry: &CacheEntry, side_tag: u64| {
@@ -239,7 +240,9 @@ impl MemoryHierarchySimulator {
         let offset_bits = config.page_size.max(1).trailing_zeros();
         let total_vpn_bits = address_bits.saturating_sub(offset_bits);
         let pt_levels = config.ram.page_table_levels.min(total_vpn_bits.max(1) as u8).max(1);
-        let page_table = PageTable::new(pt_levels, config.page_size, address_bits, seed);
+        // The page table's own real addresses start right after the frame pool, so it never overlaps real data.
+        let pt_base = config.ram.frames as u64 * config.page_size as u64;
+        let page_table = PageTable::new(pt_levels, config.page_size, address_bits, pt_base);
         let frames = FrameTable::new(config.page_size, config.ram.frames.saturating_mul(config.page_size), config.ram.frame_allocation, seed);
         let levels = config.hierarchy.iter().enumerate().map(|(i, level)| cache_state_for(level, i, seed)).collect();
         Self {
@@ -261,6 +264,10 @@ impl MemoryHierarchySimulator {
 
     pub fn is_access_finished(&self) -> bool {
         self.finished_result.is_some()
+    }
+
+    pub fn config(&self) -> &HierarchyConfig {
+        &self.config
     }
 
     /// Seeds the program's starting bytes into whichever store is really the backing memory for this config.
@@ -436,26 +443,26 @@ impl MemoryHierarchySimulator {
             Some(ppn) => {
                 self.translated_address = Some(ppn * page_size + offset);
                 self.cursor = Some(Cursor::Cache(0));
-                LevelResult { level: LevelId::Tlb, outcome: LevelOutcome::Hit, address, access_kind }
+                LevelResult { level: LevelId::Tlb, outcome: LevelOutcome::Hit, address, access_kind, page_translation_outcome: None }
             }
             None => {
                 self.walk = Some(WalkState { vpn, level: self.page_table.levels(), chain_index: self.resolve_page_walk_start_index() });
                 self.cursor = Some(Cursor::Walk);
-                LevelResult { level: LevelId::Tlb, outcome: LevelOutcome::Miss, address, access_kind }
+                LevelResult { level: LevelId::Tlb, outcome: LevelOutcome::Miss, address, access_kind, page_translation_outcome: None }
             }
         }
     }
 
-    /// Checks whether this page table lookup's made up address is already cached at this level.
+    /// Checks whether this page table entry's own real address is already cached at this level.
     /// A level with no matching side just counts as a miss, same as a real access.
-    fn walk_cache_lookup(&mut self, chain_index: usize, synthetic_address: u64) -> LevelOutcome {
-        let Some(slot) = self.levels[chain_index].slot_for(false) else {
+    fn walk_cache_lookup(&mut self, chain_index: usize, entry_address: u64, is_fetch: bool) -> LevelOutcome {
+        let Some(slot) = self.levels[chain_index].slot_for(is_fetch) else {
             return LevelOutcome::Miss;
         };
         let (cache_config, exp, cache) = self.levels[chain_index].entry_mut(&slot);
         let block_size = cache_config.block_size.max(1) as u64;
         let num_sets = ((1u64 << *exp) / cache_config.associativity.max(1) as u64).max(1);
-        let tag = synthetic_address / block_size;
+        let tag = entry_address / block_size;
         let set_index = tag % num_sets;
         match cache.lookup(set_index, tag) {
             super::cache::LookupOutcome::Hit => LevelOutcome::Hit,
@@ -466,13 +473,14 @@ impl MemoryHierarchySimulator {
         }
     }
 
-    fn resolve_leaf_and_finish(&mut self, vpn: u64) {
+    fn resolve_leaf_and_finish(&mut self, vpn: u64) -> LevelOutcome {
         match self.page_table.leaf_entry(vpn) {
             Some(entry) if entry.present => {
                 self.tlb.insert(vpn, entry.points_to_or_ppn);
                 self.walk = None;
                 self.translated_address = Some(self.physical_address_for(entry.points_to_or_ppn));
                 self.cursor = Some(Cursor::Cache(0));
+                LevelOutcome::Hit
             }
             _ => {
                 let (frame, evict) = self.frames.allocate(vpn);
@@ -487,6 +495,7 @@ impl MemoryHierarchySimulator {
                 let go_to_swap_out = matches!(&evict, Some(e) if e.dirty);
                 self.pending_fault = Some(PendingFault { vpn, frame, evict });
                 self.cursor = Some(if go_to_swap_out { Cursor::SwapOut } else { Cursor::SwapIn });
+                LevelOutcome::Miss
             }
         }
     }
@@ -498,22 +507,25 @@ impl MemoryHierarchySimulator {
         let (real_address, access_kind) = (access.address, access.kind);
 
         if chain_index >= self.levels.len() {
-            if level == 1 {
-                self.resolve_leaf_and_finish(vpn);
+            let page_translation_outcome = if level == 1 {
+                Some(self.resolve_leaf_and_finish(vpn))
             } else {
                 self.page_table.resolve_intermediate(level, vpn);
                 self.walk = Some(WalkState { vpn, level: level - 1, chain_index: self.resolve_page_walk_start_index() });
                 self.cursor = Some(Cursor::Walk);
-            }
-            return LevelResult { level: LevelId::Ram, outcome: LevelOutcome::Hit, address: real_address, access_kind };
+                None
+            };
+            let outcome = page_translation_outcome.unwrap_or(LevelOutcome::Hit);
+            return LevelResult { level: LevelId::Ram, outcome, address: real_address, access_kind, page_translation_outcome };
         }
 
-        let synthetic_address = self.page_table.synthetic_address(level, vpn);
-        let outcome = self.walk_cache_lookup(chain_index, synthetic_address);
-        match outcome {
+        let entry_address = self.page_table.entry_address(level, vpn);
+        let cache_outcome = self.walk_cache_lookup(chain_index, entry_address, access_kind == AccessKind::Fetch);
+        let mut page_translation_outcome = None;
+        match cache_outcome {
             LevelOutcome::Hit => {
                 if level == 1 {
-                    self.resolve_leaf_and_finish(vpn);
+                    page_translation_outcome = Some(self.resolve_leaf_and_finish(vpn));
                 } else {
                     self.walk = Some(WalkState { vpn, level: level - 1, chain_index: self.resolve_page_walk_start_index() });
                     self.cursor = Some(Cursor::Walk);
@@ -524,7 +536,7 @@ impl MemoryHierarchySimulator {
                 self.cursor = Some(Cursor::Walk);
             }
         }
-        LevelResult { level: LevelId::Cache(chain_index), outcome, address: real_address, access_kind }
+        LevelResult { level: LevelId::Cache(chain_index), outcome: cache_outcome, address: real_address, access_kind, page_translation_outcome }
     }
 
     fn write_disk_page(&mut self, vpn: u64, bytes: &[u8]) {
@@ -535,7 +547,7 @@ impl MemoryHierarchySimulator {
         }
     }
 
-    /// Bytes plus a per-word populated flag, so a caller can tell a word the program really wrote from one that just defaults to zero.
+    /// Bytes plus a populated flag for each word, so a caller can tell a word the program really wrote from one that just defaults to zero.
     fn read_disk_page(&mut self, vpn: u64) -> (Vec<u8>, Vec<bool>) {
         let page_size = self.config.page_size as usize;
         let base = vpn * page_size as u64;
@@ -553,7 +565,7 @@ impl MemoryHierarchySimulator {
         self.write_disk_page(evict_vpn, &bytes);
         self.cursor = Some(Cursor::SwapIn);
         let page_size = self.config.page_size as u64;
-        LevelResult { level: LevelId::Disk, outcome: LevelOutcome::Hit, address: evict_vpn * page_size, access_kind: AccessKind::Store }
+        LevelResult { level: LevelId::Disk, outcome: LevelOutcome::Hit, address: evict_vpn * page_size, access_kind: AccessKind::Store, page_translation_outcome: None }
     }
 
     fn step_swap_in(&mut self) -> LevelResult {
@@ -566,11 +578,11 @@ impl MemoryHierarchySimulator {
         let access = self.in_progress.as_ref().unwrap();
         let address = access.address;
         self.cursor = Some(Cursor::Cache(0));
-        LevelResult { level: LevelId::Disk, outcome: LevelOutcome::Hit, address, access_kind: AccessKind::Load }
+        LevelResult { level: LevelId::Disk, outcome: LevelOutcome::Hit, address, access_kind: AccessKind::Load, page_translation_outcome: None }
     }
 
     /// Reads the finished Load or Fetch's bytes from the real backing store, RAM or frames under VM, since cache levels never keep their own bytes.
-    /// Uses access_byte so a real Load can turn an untouched pre-loaded cell into real data.
+    /// Uses access_byte so a real Load can turn an untouched already loaded cell into real data.
     fn read_load_bytes(&mut self, size: u8) -> Vec<u8> {
         let address = self.effective_address();
         if self.config.vm_enabled {
@@ -680,7 +692,7 @@ impl MemoryHierarchySimulator {
             }
         };
 
-        LevelResult { level: LevelId::Cache(index), outcome, address: access.address, access_kind: access.kind }
+        LevelResult { level: LevelId::Cache(index), outcome, address: access.address, access_kind: access.kind, page_translation_outcome: None }
     }
 
     fn step_ram(&mut self) -> LevelResult {
@@ -694,7 +706,7 @@ impl MemoryHierarchySimulator {
                 self.finish_with_load(&access);
             }
         }
-        LevelResult { level: LevelId::Ram, outcome: LevelOutcome::Hit, address: access.address, access_kind: access.kind }
+        LevelResult { level: LevelId::Ram, outcome: LevelOutcome::Hit, address: access.address, access_kind: access.kind, page_translation_outcome: None }
     }
 
     pub fn tlb_info(&self) -> TlbInfo {
@@ -808,6 +820,7 @@ mod tests {
                 entries: 4,
                 associativity: 4,
                 replacement: TlbReplacementPolicy::Lru,
+                latency: 1,
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
@@ -1078,6 +1091,7 @@ mod tests {
                 entries: 4,
                 associativity: 4,
                 replacement: TlbReplacementPolicy::Lru,
+                latency: 1,
             },
             ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
             disk: DiskConfig { latency: 10000 },
@@ -1093,6 +1107,40 @@ mod tests {
         let first = mem.begin_access(fetch(0x10000000));
         assert_eq!(first.level, LevelId::Cache(1), "L1 (d-only) must be skipped entirely for a fetch");
         assert_eq!(first.outcome, LevelOutcome::Miss);
+    }
+
+    fn vm_harvard_config() -> HierarchyConfig {
+        let mut cfg = vm_config(1);
+        cfg.hierarchy = vec![Level {
+            id: "l1".into(),
+            harvard: true,
+            unified: None,
+            i: Some(CacheEntry { exp: 8, config: cache_config() }),
+            d: Some(CacheEntry { exp: 8, config: cache_config() }),
+            inclusion: InclusionPolicy::Nine,
+            bus_width: 32,
+        }];
+        cfg.tlb.page_walk_start = "l1".into();
+        cfg
+    }
+
+    #[test]
+    fn a_fetchs_page_walk_probes_the_instruction_side_of_a_harvard_level_not_the_data_side() {
+        let mut mem = sim(vm_harvard_config());
+        mem.begin_access(fetch(0));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let i_info = mem.cache_level_info(0, CacheSide::Instruction).unwrap();
+        let d_info = mem.cache_level_info(0, CacheSide::Data).unwrap();
+        let count_valid = |side: CacheSide, info: &CacheLevelInfo| -> usize {
+            (0..info.num_sets).map(|s| mem.cache_set_ways(0, side, s, info).iter().filter(|w| w.valid).count()).sum()
+        };
+
+        assert!(count_valid(CacheSide::Instruction, &i_info) > 0, "the fetch's own page walk must land in the instruction side");
+        assert_eq!(count_valid(CacheSide::Data, &d_info), 0, "a fetch's page walk must never touch the data side");
     }
 
     #[test]
@@ -1125,7 +1173,7 @@ mod tests {
         assert_eq!(info.associativity, 1);
         assert_eq!(info.block_size, 4);
         assert_eq!(info.num_sets, 2);
-        assert_eq!(info.words_per_line, 1); // 4 bytes makes one 4-byte word
+        assert_eq!(info.words_per_line, 1); // 4 bytes makes one word of 4 bytes
     }
 
     #[test]
@@ -1310,7 +1358,7 @@ mod tests {
     #[test]
     fn page_table_level_bits_reports_the_leaf_favored_split() {
         let mut cfg = vm_config(3);
-        cfg.page_size = 4096; // 20 VPN bits on RV32I, split 7/7/6 leaf-favored
+        cfg.page_size = 4096; // 20 VPN bits on RV32I, split 7/7/6 favoring the leaf
         let mem = sim(cfg);
         assert_eq!(mem.page_table_level_bits(), &[7, 7, 6]);
     }
@@ -1576,6 +1624,90 @@ mod tests {
         assert!(saw_disk_again, "the evicted page must genuinely fault again, not resolve through a stale mapping");
         let result = mem.take_result();
         assert_eq!(result.load_bytes, Some(vec![0xAA, 0, 0, 0]), "must read page 0's real original bytes, not page 4's");
+    }
+
+    #[test]
+    fn a_fresh_page_fault_reports_a_miss_at_the_moment_of_translation() {
+        let mut mem = sim(vm_config(1));
+        let mut saw_page_translation_miss = false;
+        mem.begin_access(load(0));
+        while !mem.is_access_finished() {
+            let result = mem.step();
+            if let Some(outcome) = result.page_translation_outcome {
+                assert_eq!(outcome, LevelOutcome::Miss, "the very first access to any page must fault");
+                saw_page_translation_miss = true;
+            }
+        }
+        assert!(saw_page_translation_miss, "no step reported a page translation outcome for a fresh page");
+    }
+
+    #[test]
+    fn re_accessing_an_already_mapped_page_reports_a_hit_at_the_moment_of_translation() {
+        // Accessing the same address again normally hits the TLB and never walks the page table again.
+        // A TLB with only one entry forces a real walk, while the page stays mapped.
+        let mut cfg = vm_config(1);
+        cfg.tlb.entries = 1;
+        cfg.tlb.associativity = 1;
+        let mut mem = sim(cfg);
+
+        mem.begin_access(load(0));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        // Touch a different page so the TLB with only one entry evicts vpn 0's mapping without evicting its frame.
+        mem.begin_access(load(4));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let mut saw_page_translation_hit = false;
+        mem.begin_access(load(0));
+        while !mem.is_access_finished() {
+            let result = mem.step();
+            if let Some(outcome) = result.page_translation_outcome {
+                assert_eq!(outcome, LevelOutcome::Hit, "the page is already mapped from the first access");
+                saw_page_translation_hit = true;
+            }
+        }
+        assert!(saw_page_translation_hit, "no step reported a page translation outcome for an already mapped page");
+    }
+
+    #[test]
+    fn a_page_translation_resolved_via_a_cached_walk_lookup_is_still_recorded() {
+        // Route the walk through l1 instead of the usual RAM shortcut, so a leaf lookup can hit the cache.
+        // A TLB with only one entry forces a real walk, and a wide cache keeps the first walk's line from being evicted.
+        let mut cfg = vm_config(1);
+        cfg.tlb.page_walk_start = "l1".into();
+        cfg.tlb.entries = 1;
+        cfg.tlb.associativity = 1;
+        cfg.hierarchy[0].unified.as_mut().unwrap().exp = 8;
+        let mut mem = sim(cfg);
+
+        mem.begin_access(load(0));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        // Touch a different page so the TLB with only one entry evicts vpn 0's mapping without evicting its frame.
+        mem.begin_access(load(4));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let mut saw_cache_hit_page_translation = false;
+        mem.begin_access(load(0));
+        while !mem.is_access_finished() {
+            let result = mem.step();
+            if matches!(result.level, LevelId::Cache(_)) && result.outcome == LevelOutcome::Hit && result.page_translation_outcome.is_some() {
+                saw_cache_hit_page_translation = true;
+            }
+        }
+        assert!(saw_cache_hit_page_translation, "a page translation resolved via a cached walk lookup must still be recorded");
     }
 
     #[test]
