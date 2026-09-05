@@ -10,7 +10,7 @@ import { touchAndPrune } from "../../lib/lruCache";
 const store = useHierarchyConfigStore();
 const compileConfigStore = useCompileConfigStore();
 
-// The disk scrolls in fixed size blocks, just like RAM, a page just spans several of them.
+// The disk scrolls in fixed size blocks just like RAM, but each page spans several of them.
 const BLOCK_SIZE = 32;
 const ROW_HEIGHT = 26;
 const WINDOW_ROWS = 20_000;
@@ -19,7 +19,7 @@ const MAX_CACHED_PAGES = 4000;
 const gridColumnsStyle = "8rem 8rem repeat(8, minmax(calc(10ch + 0.6rem), auto))";
 
 interface DiskPage {
-  address: number; // this actually holds the swap page number, not a byte address
+  address: number; // This actually holds the swap page number, not a byte address.
   words: number[];
   populated: boolean;
   dirty: boolean;

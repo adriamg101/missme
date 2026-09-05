@@ -58,7 +58,7 @@ function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
-// Which byte within a row of 8 words a given column is.
+// Works out which byte offset a given column represents within a row of 8 words.
 function columnOffsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * 4).toString(16).toUpperCase().padStart(2, "0")}`;
 }
@@ -71,7 +71,7 @@ function wordAt(frame: Frame, subRow: number, column: number): number {
   return frame.words[subRow * WORDS_PER_SUBROW + column] ?? 0;
 }
 
-// Tells a word that was never really written apart from one that really holds a zero.
+// True only if this word was actually written, so an unwritten spot does not look like a real zero.
 function wordPopulatedAt(frame: Frame, subRow: number, column: number): boolean {
   return frame.populated[subRow * WORDS_PER_SUBROW + column] ?? false;
 }

@@ -59,7 +59,7 @@ pub(crate) fn build_session(
     let seed = hierarchy.seed.unwrap_or_else(seeded_random::generate_seed);
 
     // Under VM, disk plays the role plain RAM plays otherwise, the final store covering the whole address space.
-    // So disk gets the pre-loaded garbage treatment instead of RAM, which VM never reads through directly.
+    // So disk gets the already loaded garbage treatment instead of RAM, which VM never reads through directly.
     let (ram_store_dirty_percent, disk_store_dirty_percent, disk_store_block_size) =
         if vm_enabled { (0, ram_dirty_percent, page_size) } else { (ram_dirty_percent, 0, disk_block_size) };
 

@@ -228,8 +228,7 @@ mod tests {
     #[test]
     fn entries_in_the_one_root_table_get_different_addresses_by_their_own_index() {
         // With only 2 levels, level 2 is the root, and there is exactly one root table.
-        // 4096-byte pages over 32 address bits split into two 10-bit levels, so a VPN needs to
-        // differ in its top 10 bits to land on a different root entry.
+        // Pages of 4096 bytes over 32 address bits split into two levels of 10 bits each, so a VPN needs to differ in its top 10 bits to land on a different root entry.
         let mut table = PageTable::new(2, 4096, 32, 1024);
         assert_ne!(table.entry_address(2, 0), table.entry_address(2, 1u64 << 10));
         assert_ne!(table.entry_address(1, 0), table.entry_address(1, 1), "and at the leaf level they're different entries too");
@@ -247,7 +246,7 @@ mod tests {
     #[test]
     fn a_new_tables_address_starts_right_after_every_table_already_handed_out() {
         let mut table = PageTable::with_level_bits(vec![4, 4], 1024);
-        let first_table_entry = table.entry_address(1, 0); // creates the first (and only) level 1 table
+        let first_table_entry = table.entry_address(1, 0); // creates the first, and only, level 1 table
         let root_entry = table.entry_address(2, 0); // creates the root table, right after the level 1 table's own 16 entries plus one padding entry
         assert_eq!(first_table_entry, 1024);
         assert_eq!(root_entry, 1024 + 17 * 8);
@@ -262,7 +261,7 @@ mod tests {
     #[test]
     fn entries_under_reports_each_entrys_real_unmasked_key() {
         let mut table = PageTable::with_level_bits(vec![4, 4], 1);
-        table.set_leaf_present(20, 70); // key 20 (0b10100), masked index 20 & 15 = 4
+        table.set_leaf_present(20, 70); // key 20, which is 0b10100, masked index 20 & 15 = 4
         let rows = table.entries_under(1, Some(1), 0, 100);
         assert_eq!(rows[0].key, 20);
         assert_eq!(rows[0].index, 4);

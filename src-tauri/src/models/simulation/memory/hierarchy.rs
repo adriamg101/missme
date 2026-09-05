@@ -134,7 +134,7 @@ struct CacheLevelState {
     d: Option<(CacheConfig, u32, SetAssociativeCache)>,
 }
 
-/// The side tag stops two sides of the same level from starting with the same pre-loaded dirty pattern.
+/// The side tag stops two sides of the same level from starting with the same already loaded dirty pattern.
 /// A level with separate instruction and data caches gets a different starting pattern for each side.
 fn cache_state_for(level: &Level, level_index: usize, session_seed: u64) -> CacheLevelState {
     let build = |entry: &CacheEntry, side_tag: u64| {
@@ -547,7 +547,7 @@ impl MemoryHierarchySimulator {
         }
     }
 
-    /// Bytes plus a per-word populated flag, so a caller can tell a word the program really wrote from one that just defaults to zero.
+    /// Bytes plus a populated flag for each word, so a caller can tell a word the program really wrote from one that just defaults to zero.
     fn read_disk_page(&mut self, vpn: u64) -> (Vec<u8>, Vec<bool>) {
         let page_size = self.config.page_size as usize;
         let base = vpn * page_size as u64;
@@ -582,7 +582,7 @@ impl MemoryHierarchySimulator {
     }
 
     /// Reads the finished Load or Fetch's bytes from the real backing store, RAM or frames under VM, since cache levels never keep their own bytes.
-    /// Uses access_byte so a real Load can turn an untouched pre-loaded cell into real data.
+    /// Uses access_byte so a real Load can turn an untouched already loaded cell into real data.
     fn read_load_bytes(&mut self, size: u8) -> Vec<u8> {
         let address = self.effective_address();
         if self.config.vm_enabled {
@@ -1173,7 +1173,7 @@ mod tests {
         assert_eq!(info.associativity, 1);
         assert_eq!(info.block_size, 4);
         assert_eq!(info.num_sets, 2);
-        assert_eq!(info.words_per_line, 1); // 4 bytes makes one 4-byte word
+        assert_eq!(info.words_per_line, 1); // 4 bytes makes one word of 4 bytes
     }
 
     #[test]
@@ -1358,7 +1358,7 @@ mod tests {
     #[test]
     fn page_table_level_bits_reports_the_leaf_favored_split() {
         let mut cfg = vm_config(3);
-        cfg.page_size = 4096; // 20 VPN bits on RV32I, split 7/7/6 leaf-favored
+        cfg.page_size = 4096; // 20 VPN bits on RV32I, split 7/7/6 favoring the leaf
         let mem = sim(cfg);
         assert_eq!(mem.page_table_level_bits(), &[7, 7, 6]);
     }
@@ -1643,8 +1643,8 @@ mod tests {
 
     #[test]
     fn re_accessing_an_already_mapped_page_reports_a_hit_at_the_moment_of_translation() {
-        // A same address re-access normally hits the TLB and never re-walks.
-        // A single entry TLB forces a real re-walk, while the page stays mapped.
+        // Accessing the same address again normally hits the TLB and never walks the page table again.
+        // A TLB with only one entry forces a real walk, while the page stays mapped.
         let mut cfg = vm_config(1);
         cfg.tlb.entries = 1;
         cfg.tlb.associativity = 1;
@@ -1656,7 +1656,7 @@ mod tests {
         }
         mem.take_result();
 
-        // Touch a different page so the one-entry TLB evicts vpn 0's mapping without evicting its frame.
+        // Touch a different page so the TLB with only one entry evicts vpn 0's mapping without evicting its frame.
         mem.begin_access(load(4));
         while !mem.is_access_finished() {
             mem.step();
@@ -1678,7 +1678,7 @@ mod tests {
     #[test]
     fn a_page_translation_resolved_via_a_cached_walk_lookup_is_still_recorded() {
         // Route the walk through l1 instead of the usual RAM shortcut, so a leaf lookup can hit the cache.
-        // A single entry TLB forces a real re-walk, and a wide cache keeps the first walk's line from being evicted.
+        // A TLB with only one entry forces a real walk, and a wide cache keeps the first walk's line from being evicted.
         let mut cfg = vm_config(1);
         cfg.tlb.page_walk_start = "l1".into();
         cfg.tlb.entries = 1;
@@ -1692,7 +1692,7 @@ mod tests {
         }
         mem.take_result();
 
-        // Touch a different page so the one-entry TLB evicts vpn 0's mapping without evicting its frame.
+        // Touch a different page so the TLB with only one entry evicts vpn 0's mapping without evicting its frame.
         mem.begin_access(load(4));
         while !mem.is_access_finished() {
             mem.step();

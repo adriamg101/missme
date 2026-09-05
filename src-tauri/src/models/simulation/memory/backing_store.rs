@@ -41,7 +41,7 @@ impl DataStore {
         Self::with_dirty_percent(block_size, 0)
     }
 
-    /// Some blocks that are never explicitly written still read as pre-existing garbage, the same way real memory behaves.
+    /// Some blocks that are never explicitly written still read as garbage that was already there, the same way real memory behaves.
     /// This is worked out fresh each time from a seed, and the user never picks one directly, a random one is drawn per session.
     pub fn with_dirty_percent(block_size: usize, dirty_percent: u8) -> Self {
         Self::with_dirty_percent_seeded(block_size, dirty_percent, seeded_random::generate_seed())

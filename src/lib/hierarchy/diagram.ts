@@ -33,9 +33,7 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 // Cache levels get a color gradient, warm near the CPU and cool at the
-// deepest level, instead of one fixed color, so any number of levels stay
-// visually distinct without picking a color for each one by hand. It blends
-// through three color anchors (warm, mid, cool), per the design spec.
+// deepest level, so any number of levels stay visually distinct.
 const CACHE_HUE_WARM = 45;
 const CACHE_HUE_MID = 130;
 const CACHE_HUE_COOL = 215;
@@ -77,9 +75,8 @@ export interface DiagramBox {
   y: number;
   width: number;
   height: number;
-  // The color (hue and chroma) for this box's type or cache level. The
-  // actual border, fill, and text colors are worked out later in CSS, so
-  // this just stores the data, not the final look.
+  // The color for this box's type or cache level. The actual border, fill,
+  // and text colors are worked out later, so this just stores the data.
   hue: number;
   chroma: number;
   // How much lighter than this box's plain color to draw it, currently only
@@ -113,9 +110,8 @@ interface SlotBoxSpec {
   targetTabId: string | null;
 }
 
-// A slot is either a single box (CPU, REG, a shared cache, RAM, DISK) or
-// two boxes stacked on top of each other (a split instruction/data cache
-// level, instruction on top, data on bottom).
+// A slot is either a single box, such as CPU or RAM, or two boxes stacked
+// on top of each other, instruction on top and data on bottom.
 type Slot = SlotBoxSpec[];
 
 const BOX_WIDTH = 120;
@@ -132,11 +128,8 @@ const REG_HEIGHT = 28;
 const REG_INSET_BOTTOM = 6;
 const PAGE_WALK_GAP = 24;
 
-// Under VM, RAM's box grows to fit its own header (label + latency) plus
-// two nested boxes stacked below it: PT (just a label, since the page
-// table has no real bounded size to report) and Frames (label plus its
-// real byte capacity). It ends up taller and a bit wider than every other
-// box in the diagram, which is fine, nothing else needs to match it.
+// Under VM, RAM's box grows to fit its own header plus two nested boxes
+// stacked below it, the page table and the frame pool.
 const RAM_VM_WIDTH = 150;
 const RAM_HEADER_HEIGHT = 46;
 const RAM_SUB_GAP = 8;
@@ -146,18 +139,16 @@ const RAM_VM_BOTTOM_PADDING = 6;
 const RAM_SUB_INSET_X = 10;
 const RAM_VM_HEIGHT = RAM_HEADER_HEIGHT + RAM_SUB_GAP + RAM_PT_SUB_HEIGHT + RAM_SUB_GAP + RAM_FRAMES_SUB_HEIGHT + RAM_VM_BOTTOM_PADDING;
 
-// Right-angle routing: draw a straight line when both ends already line up,
-// otherwise bend the line through the midpoint so it only goes sideways and
-// up or down, never diagonally, per the design spec.
+// Draws a straight line when both ends already line up, otherwise bends
+// the line through the midpoint so it only goes sideways or up and down.
 function orthogonalPath(x1: number, y1: number, x2: number, y2: number): string {
   if (y1 === y2 || x1 === x2) return `M ${x1} ${y1} L ${x2} ${y2}`;
   const midX = (x1 + x2) / 2;
   return `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
 }
 
-// Draws a path that travels through a shared horizontal lane at laneY.
-// Used for the line from the TLB to its page-walk target, since that line
-// needs to pass underneath the whole main chain instead of cutting across it.
+// Draws a path through a shared horizontal lane at laneY. Used for the
+// line from the TLB to its page walk target, so it passes under the chain.
 function laneRoutePath(x1: number, y1: number, laneY: number, x2: number, y2: number): string {
   return `M ${x1} ${y1} L ${x1} ${laneY} L ${x2} ${laneY} L ${x2} ${y2}`;
 }
@@ -171,14 +162,11 @@ export function computeLayout(
   vmEnabled: boolean,
 ): DiagramLayout {
   // Only add the extra vertical space a split cache needs when one is
-  // actually present, so a diagram without any splits isn't padded for a
-  // shape it doesn't have.
+  // actually present, so a diagram without splits is not padded for nothing.
   const hasHarvard = hierarchy.some((level) => level.harvard);
   const centerYForHarvard = hasHarvard ? TOP_PADDING + HARVARD_OFFSET + BOX_HEIGHT / 2 : TOP_PADDING + BOX_HEIGHT / 2;
-  // Under VM, RAM's own box is taller than the rest (see RAM_VM_HEIGHT
-  // above), so it needs its own minimum center too - otherwise, with no
-  // split cache pushing the center down, RAM's top edge would land above
-  // y=0 and get clipped by the diagram's own top edge.
+  // Under VM, RAM's own box is taller than the rest, so it needs its own
+  // minimum center too, or its top edge could land above the top of the diagram.
   const centerYForRam = vmEnabled ? TOP_PADDING + RAM_VM_HEIGHT / 2 : 0;
   const CENTER_Y = Math.max(centerYForHarvard, centerYForRam);
 
@@ -233,9 +221,8 @@ export function computeLayout(
     }
   });
 
-  // Under VM, RAM's own frame count moves into the Frames sub-box's own
-  // "Size" line below (see the ram-frames box further down), so RAM's own
-  // header shows just its latency, the same as when VM is off.
+  // Under VM, the frame count moves into the frames box further down, so
+  // RAM's own header shows just its latency, the same as when VM is off.
   const ramSubLabels = [`Latency: ${cycleLabel(ram.latency)}`];
   slots.push([
     { id: "ram", kind: "ram", label: "RAM", subLabels: ramSubLabels, hue: HUE_BY_KIND.ram, chroma: TYPE_CHROMA, clickable: true, targetTabId: "ram" },
@@ -256,9 +243,8 @@ export function computeLayout(
     ]);
   }
 
-  // The first box (CPU) in the main chain is never clickable, and neither
-  // is the last box, except RAM and DISK, which always stay clickable
-  // whether or not they happen to be the last box in the chain.
+  // The first box, CPU, is never clickable, and neither is the last box,
+  // except RAM and DISK, which always stay clickable.
   slots[0][0].clickable = false;
   slots[slots.length - 1].forEach((box) => {
     if (box.kind !== "ram" && box.kind !== "disk") box.clickable = false;
@@ -270,9 +256,8 @@ export function computeLayout(
   let cursorX = 2;
   slots.forEach((slot) => {
     slotX.push(cursorX);
-    // Under VM, RAM's box is wider and taller than every other box (see
-    // RAM_VM_WIDTH/RAM_VM_HEIGHT above), to make room for its nested PT and
-    // Frames sub-boxes.
+    // Under VM, RAM's box is wider and taller than every other box, to
+    // make room for its nested page table and frame boxes.
     const isVmRam = vmEnabled && slot.length === 1 && slot[0].kind === "ram";
     const boxWidth = isVmRam ? RAM_VM_WIDTH : BOX_WIDTH;
     const boxHeight = isVmRam ? RAM_VM_HEIGHT : BOX_HEIGHT;
@@ -297,8 +282,7 @@ export function computeLayout(
       kind: "tlb",
       label: "TLB",
       // The number of TLB entries is always a power of two, just like cache
-      // size, so this reuses the same K/M/G-style formatting instead of the
-      // raw number, which can otherwise run into the thousands.
+      // size, so this reuses the same K, M, G style formatting.
       subLabels: [`Entries: ${sizeLabel(Math.log2(tlb.entries))}`],
       x: tlbX,
       y: tlbY,
@@ -333,10 +317,8 @@ export function computeLayout(
       connectors.push({ id: `link-${i}-top`, path: orthogonalPath(aRightX, topY, bLeftX, CENTER_Y) });
       connectors.push({ id: `link-${i}-bottom`, path: orthogonalPath(aRightX, bottomY, bLeftX, CENTER_Y) });
     } else {
-      // Two split cache levels next to each other: the instruction cache
-      // connects straight to the next instruction cache, and the data cache
-      // to the next data cache, as two separate parallel lines instead of
-      // merging in the middle.
+      // Two split cache levels next to each other, so the instruction cache
+      // connects to the next instruction cache and data to data, as two lines.
       connectors.push({ id: `link-${i}-top`, path: orthogonalPath(aRightX, topY, bLeftX, topY) });
       connectors.push({ id: `link-${i}-bottom`, path: orthogonalPath(aRightX, bottomY, bLeftX, bottomY) });
     }
@@ -344,16 +326,12 @@ export function computeLayout(
 
   const mainAxisBottomBase = hasHarvard ? CENTER_Y + HARVARD_OFFSET + BOX_HEIGHT / 2 : CENTER_Y + BOX_HEIGHT / 2;
   // RAM's box is taller than the rest under VM, so the bottom of the main
-  // chain (and everything positioned relative to it, like the page-walk
-  // lane below) has to account for that too, not just the shared BOX_HEIGHT.
+  // chain, and everything placed relative to it, has to account for that too.
   const mainAxisBottom = vmEnabled ? Math.max(mainAxisBottomBase, CENTER_Y + RAM_VM_HEIGHT / 2) : mainAxisBottomBase;
   const tlbBottom = tlbBox ? tlbBox.y + TLB_HEIGHT : 0;
 
-  // Line from the TLB to its page-walk target: only drawn when virtual
-  // memory is on and the TLB box exists. It runs underneath the whole main
-  // chain through a shared lane instead of cutting diagonally across other
-  // boxes. If the target is a split cache level, the line fans out to both
-  // its instruction and data boxes.
+  // Line from the TLB to its page walk target, only drawn when virtual
+  // memory is on. If the target is a split cache level, it fans out to both boxes.
   let pageWalkLaneY = 0;
   if (vmEnabled && tlbBox) {
     const targetBoxes =
@@ -374,11 +352,8 @@ export function computeLayout(
     }
   }
 
-  // Once VM is on, RAM's own box stops being directly clickable and instead
-  // shows two nested boxes stacked below its own header (page table on top,
-  // frames below, since the page table is what's consulted first), each
-  // routing to its own view. RAM's box was already sized to fit them (see
-  // RAM_VM_HEIGHT above), so this only has to place them, not resize RAM.
+  // Once VM is on, RAM's box stops being clickable and instead shows two
+  // nested boxes below its header, page table on top and frames below.
   const ramBoxForVm = boxes.find((b) => b.id === "ram") ?? null;
   if (vmEnabled && ramBoxForVm) {
     ramBoxForVm.clickable = false;
@@ -390,8 +365,8 @@ export function computeLayout(
       id: "ram-pt",
       kind: "pt",
       label: "PT",
-      // The page table has no real bounded size to report (see the PT
-      // view's own design), so there's nothing meaningful to put here.
+      // The page table has no real bounded size to report, so there is
+      // nothing meaningful to put here.
       subLabels: [],
       x: subX,
       y: ptY,
@@ -406,9 +381,8 @@ export function computeLayout(
       id: "ram-frames",
       kind: "frames",
       label: "Frames",
-      // This is the frame pool's real byte capacity (frames * page size);
-      // it deliberately doesn't include the page table, which has no
-      // physical size of its own in this model.
+      // This is the frame pool's real byte capacity, frames times page size.
+      // It does not include the page table, which has no physical size here.
       subLabels: [`Size: ${byteSizeLabel(ram.frames * pageSize)}`],
       x: subX,
       y: framesY,
@@ -421,9 +395,8 @@ export function computeLayout(
     });
   }
 
-  // REG sits inside the CPU box rather than being its own slot, so there's
-  // no separate connecting line, just a smaller box placed near the bottom
-  // of the CPU box. It's added last so it's drawn on top of the CPU box.
+  // REG sits inside the CPU box rather than being its own slot, so there is
+  // no connecting line, just a smaller box added last so it draws on top.
   const cpuBox = boxes[0];
   boxes.push({
     id: "reg",

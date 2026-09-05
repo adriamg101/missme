@@ -1,7 +1,7 @@
 mod controllers;
 mod models;
 
-// See the Tauri docs to learn more about commands like this one:
+// See the Tauri docs to learn more about commands like this one
 // https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -18,6 +18,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             controllers::editor_controller::compile,
+            controllers::editor_controller::default_open_dir,
             controllers::simulation_session_controller::start_simulation,
             controllers::simulation_session_controller::pause_simulation,
             controllers::simulation_session_controller::resume_simulation,

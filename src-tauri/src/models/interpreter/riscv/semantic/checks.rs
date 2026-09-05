@@ -145,7 +145,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
         Rem => "rem",
         Remu => "remu",
 
-        // Single-precision floating point instructions
+        // Single precision floating point instructions
         Flw => "flw",
         Fsw => "fsw",
         FmaddS => "fmadd.s",
@@ -173,7 +173,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
         FcvtSWu => "fcvt.s.wu",
         FmvWX => "fmv.w.x",
 
-        // Double-precision floating point instructions
+        // Double precision floating point instructions
         Fld => "fld",
         Fsd => "fsd",
         FmaddD => "fmadd.d",
@@ -201,7 +201,7 @@ fn mnemonic(kind: InstructionKind) -> &'static str {
         FcvtDW => "fcvt.d.w",
         FcvtDWu => "fcvt.d.wu",
 
-        // Quad-precision floating point instructions
+        // Quad precision floating point instructions
         Flq => "flq",
         Fsq => "fsq",
         FmaddQ => "fmadd.q",

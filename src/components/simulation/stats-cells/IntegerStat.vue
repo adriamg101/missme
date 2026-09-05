@@ -3,22 +3,9 @@ import { computed } from "vue";
 
 const props = defineProps<{ label: string; value: number }>();
 
-const UNITS = ["", "k", "M", "G", "T"];
-
 function formatInteger(value: number): string {
-  if (!Number.isFinite(value) || value < 1000) return `${Math.round(value)}`;
-  let scaled = value;
-  let unitIndex = 0;
-  while (scaled >= 1000 && unitIndex < UNITS.length - 1) {
-    scaled /= 1000;
-    unitIndex++;
-  }
-  let rounded = Math.round(scaled * 10) / 10;
-  if (rounded >= 1000 && unitIndex < UNITS.length - 1) {
-    rounded /= 1000;
-    unitIndex++;
-  }
-  return `${rounded}${UNITS[unitIndex]}`;
+  if (!Number.isFinite(value)) return `${value}`;
+  return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
 
 const formatted = computed(() => formatInteger(props.value));

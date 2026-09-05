@@ -40,6 +40,8 @@ const tabs = computed<StatsTab[]>(() => [
   ...visibleTabs(hierarchyStore.hierarchy, hierarchyStore.vmEnabled),
 ]);
 const activeTabId = ref<string>("global");
+// Kept here, not inside the stat cell itself, so it survives switching away from the Global tab and back.
+const excludedCycleShareLevels = ref<string[]>([]);
 const activeTab = computed(() => tabs.value.find((t) => t.id === activeTabId.value) ?? tabs.value[0]);
 
 async function fetchStats() {
@@ -157,14 +159,18 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="stats" class="simulation-stats-panel">
-      <StatsGrid v-if="activeTab?.kind === 'global'">
-        <IntegerStat label="Instructions executed" :value="stats.instructionsCompleted" />
-        <IntegerStat label="Total memory accesses" :value="stats.totalMemoryAccesses" />
-        <DecimalStat label="AMAT" :value="stats.amat" :decimals="2" />
-        <DecimalStat label="CPI" :value="stats.cpi" :decimals="2" />
-        <IntegerStat label="Total cycles" :value="stats.totalCycles" />
-        <StackedPercentStat label="Cycle share by level" :segments="globalSegments" />
-      </StatsGrid>
+      <template v-if="activeTab?.kind === 'global'">
+        <div class="simulation-stats-highlight">
+          <StackedPercentStat label="Cycle share by level" :segments="globalSegments" v-model:excluded="excludedCycleShareLevels" />
+        </div>
+        <StatsGrid>
+          <IntegerStat label="Instructions executed" :value="stats.instructionsCompleted" />
+          <IntegerStat label="Total memory accesses" :value="stats.totalMemoryAccesses" />
+          <DecimalStat label="AMAT" :value="stats.amat" :decimals="2" />
+          <DecimalStat label="CPI" :value="stats.cpi" :decimals="2" />
+          <IntegerStat label="Total cycles" :value="stats.totalCycles" />
+        </StatsGrid>
+      </template>
 
       <StatsGrid v-else-if="activeTab?.kind === 'tlb'">
         <IntegerStat label="Accesses" :value="bucketFor('tlb')?.accesses ?? 0" />
@@ -261,5 +267,12 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.simulation-stats-highlight {
+  flex: 0 0 auto;
 }
 </style>
