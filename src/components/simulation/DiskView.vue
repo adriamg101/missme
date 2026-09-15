@@ -104,12 +104,19 @@ function blockView(blockIndex: number): BlockView {
   return { page, words };
 }
 
+const addressBits = computed(() => (store.isa === "RV32I" ? 32 : 64));
+const addressDigits = computed(() => Math.max(1, Math.ceil(addressBits.value / 4)));
+const vpnDigits = computed(() => {
+  const pageSize = Math.max(1, store.pageSize);
+  return Math.max(1, Math.ceil((addressBits.value - Math.log2(pageSize)) / 4));
+});
+
 function hexAddress(address: number): string {
-  return `0x${(address >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+  return `0x${(address >>> 0).toString(16).toUpperCase().padStart(addressDigits.value, "0")}`;
 }
 
 function hexPage(vpn: number): string {
-  return `0x${(vpn >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+  return `0x${(vpn >>> 0).toString(16).toUpperCase().padStart(vpnDigits.value, "0")}`;
 }
 
 function hexWord(value: number): string {

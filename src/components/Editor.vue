@@ -119,6 +119,9 @@ function toggleBreakpoint(line: number) {
   } else {
     breakpoints.value.add(line);
   }
+  if (simulationStore.isActive) {
+    invoke("set_breakpoints", { breakpoints: Array.from(breakpoints.value) });
+  }
 }
 
 const errorCount = ref(0);

@@ -191,12 +191,13 @@ describe("CacheLevelView — empty and dirty-seeded ways", () => {
     expect(screen.queryByText("0x00000ABC")).toBeNull();
     const rowCells = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell");
     // rowCells[0] is the Set index cell; the phantom way's own cells follow:
-    // V, then D, then dashes for LRU/Tag/Offset/words - every remaining
-    // column in the block, none left blank.
+    // V, then D, then dashes for LRU/Tag/words - every remaining
+    // column in the block, none left blank. wordsPerLine is 1 here, so
+    // there is only 1 word column and no Offset column.
     expect(rowCells[1]?.textContent).toBe("1"); // V
     expect(rowCells[2]?.textContent).toBe("1"); // D
     const dashes = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell-empty");
-    expect(dashes.length).toBe(11); // LRU, Tag, Offset, and 8 word columns
+    expect(dashes.length).toBe(3); // LRU, Tag, and 1 word column
     expect(Array.from(dashes).every((cell) => cell.textContent === "-")).toBe(true);
   });
 });
@@ -318,17 +319,16 @@ describe("CacheLevelView — wide lines split into 8-word sub-rows", () => {
     expect(headerWordCells.length).toBe(8);
   });
 
-  it("shows a dash instead of a made-up word for a column past the line's real word count", async () => {
+  it("shows a dash instead of a made-up word for a column past the line's real word count in the last sub-row", async () => {
     seedOneLevel();
     mockCacheLevel(
-      { associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1 },
-      [{ setIndex: 0, ways: [{ valid: true, dirty: false, tag: 1, isPhantom: false, orderValue: 0, words: [0xdeadbeef] }] }],
+      { associativity: 1, blockSize: 36, numSets: 1, wordsPerLine: 9 },
+      [{ setIndex: 0, ways: [{ valid: true, dirty: false, tag: 1, isPhantom: false, orderValue: 0, words: Array.from({ length: 9 }, (_, i) => i) }] }],
     );
     const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await flush();
 
-    expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
-    // 7 of the 8 word columns in this single sub-row have no real data.
+    // 9 words wrap into 2 sub-rows of 8, so the second sub-row has 1 real word and 7 empty columns.
     const dashes = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell-empty");
     expect(dashes.length).toBe(7);
   });
@@ -373,6 +373,6 @@ describe("CacheLevelView — replacement policy column", () => {
     // Real data must still show normally, just with no order column.
     expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
     const headerCells = container.querySelectorAll(".simulation-cache-grid-header .simulation-cache-cell");
-    expect(headerCells.length).toBe(13); // Set, V, D, Tag, Offset, 8 words - one fewer than the default 14
+    expect(headerCells.length).toBe(5); // Set, V, D, Tag, 1 word - wordsPerLine is 1, so no Offset column
   });
 });

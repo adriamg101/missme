@@ -30,7 +30,14 @@ const wordsPerFrame = computed(() => Math.max(1, Math.floor(store.pageSize / 4))
 const subRowsPerFrame = computed(() => Math.max(1, Math.ceil(wordsPerFrame.value / WORDS_PER_SUBROW)));
 const frameBlockHeight = computed(() => subRowsPerFrame.value * ROW_HEIGHT);
 
-const gridColumnsStyle = `4rem calc(10ch + 0.6rem) 2.5rem 2.5rem 4rem repeat(${WORDS_PER_SUBROW}, minmax(calc(10ch + 0.6rem), auto))`;
+// A short page does not need all 8 columns, but a wrapped page still shows a full row of 8.
+const visibleWordColumns = computed(() => Math.min(WORDS_PER_SUBROW, wordsPerFrame.value));
+const showOffsetColumn = computed(() => subRowsPerFrame.value > 1);
+
+const gridColumnsStyle = computed(() => {
+  const offsetTrack = showOffsetColumn.value ? "4rem " : "";
+  return `4rem calc(10ch + 0.6rem) 2.5rem 2.5rem ${offsetTrack}repeat(${visibleWordColumns.value}, minmax(calc(10ch + 0.6rem), auto))`;
+});
 
 async function fetchPage(startFrame: number, count: number) {
   try {
@@ -56,6 +63,15 @@ const win = useVirtualizedWindow({
 
 function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+}
+
+const addressBits = computed(() => (store.isa === "RV32I" ? 32 : 64));
+const vpnDigits = computed(() => {
+  const pageSize = Math.max(1, store.pageSize);
+  return Math.max(1, Math.ceil((addressBits.value - Math.log2(pageSize)) / 4));
+});
+function hexVpn(value: number): string {
+  return `0x${(value >>> 0).toString(16).toUpperCase().padStart(vpnDigits.value, "0")}`;
 }
 
 // Works out which byte offset a given column represents within a row of 8 words.
@@ -133,8 +149,8 @@ onBeforeUnmount(() => {
           <span class="simulation-frames-cell simulation-frames-cell-header">VPN</span>
           <span class="simulation-frames-cell simulation-frames-cell-header">V</span>
           <span class="simulation-frames-cell simulation-frames-cell-header">D</span>
-          <span class="simulation-frames-cell simulation-frames-cell-header">Offset</span>
-          <span v-for="wi in WORDS_PER_SUBROW" :key="wi" class="simulation-frames-cell simulation-frames-cell-header">{{ columnOffsetLabel(wi - 1) }}</span>
+          <span v-if="showOffsetColumn" class="simulation-frames-cell simulation-frames-cell-header">Offset</span>
+          <span v-for="wi in visibleWordColumns" :key="wi" class="simulation-frames-cell simulation-frames-cell-header">{{ columnOffsetLabel(wi - 1) }}</span>
         </div>
         <div class="simulation-frames-body" :ref="(el) => (win.containerRef.value = el as HTMLDivElement | null)" @scroll="win.onScroll">
           <div class="simulation-frames-spacer" :style="{ height: `${win.range.value.totalHeight}px`, position: 'relative' }">
@@ -154,13 +170,13 @@ onBeforeUnmount(() => {
               <template v-if="frames.get(frameIndex)">
                 <span class="simulation-frames-cell simulation-frames-frame-index" :style="{ gridColumn: 1, gridRow: `1 / span ${subRowsPerFrame}` }">{{ frameIndex }}</span>
                 <template v-if="frames.get(frameIndex)!.valid">
-                  <span class="simulation-frames-cell" :style="{ gridColumn: 2, gridRow: `1 / span ${subRowsPerFrame}` }">{{ hexWord(frames.get(frameIndex)!.vpn!) }}</span>
+                  <span class="simulation-frames-cell" :style="{ gridColumn: 2, gridRow: `1 / span ${subRowsPerFrame}` }">{{ hexVpn(frames.get(frameIndex)!.vpn!) }}</span>
                   <span class="simulation-frames-cell" :style="{ gridColumn: 3, gridRow: `1 / span ${subRowsPerFrame}` }">1</span>
                   <span class="simulation-frames-cell" :style="{ gridColumn: 4, gridRow: `1 / span ${subRowsPerFrame}` }">{{ frames.get(frameIndex)!.dirty ? "1" : "0" }}</span>
                   <template v-for="sr in subRowsPerFrame" :key="sr">
-                    <span class="simulation-frames-cell">{{ subRowOffsetLabel(sr - 1) }}</span>
+                    <span v-if="showOffsetColumn" class="simulation-frames-cell">{{ subRowOffsetLabel(sr - 1) }}</span>
                     <span
-                      v-for="wi in WORDS_PER_SUBROW"
+                      v-for="wi in visibleWordColumns"
                       :key="wi"
                       class="simulation-frames-cell"
                       :class="{ 'simulation-frames-cell-empty': !wordPopulatedAt(frames.get(frameIndex)!, sr - 1, wi - 1) }"
@@ -172,8 +188,8 @@ onBeforeUnmount(() => {
                   <span class="simulation-frames-cell simulation-frames-cell-empty" :style="{ gridColumn: 3, gridRow: `1 / span ${subRowsPerFrame}` }">-</span>
                   <span class="simulation-frames-cell simulation-frames-cell-empty" :style="{ gridColumn: 4, gridRow: `1 / span ${subRowsPerFrame}` }">-</span>
                   <template v-for="sr in subRowsPerFrame" :key="sr">
-                    <span class="simulation-frames-cell">{{ subRowOffsetLabel(sr - 1) }}</span>
-                    <span v-for="wi in WORDS_PER_SUBROW" :key="wi" class="simulation-frames-cell simulation-frames-cell-empty">-</span>
+                    <span v-if="showOffsetColumn" class="simulation-frames-cell">{{ subRowOffsetLabel(sr - 1) }}</span>
+                    <span v-for="wi in visibleWordColumns" :key="wi" class="simulation-frames-cell simulation-frames-cell-empty">-</span>
                   </template>
                 </template>
               </template>

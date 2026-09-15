@@ -67,8 +67,12 @@ function handleSimEvent(event: { payload: Record<string, unknown> }) {
     }
     diagramRef.value?.setStatusMessage(event.payload.accessKind as "fetch" | "load" | "store", event.payload.address as number)
   } else if (kind === "ram_access") {
+    const outcome = event.payload.outcome as "hit" | "miss"
+    diagramRef.value?.triggerHitMiss("ram", outcome)
     diagramRef.value?.setStatusMessage(event.payload.accessKind as "fetch" | "load" | "store", event.payload.address as number)
   } else if (kind === "disk_access") {
+    const outcome = event.payload.outcome as "hit" | "miss"
+    diagramRef.value?.triggerHitMiss("disk", outcome)
     diagramRef.value?.setStatusMessage(event.payload.accessKind as "fetch" | "load" | "store", event.payload.address as number)
   } else if (kind === "tlb_access") {
     const outcome = event.payload.outcome as "hit" | "miss"

@@ -47,6 +47,10 @@ fn work_dir() -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// Every test that calls compile() shares the same fixed work directory, so they must never run at the same time.
+#[cfg(test)]
+pub(crate) static COMPILE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Where the open file dialog should start, the project's own example programs
 /// if this build can still find them, or the normal default folder otherwise.
 #[tauri::command]
@@ -143,6 +147,7 @@ mod tests {
 
     #[test]
     fn compile_handles_valid_and_invalid_sources() {
+        let _guard = COMPILE_TEST_LOCK.lock().unwrap();
         let ok_config = RiscvConfig {
             base: Base::Rv32i,
             extensions: HashSet::from([Extension::M]),

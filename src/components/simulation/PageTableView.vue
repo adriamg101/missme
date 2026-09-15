@@ -3,7 +3,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "v
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useVirtualizedWindow } from "../../lib/virtualizedWindow";
+import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 import IconButton from "../ui/IconButton.vue";
+
+const hierarchyStore = useHierarchyConfigStore();
 
 interface PteRow {
   level: number;
@@ -32,17 +35,37 @@ const isLeaf = computed(() => (currentStep.value?.level ?? 1) === 1);
 // Only the table currently on screen is kept here, moving to another table clears it.
 const entries = reactive(new Map<number, PteRow>());
 
-function currentLevelSlots(): number {
-  const level = currentStep.value?.level ?? 1;
-  return 2 ** (levelBits.value[level - 1] ?? 0);
+const entryCount = ref(0);
+
+async function fetchEntryCount() {
+  const step = currentStep.value;
+  if (!step) {
+    entryCount.value = 0;
+    return;
+  }
+  try {
+    entryCount.value = await invoke<number>("get_page_table_entry_count", { level: step.level, parentKey: step.parentKey });
+  } catch (error) {
+    console.error("Failed to fetch page table entry count:", error);
+    entryCount.value = 0;
+  }
 }
 
+const ppnDigits = computed(() => {
+  const numFrames = Math.max(1, hierarchyStore.ram.frames);
+  return Math.max(1, Math.ceil(Math.log2(numFrames) / 4));
+});
 function hexWord(value: number): string {
-  return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+  return `0x${(value >>> 0).toString(16).toUpperCase().padStart(ppnDigits.value, "0")}`;
 }
 
+const indexDigits = computed(() => {
+  const level = currentStep.value?.level ?? 1;
+  const bits = levelBits.value[level - 1] ?? 0;
+  return Math.max(1, Math.ceil(bits / 4));
+});
 function hexIndex(index: number): string {
-  return `0x${(index >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+  return `0x${(index >>> 0).toString(16).toUpperCase().padStart(indexDigits.value, "0")}`;
 }
 
 async function fetchPage(startIndex: number, count: number) {
@@ -55,7 +78,7 @@ async function fetchPage(startIndex: number, count: number) {
       startIndex,
       count,
     });
-    rows.forEach((row) => entries.set(row.index, row));
+    rows.forEach((row, i) => entries.set(startIndex + i, row));
   } catch (error) {
     console.error("Failed to fetch page table entries:", error);
   }
@@ -65,12 +88,13 @@ const win = useVirtualizedWindow({
   rowHeight: ROW_HEIGHT,
   windowRows: WINDOW_ROWS,
   recenterMarginRows: RECENTER_MARGIN_ROWS,
-  totalRows: currentLevelSlots,
+  totalRows: () => entryCount.value,
   fetchPage,
 });
 
 async function refreshCurrentTable() {
   entries.clear();
+  await fetchEntryCount();
   win.resetWindow();
   await nextTick();
   win.measureViewport();
@@ -118,10 +142,12 @@ onMounted(async () => {
     console.error("Failed to fetch page table structure:", error);
   }
   await goToRoot();
-  const stopListening = await listen<Record<string, unknown>>("sim:event", (event) => {
+  const stopListening = await listen<Record<string, unknown>>("sim:event", async (event) => {
     const kind = event.payload.kind;
     if (kind !== "tlb_access" && kind !== "ram_access" && kind !== "disk_access") return;
-    fetchPage(win.baseIndex.value + win.range.value.start, Math.max(0, win.range.value.end - win.range.value.start));
+    entries.clear();
+    await fetchEntryCount();
+    await fetchPage(win.baseIndex.value + win.range.value.start, Math.max(0, win.range.value.end - win.range.value.start));
   });
   if (disposed) stopListening();
   else unlisten = stopListening;
@@ -171,8 +197,8 @@ onBeforeUnmount(() => {
           class="simulation-page-table-row"
           :style="{ position: 'absolute', top: `${(win.range.value.start + i) * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }"
         >
-          <span class="simulation-page-table-cell">{{ hexIndex(index) }}</span>
           <template v-if="entries.get(index)">
+            <span class="simulation-page-table-cell">{{ hexIndex(entries.get(index)!.index) }}</span>
             <span v-if="isLeaf" class="simulation-page-table-cell">{{ hexWord(entries.get(index)!.pointsToOrPpn) }}</span>
             <span v-else class="simulation-page-table-cell simulation-page-table-cell-empty">-</span>
             <span class="simulation-page-table-cell">{{ entries.get(index)!.present ? "1" : "0" }}</span>
@@ -185,6 +211,7 @@ onBeforeUnmount(() => {
             </span>
           </template>
           <template v-else>
+            <span class="simulation-page-table-cell simulation-page-table-cell-empty">-</span>
             <span class="simulation-page-table-cell simulation-page-table-cell-empty">-</span>
             <span class="simulation-page-table-cell simulation-page-table-cell-empty">-</span>
             <span v-if="!isLeaf" class="simulation-page-table-cell"></span>

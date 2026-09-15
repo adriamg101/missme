@@ -56,7 +56,7 @@ describe("DiskView", () => {
     const addressCell = container.querySelector(".simulation-disk-address");
     expect(addressCell?.textContent).toBe("0x00000000"); // the block's own address, shown like RamView's Address column
     const pageCell = container.querySelector(".simulation-disk-vpn");
-    expect(pageCell?.textContent).toBe("0x00000000"); // VPN 0, since pageSize (32) == BLOCK_SIZE here
+    expect(pageCell?.textContent).toBe("0x0000000"); // VPN 0, since pageSize (32) == BLOCK_SIZE here
   });
 
   it("groups consecutive blocks from the same page under one Page cell", async () => {
@@ -73,7 +73,7 @@ describe("DiskView", () => {
     // for VPN 0's own cell rather than asserting how many Page cells exist
     // in total.
     const pageCells = Array.from(container.querySelectorAll(".simulation-disk-vpn"));
-    const vpn0Cell = pageCells.find((c) => c.textContent === "0x00000000");
+    const vpn0Cell = pageCells.find((c) => c.textContent === "0x0000000");
     expect(vpn0Cell).toBeTruthy();
     expect((vpn0Cell as HTMLElement).style.gridRow).toBe("1 / span 2");
   });

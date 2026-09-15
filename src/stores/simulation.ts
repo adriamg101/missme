@@ -75,6 +75,9 @@ export const useSimulationStore = defineStore("simulation", {
           this.currentLine = event.payload.sourceLine as number;
         } else if (kind === "simulation_paused") {
           this.isRunning = false;
+          if (event.payload.sourceLine !== null && event.payload.sourceLine !== undefined) {
+            this.currentLine = event.payload.sourceLine as number;
+          }
         }
       });
     },

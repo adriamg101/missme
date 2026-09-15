@@ -51,7 +51,7 @@ function toggle() {
   padding: 0.35rem 0.6rem;
   border: none;
   background: transparent;
-  color: var(--text);
+  color: var(--diagram-miss-color);
   font-family: inherit;
   font-size: 0.75rem;
   cursor: pointer;
@@ -80,7 +80,7 @@ function toggle() {
   white-space: pre-wrap;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
-  color: var(--text);
+  color: var(--diagram-miss-color);
   border-top: 1px solid var(--secondary);
   transition: color var(--theme-transition-duration) ease, border-color var(--theme-transition-duration) ease;
 }

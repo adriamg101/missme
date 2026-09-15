@@ -25,20 +25,29 @@ interface PteRow {
 // `levelBits` index 0 = leaf. `rows` maps a level number to that whole
 // level's real entries (across every branch); the mock filters them by
 // parentKey/range itself, the same way the real backend does.
+function touchedRows(levelBits: number[], rows: Record<number, PteRow[]>, level: number, parentKey: number | null | undefined) {
+  const ownBits = levelBits[level - 1] ?? 0;
+  return (rows[level] ?? [])
+    .filter((r) => (parentKey === null || parentKey === undefined ? true : r.key >> ownBits === parentKey))
+    .slice()
+    .sort((a, b) => a.index - b.index);
+}
+
 function mockPageTable(levelBits: number[], rows: Record<number, PteRow[]>) {
   invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
     if (cmd === "get_page_table_levels") return Promise.resolve(levelBits.length);
     if (cmd === "get_page_table_level_bits") return Promise.resolve(levelBits);
+    if (cmd === "get_page_table_entry_count") {
+      const level = args.level as number;
+      const parentKey = args.parentKey as number | null;
+      return Promise.resolve(touchedRows(levelBits, rows, level, parentKey).length);
+    }
     if (cmd === "get_page_table_entries") {
       const level = args.level as number;
       const parentKey = args.parentKey as number | null;
       const startIndex = args.startIndex as number;
       const count = args.count as number;
-      const ownBits = levelBits[level - 1] ?? 0;
-      const matches = (rows[level] ?? []).filter((r) => {
-        const belongsToParent = parentKey === null || parentKey === undefined ? true : r.key >> ownBits === parentKey;
-        return belongsToParent && r.index >= startIndex && r.index < startIndex + count;
-      });
+      const matches = touchedRows(levelBits, rows, level, parentKey).slice(startIndex, startIndex + count);
       return Promise.resolve(matches);
     }
     return Promise.resolve(undefined);
@@ -94,7 +103,7 @@ describe("PageTableView", () => {
     await flush();
 
     expect(await screen.findByText("Level 1")).toBeTruthy();
-    expect(await screen.findByText("0x00000007")).toBeTruthy(); // the leaf's real PPN
+    expect(await screen.findByText("0x7")).toBeTruthy(); // the leaf's real PPN
     expect(screen.queryByTitle("Back to parent table")).toBeTruthy();
   });
 

@@ -157,6 +157,17 @@ pub fn get_page_table_entries(
     page_table_entries(&state, level, parent_key, start_index, count)
 }
 
+fn page_table_entry_count(state: &SessionState, level: u8, parent_key: Option<u64>) -> Result<u64, String> {
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no active simulation session")?;
+    Ok(session.memory().page_table_entries_under_count(level, parent_key))
+}
+
+#[tauri::command]
+pub fn get_page_table_entry_count(state: tauri::State<SessionState>, level: u8, parent_key: Option<u64>) -> Result<u64, String> {
+    page_table_entry_count(&state, level, parent_key)
+}
+
 #[tauri::command]
 pub fn get_page_table_levels(state: tauri::State<SessionState>) -> Result<u8, String> {
     let guard = state.session.lock().map_err(|e| e.to_string())?;

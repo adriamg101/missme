@@ -59,6 +59,10 @@ const viewportHeight = ref(0);
 // A line can hold far more words than fit in a readable row, so each way is drawn as several rows of 8 words instead of one wide row.
 const subRowsPerLine = computed(() => Math.max(1, Math.ceil((levelInfo.value?.wordsPerLine ?? 1) / WORDS_PER_SUBROW)));
 
+// A short line does not need all 8 columns, but a wrapped line still shows a full row of 8.
+const visibleWordColumns = computed(() => Math.min(WORDS_PER_SUBROW, levelInfo.value?.wordsPerLine ?? WORDS_PER_SUBROW));
+const showOffsetColumn = computed(() => subRowsPerLine.value > 1);
+
 // Every set has the same height, since associativity and block size stay fixed within a level.
 const setBlockHeight = computed(() => Math.max(1, levelInfo.value?.associativity ?? 1) * subRowsPerLine.value * ROW_HEIGHT);
 
@@ -188,6 +192,16 @@ function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
+const addressBits = computed(() => (hierarchyStore.isa === "RV32I" ? 32 : 64));
+const tagDigits = computed(() => {
+  const blockSize = Math.max(1, levelInfo.value?.blockSize ?? 1);
+  const tagBits = addressBits.value - Math.log2(blockSize);
+  return Math.max(1, Math.ceil(tagBits / 4));
+});
+function hexTag(value: number): string {
+  return `0x${(value >>> 0).toString(16).toUpperCase().padStart(tagDigits.value, "0")}`;
+}
+
 // Works out which byte offset a given column represents within a row of 8 words.
 function offsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * WORD_SIZE).toString(16).toUpperCase().padStart(2, "0")}`;
@@ -215,7 +229,8 @@ function isGroupStart(wordIndex: number): boolean {
 // The header and every set block share the same column layout.
 const columnsStyle = computed(() => {
   const orderTrack = showOrderColumn.value ? "2.5rem " : "";
-  return `4rem 2.5rem 2.5rem ${orderTrack}calc(10ch + 0.6rem) 4rem repeat(${WORDS_PER_SUBROW}, minmax(calc(10ch + 0.6rem), auto))`;
+  const offsetTrack = showOffsetColumn.value ? "4rem " : "";
+  return `4rem 2.5rem 2.5rem ${orderTrack}calc(10ch + 0.6rem) ${offsetTrack}repeat(${visibleWordColumns.value}, minmax(calc(10ch + 0.6rem), auto))`;
 });
 const headerGridStyle = computed(() => ({
   display: "grid" as const,
@@ -236,7 +251,12 @@ function wayRowStart(wayIndex: number): number {
 // The Tag, Offset, and word columns shift one column to the left when the order column is hidden.
 const colTag = computed(() => (showOrderColumn.value ? 5 : 4));
 const colOffset = computed(() => colTag.value + 1);
-const dashColumns = computed(() => Array.from({ length: 1 + WORDS_PER_SUBROW }, (_, i) => colOffset.value + i));
+const colFirstWord = computed(() => (showOffsetColumn.value ? colOffset.value + 1 : colTag.value + 1));
+const dashColumns = computed(() => {
+  const start = showOffsetColumn.value ? colOffset.value : colFirstWord.value;
+  const count = (showOffsetColumn.value ? 1 : 0) + visibleWordColumns.value;
+  return Array.from({ length: count }, (_, i) => start + i);
+});
 // The order column's own dash filler cell, only present when it's shown.
 const orderDashColumn = computed(() => (showOrderColumn.value ? [4] : []));
 
@@ -314,9 +334,9 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
             <span class="simulation-cache-cell simulation-cache-cell-header">D</span>
             <span v-if="showOrderColumn" class="simulation-cache-cell simulation-cache-cell-header">{{ orderColumnLabel }}</span>
             <span class="simulation-cache-cell simulation-cache-cell-header">Tag</span>
-            <span class="simulation-cache-cell simulation-cache-cell-header">Offset</span>
+            <span v-if="showOffsetColumn" class="simulation-cache-cell simulation-cache-cell-header">Offset</span>
             <span
-              v-for="wi in WORDS_PER_SUBROW"
+              v-for="wi in visibleWordColumns"
               :key="wi"
               class="simulation-cache-cell simulation-cache-cell-header simulation-cache-cell-word"
               :class="{ 'simulation-cache-group-start': isGroupStart(wi - 1) }"
@@ -342,11 +362,11 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
                       <span class="simulation-cache-cell" :style="{ gridColumn: 2, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">1</span>
                       <span class="simulation-cache-cell" :style="{ gridColumn: 3, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">{{ way.dirty ? "1" : "0" }}</span>
                       <span v-if="showOrderColumn" class="simulation-cache-cell" :style="{ gridColumn: 4, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">{{ way.orderValue }}</span>
-                      <span class="simulation-cache-cell simulation-cache-cell-word" :style="{ gridColumn: colTag, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">{{ hexWord(way.tag) }}</span>
+                      <span class="simulation-cache-cell simulation-cache-cell-word" :style="{ gridColumn: colTag, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">{{ hexTag(way.tag) }}</span>
                       <template v-for="sr in subRowsPerLine" :key="sr">
-                        <span class="simulation-cache-cell">{{ subRowOffsetLabel(sr - 1) }}</span>
+                        <span v-if="showOffsetColumn" class="simulation-cache-cell">{{ subRowOffsetLabel(sr - 1) }}</span>
                         <span
-                          v-for="wj in WORDS_PER_SUBROW"
+                          v-for="wj in visibleWordColumns"
                           :key="wj"
                           class="simulation-cache-cell simulation-cache-cell-word"
                           :class="{ 'simulation-cache-group-start': isGroupStart(wj - 1), 'simulation-cache-cell-empty': !wordExistsAt(sr - 1, wj - 1) }"

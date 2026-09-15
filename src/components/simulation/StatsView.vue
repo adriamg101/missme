@@ -27,6 +27,7 @@ interface StatsSnapshot {
   totalCycles: number;
   amat: number;
   cpi: number;
+  mpki: number;
   buckets: BucketSnapshot[];
 }
 
@@ -166,8 +167,9 @@ onBeforeUnmount(() => {
         <StatsGrid>
           <IntegerStat label="Instructions executed" :value="stats.instructionsCompleted" />
           <IntegerStat label="Total memory accesses" :value="stats.totalMemoryAccesses" />
-          <DecimalStat label="AMAT" :value="stats.amat" :decimals="2" />
+          <DecimalStat label="AMAT (cycles)" :value="stats.amat" :decimals="2" />
           <DecimalStat label="CPI" :value="stats.cpi" :decimals="2" />
+          <DecimalStat label="MPKI" :value="stats.mpki" :decimals="2" />
           <IntegerStat label="Total cycles" :value="stats.totalCycles" />
         </StatsGrid>
       </template>

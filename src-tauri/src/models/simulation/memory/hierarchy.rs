@@ -749,6 +749,10 @@ impl MemoryHierarchySimulator {
         self.page_table.entries_under(level, parent_key, start_index, count)
     }
 
+    pub fn page_table_entries_under_count(&self, level: u8, parent_key: Option<u64>) -> u64 {
+        self.page_table.entries_under_count(level, parent_key)
+    }
+
     pub fn page_table_levels(&self) -> u8 {
         self.page_table.levels()
     }

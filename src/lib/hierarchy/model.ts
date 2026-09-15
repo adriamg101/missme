@@ -1,7 +1,7 @@
 // src/lib/hierarchy/model.ts
 export type ISA = "RV32I" | "RV64I";
 export type ReplacementPolicy = "LRU" | "FIFO" | "Random" | "LFU" | "PLRU";
-export type TlbReplacementPolicy = "LRU" | "FIFO" | "Random" | "PLRU";
+export type TlbReplacementPolicy = "LRU" | "FIFO" | "Random" | "LFU" | "PLRU";
 export type WritePolicy = "write-through" | "write-back";
 export type InclusionPolicy = "inclusive" | "exclusive" | "NINE";
 
