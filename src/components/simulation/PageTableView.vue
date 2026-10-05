@@ -142,12 +142,10 @@ onMounted(async () => {
     console.error("Failed to fetch page table structure:", error);
   }
   await goToRoot();
-  const stopListening = await listen<Record<string, unknown>>("sim:event", async (event) => {
+  const stopListening = await listen<Record<string, unknown>>("sim:event", (event) => {
     const kind = event.payload.kind;
     if (kind !== "tlb_access" && kind !== "ram_access" && kind !== "disk_access") return;
-    entries.clear();
-    await fetchEntryCount();
-    await fetchPage(win.baseIndex.value + win.range.value.start, Math.max(0, win.range.value.end - win.range.value.start));
+    fetchPage(win.baseIndex.value + win.range.value.start, Math.max(0, win.range.value.end - win.range.value.start));
   });
   if (disposed) stopListening();
   else unlisten = stopListening;
