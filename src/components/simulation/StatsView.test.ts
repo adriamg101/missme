@@ -24,7 +24,6 @@ function emptyStats() {
     totalCycles: 20,
     amat: 4,
     cpi: 6.67,
-    mpki: 0,
     buckets: [
       { bucketKind: "ram", levelIndex: null, side: null, accesses: 5, hits: 0, misses: 0, cycles: 20 },
     ],
