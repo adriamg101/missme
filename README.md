@@ -10,7 +10,7 @@ A memory hierarchy simulator. Describe a cache hierarchy, optionally with virtua
 - Replacement policies: LRU, FIFO, LFU, and Random.
 - Write policies: write-back and write-through, with write-allocate or no-write-allocate.
 - Optional virtual memory: TLB, multi-level page table, physical frames, and disk swapping.
-- Step by step execution, step by instruction, and continuous run, with breakpoints you can add or remove while the program is running.
+- Step through each memory access or each instruction, or run continuously. Breakpoints can be added or removed while the program runs.
 - Live views of each level: cache sets, TLB entries, page table, frames, RAM, and disk.
 - Statistics per level: hits, misses, hit rate, cycles, AMAT, CPI, and MPKI.
 
@@ -42,7 +42,7 @@ npm run tauri build    # create the installers for your platform
 
 ## Usage
 
-1. Open the editor and write a program in the current language (RISC-V assembly).
+1. Open the editor and write a program in RISC-V assembly.
 2. Set the memory map for `.text` and `.data`, and the ISA extensions you want to use.
 3. Configure the memory hierarchy: caches, TLB, virtual memory, RAM, and disk.
 4. Start the simulation. You can step one memory access at a time, one instruction at a time, or run until a breakpoint.
@@ -51,7 +51,7 @@ npm run tauri build    # create the installers for your platform
 
 ## Program format
 
-Programs are written in RISC-V assembly. Code goes in the `.text` section and data goes in the `.data` section, using the usual directives:
+Programs are written in RISC-V assembly. Put code in the `.text` section and data in the `.data` section:
 
 ```asm
 .data
@@ -67,29 +67,47 @@ main:
 
 ## Examples
 
-The `examples/riscv` folder contains sample programs you can load into the editor to explore the simulator.
+The `examples/riscv` folder contains sample programs you can load into the editor.
+
+| File | Description |
+| --- | --- |
+| `01_base_integer.s` | Base RV32I arithmetic, branches, loops, and loads and stores. |
+| `02_m_extension.s` | Multiplication, division, and remainder, including edge cases. |
+| `03_f_extension.s` | Single-precision float loads, stores, arithmetic, and comparisons. |
+| `04_d_extension.s` | Double-precision arithmetic and conversions. |
+| `05_sequential_scan.s` | Sums an array in order, the best case for spatial locality. |
+| `06_random_scan.s` | Sums the same array in random order, to compare with sequential access. |
+| `07_pointer_chase.s` | Follows a chain of pointers to reveal the size of each cache level. |
+| `08_variable_stride.s` | Walks an array with a configurable stride. |
+| `09_mapping_conflicts.s` | Addresses that map to the same cache set, causing conflict misses. |
+| `10_temporal_reuse.s` | Scans the same buffer repeatedly, to show temporal locality. |
+| `11_matrix_row_vs_column.s` | Sums a matrix by rows and by columns to compare access patterns. |
+| `12_matrix_multiply_naive_vs_tiled.s` | Matrix multiplication with and without loop tiling. |
+| `13_write_allocate_vs_writeback.s` | Compares write policies on the same store pattern. |
+| `14_working_set_over_ram.s` | An array larger than physical RAM, which needs virtual memory. |
 
 ## Project structure
 
 ```
-examples/          Sample programs
-  riscv/           RISC-V assembly examples
-docs/              Documentation assets, such as the demo GIF
-src/               Frontend (Vue 3 + TypeScript)
-  components/      UI components
-    compile-config/  Memory map and compile settings
-    hierarchy-config/ Cache, TLB, RAM, and disk configuration
-    simulation/      Live views: caches, TLB, page table, frames, RAM, disk, stats
-    ui/              Shared controls
-  lib/             Hierarchy model, virtual scrolling, and helpers
-  stores/          Pinia stores for configuration and simulation state
-src-tauri/         Backend (Rust, Tauri)
-  src/controllers/ Tauri commands that the frontend calls
-  src/models/
-    interpreter/   Language frontends (lexer, parser, code generation)
-      riscv/       RISC-V implementation
-    simulation/    CPU simulator, session control, statistics
-      memory/      Cache, TLB, page table, frames, RAM, disk, replacement policies
+missme/
+├── examples/
+│   └── riscv/             Sample RISC-V programs
+├── src/                   Frontend (Vue 3 + TypeScript)
+│   ├── components/        UI components
+│   │   ├── compile-config/     Memory map and compile settings
+│   │   ├── hierarchy-config/   Cache, TLB, RAM, and disk configuration
+│   │   ├── simulation/         Live views and statistics
+│   │   └── ui/                 Shared controls
+│   ├── lib/               Hierarchy model, virtual scrolling, and helpers
+│   └── stores/            Pinia stores for configuration and simulation state
+└── src-tauri/             Backend (Rust, Tauri)
+    └── src/
+        ├── controllers/   Tauri commands called by the frontend
+        └── models/
+            ├── interpreter/       Language frontends (lexer, parser, code generation)
+            │   └── riscv/         RISC-V implementation
+            └── simulation/        CPU simulator, session control, statistics
+                └── memory/        Cache, TLB, page table, frames, RAM, disk, replacement policies
 ```
 
 ## Tests
