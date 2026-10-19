@@ -1,10 +1,5 @@
 # *missme*
 
-[![License](https://img.shields.io/github/license/adriamg101/missme)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/adriamg101/missme)](https://github.com/adriamg101/missme/releases)
-[![Release workflow](https://img.shields.io/github/actions/workflow/status/adriamg101/missme/release.yml)](https://github.com/adriamg101/missme/actions/workflows/release.yml)
-[![Top language](https://img.shields.io/github/languages/top/adriamg101/missme)](https://github.com/adriamg101/missme)
-
 > **M**ISSME **I**s a **S**imulation **S**ystem for **M**emory hi**E**rarchies
 
 A memory hierarchy simulator. Describe a cache hierarchy, optionally with virtual memory, run a program on it, and watch each access step by step. RISC-V is the first supported language; others can be added.
