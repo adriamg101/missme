@@ -1,8 +1,15 @@
-# MISSME 😢
+# <img src="src-tauri/icons/128x128.png" width="36" height="36" alt="missme logo" align="center" /> *missme*
+
+[![License](https://img.shields.io/github/license/adriamg101/missme)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/adriamg101/missme)](https://github.com/adriamg101/missme/releases)
+[![Release workflow](https://img.shields.io/github/actions/workflow/status/adriamg101/missme/release.yml)](https://github.com/adriamg101/missme/actions/workflows/release.yml)
+[![Top language](https://img.shields.io/github/languages/top/adriamg101/missme)](https://github.com/adriamg101/missme)
 
 > **M**ISSME **I**s a **S**imulation **S**ystem for **M**emory hi**E**rarchies
 
 A memory hierarchy simulator. Describe a cache hierarchy, optionally with virtual memory, run a program on it, and watch each access step by step. RISC-V is the first supported language; others can be added.
+
+![MISSME demo](assets/demo.gif)
 
 ## Features
 
@@ -14,31 +21,48 @@ A memory hierarchy simulator. Describe a cache hierarchy, optionally with virtua
 - Live views of each level: cache sets, TLB entries, page table, frames, RAM, and disk.
 - Statistics per level: hits, misses, hit rate, cycles, AMAT, CPI, and MPKI.
 
-## Download
+## Installation
 
-Pre-built packages are available on the [Releases](https://github.com/adriamg101/missme/releases) page:
-
-- Windows: `.msi` or `.exe`
-- macOS: `.dmg`
-- Linux: `.AppImage`, `.deb`, or `.rpm`
-
-The packages are not signed yet, so Windows and macOS may show a security warning the first time you open them.
-
-## Build from source
-
-You need:
+### Requirements
 
 - [Node.js](https://nodejs.org/) (LTS)
 - [Rust](https://www.rust-lang.org/tools/install) (stable)
-- The [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your operating system
+- The Tauri system dependencies for your platform. On **Arch Linux**:
 
-Then:
+  ```bash
+  sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg
+  ```
+
+  For any other operating system, follow the official [Tauri prerequisites](https://tauri.app/start/prerequisites/) guide.
+
+MISSME is built with [Tauri](https://tauri.app/): a Rust backend and a Vue 3 + TypeScript frontend.
+
+### Build from source
 
 ```bash
+git clone https://github.com/adriamg101/missme.git
+cd missme
 npm install
 npm run tauri dev      # run the app in development mode
-npm run tauri build    # create the installers for your platform
+npm run tauri build    # create the installer for your platform
 ```
+
+### Pre-built packages
+
+Once a release is published, installers for Windows, macOS, and Linux are attached to the [Releases](https://github.com/adriamg101/missme/releases) page. They are not signed, so Windows and macOS may show a warning the first time you open them.
+
+On macOS, double-clicking the app the first time may refuse to open it:
+
+- On most versions, the system says it is from an unidentified developer. Right-click the app and choose **Open** instead of double-clicking, then confirm in the dialog that appears.
+- On newer versions (macOS Sequoia and later), the system instead says the app is damaged and can't be opened, without an option to open it anyway. In that case, open a Terminal and run:
+
+  ```bash
+  xattr -cr /Applications/missme.app
+  ```
+
+  (adjust the path if you placed the app somewhere else), then open it normally.
+
+Either way, this is only needed once per machine; after that the app opens normally.
 
 ## Usage
 
@@ -65,26 +89,13 @@ main:
     ret
 ```
 
-## Examples
+## License
 
-The `examples/riscv` folder contains sample programs you can load into the editor.
+MISSME is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for the copyright notice. If you build another tool on top of MISSME, keep the `NOTICE` file with your distribution, as the license requires.
 
-| File | Description |
-| --- | --- |
-| `01_base_integer.s` | Base RV32I arithmetic, branches, loops, and loads and stores. |
-| `02_m_extension.s` | Multiplication, division, and remainder, including edge cases. |
-| `03_f_extension.s` | Single-precision float loads, stores, arithmetic, and comparisons. |
-| `04_d_extension.s` | Double-precision arithmetic and conversions. |
-| `05_sequential_scan.s` | Sums an array in order, the best case for spatial locality. |
-| `06_random_scan.s` | Sums the same array in random order, to compare with sequential access. |
-| `07_pointer_chase.s` | Follows a chain of pointers to reveal the size of each cache level. |
-| `08_variable_stride.s` | Walks an array with a configurable stride. |
-| `09_mapping_conflicts.s` | Addresses that map to the same cache set, causing conflict misses. |
-| `10_temporal_reuse.s` | Scans the same buffer repeatedly, to show temporal locality. |
-| `11_matrix_row_vs_column.s` | Sums a matrix by rows and by columns to compare access patterns. |
-| `12_matrix_multiply_naive_vs_tiled.s` | Matrix multiplication with and without loop tiling. |
-| `13_write_allocate_vs_writeback.s` | Compares write policies on the same store pattern. |
-| `14_working_set_over_ram.s` | An array larger than physical RAM, which needs virtual memory. |
+## Author
+
+Adrià Martínez Gallifa - ([@adriamg101](https://github.com/adriamg101))
 
 ## Project structure
 
@@ -110,23 +121,6 @@ missme/
                 └── memory/        Cache, TLB, page table, frames, RAM, disk, replacement policies
 ```
 
-## Tests
+## Acknowledgments
 
-```bash
-cd src-tauri && cargo test    # backend tests
-npm test                      # frontend tests
-```
-
-## Contributing
-
-To report a bug or propose a feature, open an issue. For larger changes, discuss them in an issue first, then send a pull request that includes the tests for your changes.
-
-To add a language, implement its frontend under `src-tauri/src/models/interpreter/`, following the RISC-V frontend.
-
-## License
-
-MISSME is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for the copyright notice.
-
-## Building on MISSME
-
-If you use MISSME as the basis for another tool, please credit the original project in your README or documentation, and keep the `NOTICE` file with your distribution as the license requires.
+The memory hierarchy model is based on the concepts described in Hennessy and Patterson's *Computer Organization and Design* and *Computer Architecture: A Quantitative Approach*.

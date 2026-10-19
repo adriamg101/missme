@@ -8,13 +8,14 @@ import { touchAndPrune } from "../../lib/lruCache";
 
 const store = useHierarchyConfigStore();
 const ROW_HEIGHT = 26;
-const WINDOW_ROWS = 20_000;
-const RECENTER_MARGIN_ROWS = 500;
-const MAX_CACHED_FRAMES = 4000;
+const WINDOW_ROWS = 1000;
+const RECENTER_MARGIN_ROWS = 25;
+const MAX_CACHED_LINES = 4000;
 const WORDS_PER_SUBROW = 8;
 
-interface Frame {
+interface FrameLineRow {
   frame: number;
+  subrowIndex: number;
   vpn: number | null;
   valid: boolean;
   dirty: boolean;
@@ -22,17 +23,14 @@ interface Frame {
   populated: boolean[];
 }
 
-const frames = reactive(new Map<number, Frame>());
+const lines = reactive(new Map<number, FrameLineRow>());
 const numFrames = computed(() => Math.max(1, store.ram.frames));
 const wordsPerFrame = computed(() => Math.max(1, Math.floor(store.pageSize / 4)));
+const linesPerFrame = computed(() => Math.max(1, Math.ceil(wordsPerFrame.value / WORDS_PER_SUBROW)));
+const totalLines = computed(() => linesPerFrame.value * numFrames.value);
 
-// A page can hold far more words than fit in a readable row, so each frame is drawn as several rows.
-const subRowsPerFrame = computed(() => Math.max(1, Math.ceil(wordsPerFrame.value / WORDS_PER_SUBROW)));
-const frameBlockHeight = computed(() => subRowsPerFrame.value * ROW_HEIGHT);
-
-// A short page does not need all 8 columns, but a wrapped page still shows a full row of 8.
 const visibleWordColumns = computed(() => Math.min(WORDS_PER_SUBROW, wordsPerFrame.value));
-const showOffsetColumn = computed(() => subRowsPerFrame.value > 1);
+const showOffsetColumn = computed(() => linesPerFrame.value > 1);
 
 const gridColumnsStyle = computed(() => {
   const offsetTrack = showOffsetColumn.value ? "4rem " : "";
@@ -40,25 +38,26 @@ const gridColumnsStyle = computed(() => {
   return `4rem ${vpnTrack} 2.5rem 2.5rem ${offsetTrack}repeat(${visibleWordColumns.value}, minmax(calc(10ch + 0.6rem), auto))`;
 });
 
-async function fetchPage(startFrame: number, count: number) {
+async function fetchPage(startLine: number, count: number) {
   try {
-    const result = await invoke<Frame[]>("get_frames", { startFrame, count });
+    const result = await invoke<FrameLineRow[]>("get_frame_lines", { startLine, count });
     const touched: number[] = [];
-    result.forEach((f) => {
-      frames.set(f.frame, f);
-      touched.push(f.frame);
+    result.forEach((row, i) => {
+      const lineIndex = startLine + i;
+      lines.set(lineIndex, row);
+      touched.push(lineIndex);
     });
-    touchAndPrune(frames, touched, MAX_CACHED_FRAMES);
+    touchAndPrune(lines, touched, MAX_CACHED_LINES);
   } catch (error) {
-    console.error("Failed to fetch frames:", error);
+    console.error("Failed to fetch frame lines:", error);
   }
 }
 
 const win = useVirtualizedWindow({
-  rowHeight: () => frameBlockHeight.value,
+  rowHeight: ROW_HEIGHT,
   windowRows: WINDOW_ROWS,
   recenterMarginRows: RECENTER_MARGIN_ROWS,
-  totalRows: () => numFrames.value,
+  totalRows: () => totalLines.value,
   fetchPage,
 });
 
@@ -75,25 +74,37 @@ function hexVpn(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(vpnDigits.value, "0")}`;
 }
 
-// Works out which byte offset a given column represents within a row of 8 words.
 function columnOffsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * 4).toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
 const pageOffsetDigits = computed(() => Math.max(1, Math.ceil(Math.log2(Math.max(1, store.pageSize)) / 4)));
 
-function subRowOffsetLabel(subRow: number): string {
-  return `0x${(subRow * WORDS_PER_SUBROW * 4).toString(16).toUpperCase().padStart(pageOffsetDigits.value, "0")}`;
+function subRowOffsetLabel(subrowIndex: number): string {
+  return `0x${(subrowIndex * WORDS_PER_SUBROW * 4).toString(16).toUpperCase().padStart(pageOffsetDigits.value, "0")}`;
 }
 
-function wordAt(frame: Frame, subRow: number, column: number): number {
-  return frame.words[subRow * WORDS_PER_SUBROW + column] ?? 0;
+interface FrameGroupEntry {
+  lineIndex: number;
+  row: FrameLineRow | undefined;
+}
+interface FrameGroup {
+  frame: number;
+  entries: FrameGroupEntry[];
+  offsetInWindow: number;
 }
 
-// True only if this word was actually written, so an unwritten spot does not look like a real zero.
-function wordPopulatedAt(frame: Frame, subRow: number, column: number): boolean {
-  return frame.populated[subRow * WORDS_PER_SUBROW + column] ?? false;
-}
+const visibleGroups = computed<FrameGroup[]>(() => {
+  const groups: FrameGroup[] = [];
+  win.visibleIndices.value.forEach((lineIndex, i) => {
+    const frame = Math.floor(lineIndex / linesPerFrame.value);
+    const last = groups[groups.length - 1];
+    const entry = { lineIndex, row: lines.get(lineIndex) };
+    if (last && last.frame === frame) last.entries.push(entry);
+    else groups.push({ frame, entries: [entry], offsetInWindow: i });
+  });
+  return groups;
+});
 
 const frameInput = ref("");
 const frameInputInvalid = ref(false);
@@ -105,14 +116,13 @@ function jumpToInputFrame() {
     return;
   }
   frameInputInvalid.value = false;
-  win.jumpTo(Number(trimmed));
+  win.jumpTo(Number(trimmed) * linesPerFrame.value);
 }
 
 let unlisten: (() => void) | null = null;
 let disposed = false;
 
 onMounted(async () => {
-  // Waits for the page to render before measuring the scrolling area, or it always reads zero.
   await nextTick();
   win.measureViewport();
   await fetchPage(0, Math.max(0, win.range.value.end - win.range.value.start));
@@ -158,40 +168,40 @@ onBeforeUnmount(() => {
         <div class="simulation-frames-body" :ref="(el) => (win.containerRef.value = el as HTMLDivElement | null)" @scroll="win.onScroll">
           <div class="simulation-frames-spacer" :style="{ height: `${win.range.value.totalHeight}px`, position: 'relative' }">
             <div
-              v-for="(frameIndex, i) in win.visibleIndices.value"
-              :key="frameIndex"
+              v-for="group in visibleGroups"
+              :key="group.entries[0].lineIndex"
               class="simulation-frames-block"
               :style="{
                 position: 'absolute',
-                top: `${(win.range.value.start + i) * frameBlockHeight}px`,
-                height: `${frameBlockHeight}px`,
+                top: `${(win.range.value.start + group.offsetInWindow) * ROW_HEIGHT}px`,
+                height: `${group.entries.length * ROW_HEIGHT}px`,
                 display: 'grid',
                 gridTemplateColumns: gridColumnsStyle,
                 gridAutoRows: `${ROW_HEIGHT}px`,
               }"
             >
-              <template v-if="frames.get(frameIndex)">
-                <span class="simulation-frames-cell simulation-frames-frame-index" :style="{ gridColumn: 1, gridRow: `1 / span ${subRowsPerFrame}` }">{{ frameIndex }}</span>
-                <template v-if="frames.get(frameIndex)!.valid">
-                  <span class="simulation-frames-cell" :style="{ gridColumn: 2, gridRow: `1 / span ${subRowsPerFrame}` }">{{ hexVpn(frames.get(frameIndex)!.vpn!) }}</span>
-                  <span class="simulation-frames-cell" :style="{ gridColumn: 3, gridRow: `1 / span ${subRowsPerFrame}` }">1</span>
-                  <span class="simulation-frames-cell" :style="{ gridColumn: 4, gridRow: `1 / span ${subRowsPerFrame}` }">{{ frames.get(frameIndex)!.dirty ? "1" : "0" }}</span>
-                  <template v-for="sr in subRowsPerFrame" :key="sr">
-                    <span v-if="showOffsetColumn" class="simulation-frames-cell">{{ subRowOffsetLabel(sr - 1) }}</span>
+              <span class="simulation-frames-cell simulation-frames-frame-index" :style="{ gridColumn: 1, gridRow: `1 / span ${group.entries.length}` }">{{ group.frame }}</span>
+              <template v-if="group.entries[0].row">
+                <template v-if="group.entries[0].row.valid">
+                  <span class="simulation-frames-cell" :style="{ gridColumn: 2, gridRow: `1 / span ${group.entries.length}` }">{{ hexVpn(group.entries[0].row.vpn!) }}</span>
+                  <span class="simulation-frames-cell" :style="{ gridColumn: 3, gridRow: `1 / span ${group.entries.length}` }">1</span>
+                  <span class="simulation-frames-cell" :style="{ gridColumn: 4, gridRow: `1 / span ${group.entries.length}` }">{{ group.entries[0].row.dirty ? "1" : "0" }}</span>
+                  <template v-for="entry in group.entries" :key="entry.lineIndex">
+                    <span v-if="showOffsetColumn" class="simulation-frames-cell">{{ subRowOffsetLabel(entry.row!.subrowIndex) }}</span>
                     <span
                       v-for="wi in visibleWordColumns"
                       :key="wi"
                       class="simulation-frames-cell"
-                      :class="{ 'simulation-frames-cell-empty': !wordPopulatedAt(frames.get(frameIndex)!, sr - 1, wi - 1) }"
-                    >{{ wordPopulatedAt(frames.get(frameIndex)!, sr - 1, wi - 1) ? hexWord(wordAt(frames.get(frameIndex)!, sr - 1, wi - 1)) : "-" }}</span>
+                      :class="{ 'simulation-frames-cell-empty': !(entry.row!.populated[wi - 1] ?? false) }"
+                    >{{ entry.row!.populated[wi - 1] ? hexWord(entry.row!.words[wi - 1]) : "-" }}</span>
                   </template>
                 </template>
                 <template v-else>
-                  <span class="simulation-frames-cell simulation-frames-cell-empty" :style="{ gridColumn: 2, gridRow: `1 / span ${subRowsPerFrame}` }">-</span>
-                  <span class="simulation-frames-cell simulation-frames-cell-empty" :style="{ gridColumn: 3, gridRow: `1 / span ${subRowsPerFrame}` }">-</span>
-                  <span class="simulation-frames-cell simulation-frames-cell-empty" :style="{ gridColumn: 4, gridRow: `1 / span ${subRowsPerFrame}` }">-</span>
-                  <template v-for="sr in subRowsPerFrame" :key="sr">
-                    <span v-if="showOffsetColumn" class="simulation-frames-cell">{{ subRowOffsetLabel(sr - 1) }}</span>
+                  <span class="simulation-frames-cell simulation-frames-cell-empty" :style="{ gridColumn: 2, gridRow: `1 / span ${group.entries.length}` }">-</span>
+                  <span class="simulation-frames-cell simulation-frames-cell-empty" :style="{ gridColumn: 3, gridRow: `1 / span ${group.entries.length}` }">-</span>
+                  <span class="simulation-frames-cell simulation-frames-cell-empty" :style="{ gridColumn: 4, gridRow: `1 / span ${group.entries.length}` }">-</span>
+                  <template v-for="entry in group.entries" :key="entry.lineIndex">
+                    <span v-if="showOffsetColumn" class="simulation-frames-cell">{{ subRowOffsetLabel(entry.row!.subrowIndex) }}</span>
                     <span v-for="wi in visibleWordColumns" :key="wi" class="simulation-frames-cell simulation-frames-cell-empty">-</span>
                   </template>
                 </template>

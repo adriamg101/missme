@@ -33,6 +33,17 @@ interface CacheSet {
   setIndex: number;
   ways: CacheWay[];
 }
+interface CacheLineRow {
+  setIndex: number;
+  wayIndex: number;
+  subrowIndex: number;
+  valid: boolean;
+  dirty: boolean;
+  tag: number;
+  isPhantom: boolean;
+  orderValue: number | null;
+  words: number[];
+}
 
 function seedOneLevel() {
   const store = useHierarchyConfigStore();
@@ -48,17 +59,40 @@ function seedOneLevel() {
   return store;
 }
 
-// get_cache_level_info only returns metadata, while get_cache_sets fetches
-// pages of the actual set data. This fakes both, and answers get_cache_sets
-// by slicing out the requested [startSet, startSet+count) range from the
-// given full `allSets` array, the same way the real backend would.
+function linesPerWayFor(info: CacheLevelInfo): number {
+  return Math.max(1, Math.ceil(info.wordsPerLine / 8));
+}
+function linesPerSetFor(info: CacheLevelInfo): number {
+  return linesPerWayFor(info) * Math.max(1, info.associativity);
+}
+
+// get_cache_level_info only returns metadata, while get_cache_lines fetches
+// pages of the actual line data. This fakes both, flattening the given
+// `allSets` fixture into (set, way, subrow) rows the same way the real
+// backend does, and answers get_cache_lines by slicing out the requested
+// [startLine, startLine+count) range from that flattening.
 function mockCacheLevel(info: CacheLevelInfo, allSets: CacheSet[]) {
+  const perWay = linesPerWayFor(info);
+  const perSet = linesPerSetFor(info);
+  const bySetIndex = new Map(allSets.map((s) => [s.setIndex, s]));
   invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
     if (cmd === "get_cache_level_info") return Promise.resolve(info);
-    if (cmd === "get_cache_sets") {
-      const startSet = args.startSet as number;
+    if (cmd === "get_cache_lines") {
+      const startLine = args.startLine as number;
       const count = args.count as number;
-      return Promise.resolve(allSets.filter((s) => s.setIndex >= startSet && s.setIndex < startSet + count));
+      const totalLines = perSet * info.numSets;
+      const end = Math.min(startLine + count, totalLines);
+      const rows: CacheLineRow[] = [];
+      for (let lineIndex = startLine; lineIndex < end; lineIndex++) {
+        const setIndex = Math.floor(lineIndex / perSet);
+        const withinSet = lineIndex % perSet;
+        const wayIndex = Math.floor(withinSet / perWay);
+        const subrowIndex = withinSet % perWay;
+        const way = bySetIndex.get(setIndex)?.ways[wayIndex] ?? { valid: false, dirty: false, tag: 0, isPhantom: false, orderValue: null, words: [] };
+        const words = way.valid && !way.isPhantom ? way.words.slice(subrowIndex * 8, subrowIndex * 8 + 8) : [];
+        rows.push({ setIndex, wayIndex, subrowIndex, valid: way.valid, dirty: way.dirty, tag: way.tag, isPhantom: way.isPhantom, orderValue: way.orderValue, words });
+      }
+      return Promise.resolve(rows);
     }
     return Promise.resolve(undefined);
   });
@@ -101,14 +135,14 @@ beforeEach(() => {
 });
 
 describe("CacheLevelView", () => {
-  it("fetches level info then the visible window of sets on mount", async () => {
+  it("fetches level info then the visible window of lines on mount", async () => {
     seedOneLevel();
     render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await flush();
     expect(invokeMock).toHaveBeenCalledWith("get_cache_level_info", { levelIndex: 0, side: "unified" });
     expect(invokeMock).toHaveBeenCalledWith(
-      "get_cache_sets",
-      expect.objectContaining({ levelIndex: 0, side: "unified", startSet: 0 }),
+      "get_cache_lines",
+      expect.objectContaining({ levelIndex: 0, side: "unified", startLine: 0 }),
     );
     expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
     // The tag is padded with zeros to 8 hex digits, same as the words.
@@ -124,7 +158,7 @@ describe("CacheLevelView", () => {
     capturedHandler!({ payload: { kind: "cache_access", levelIndex: 0, outcome: "hit", sourceLine: 1 } });
     await flush();
 
-    expect(invokeMock).toHaveBeenCalledWith("get_cache_sets", expect.objectContaining({ levelIndex: 0, side: "unified" }));
+    expect(invokeMock).toHaveBeenCalledWith("get_cache_lines", expect.objectContaining({ levelIndex: 0, side: "unified" }));
     expect(invokeMock).not.toHaveBeenCalledWith("get_cache_level_info", expect.anything());
   });
 
@@ -265,14 +299,21 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
     const info: CacheLevelInfo = { associativity: 1, blockSize: 4, numSets: 5_000_000, wordsPerLine: 1 };
     invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
       if (cmd === "get_cache_level_info") return Promise.resolve(info);
-      if (cmd === "get_cache_sets") {
-        const startSet = args.startSet as number;
+      if (cmd === "get_cache_lines") {
+        const startLine = args.startLine as number;
         const count = args.count as number;
-        const sets: CacheSet[] = Array.from({ length: count }, (_, i) => ({
-          setIndex: startSet + i,
-          ways: [{ valid: true, dirty: false, tag: startSet + i, isPhantom: false, orderValue: 0, words: [startSet + i] }],
+        const rows: CacheLineRow[] = Array.from({ length: count }, (_, i) => ({
+          setIndex: startLine + i,
+          wayIndex: 0,
+          subrowIndex: 0,
+          valid: true,
+          dirty: false,
+          tag: startLine + i,
+          isPhantom: false,
+          orderValue: 0,
+          words: [startLine + i],
         }));
-        return Promise.resolve(sets);
+        return Promise.resolve(rows);
       }
       return Promise.resolve(undefined);
     });
@@ -280,9 +321,9 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
     const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await flush();
 
-    // No request should ever ask for anywhere near the full 5,000,000 sets.
+    // No request should ever ask for anywhere near the full 5,000,000 lines.
     for (const call of invokeMock.mock.calls) {
-      if (call[0] === "get_cache_sets") {
+      if (call[0] === "get_cache_lines") {
         expect((call[1] as { count: number }).count).toBeLessThan(1000);
       }
     }
@@ -290,14 +331,33 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
     invokeMock.mockClear();
     const scrollEl = container.querySelector(".simulation-cache-body") as HTMLDivElement;
     // Scroll to near the bottom of the visible window to force it to reload around a new position.
-    scrollEl.scrollTop = 520_000 - 100;
+    scrollEl.scrollTop = 1000 * 26 - 100;
     await fireEvent.scroll(scrollEl);
     await flush();
 
-    const [, args] = invokeMock.mock.calls.find((call) => call[0] === "get_cache_sets") as [string, { startSet: number }];
+    const [, args] = invokeMock.mock.calls.find((call) => call[0] === "get_cache_lines") as [string, { startLine: number }];
     // The new position is well past the initial window, which shows that
     // scrolling isn't limited to whatever the first window happened to cover.
-    expect(args.startSet).toBeGreaterThan(1000);
+    expect(args.startLine).toBeGreaterThan(100);
+  });
+
+  it("never requests more than one call's cap even when a single set alone has thousands of lines", async () => {
+    seedOneLevel();
+    const info: CacheLevelInfo = { associativity: 10_000, blockSize: 4, numSets: 1, wordsPerLine: 1 };
+    const set: CacheSet = {
+      setIndex: 0,
+      ways: Array.from({ length: 10_000 }, (_, i) => ({ valid: true, dirty: false, tag: i, isPhantom: false, orderValue: i, words: [i] })),
+    };
+    mockCacheLevel(info, [set]);
+
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    for (const call of invokeMock.mock.calls) {
+      if (call[0] === "get_cache_lines") {
+        expect((call[1] as { count: number }).count).toBeLessThanOrEqual(512);
+      }
+    }
   });
 });
 

@@ -35,8 +35,8 @@ const gridColumnsStyle = computed(() => {
 });
 const MAX_CACHED_SETS = 4000;
 const ROW_HEIGHT = 26;
-const WINDOW_SETS = 20_000;
-const RECENTER_MARGIN_SETS = 500;
+const WINDOW_SETS = 1000;
+const RECENTER_MARGIN_SETS = 25;
 
 const setBlockHeight = computed(() => Math.max(1, info.value?.associativity ?? 1) * ROW_HEIGHT);
 const sets = reactive(new Map<number, TlbSet>());

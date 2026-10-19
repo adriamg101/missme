@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
-import { computeVirtualRange } from "../../lib/virtualScroll";
+import { useVirtualizedWindow } from "../../lib/virtualizedWindow";
 import { touchAndPrune } from "../../lib/lruCache";
 import type { ReplacementPolicy } from "../../lib/hierarchy/model";
 
@@ -12,7 +12,6 @@ const hierarchyStore = useHierarchyConfigStore();
 
 const levelIndex = computed(() => hierarchyStore.hierarchy.findIndex((l) => l.id === props.levelId));
 
-// The active policy for this level and side, read straight from the store.
 const activePolicy = computed<ReplacementPolicy | null>(() => {
   const level = hierarchyStore.hierarchy[levelIndex.value];
   if (!level) return null;
@@ -20,7 +19,6 @@ const activePolicy = computed<ReplacementPolicy | null>(() => {
   return entry?.config.replacement ?? null;
 });
 
-// The order column disappears entirely for Random, since there is nothing to show.
 const orderColumnLabel = computed(() => {
   if (activePolicy.value === "FIFO") return "FIFO";
   if (activePolicy.value === "LFU") return "LFU";
@@ -28,17 +26,16 @@ const orderColumnLabel = computed(() => {
 });
 const showOrderColumn = computed(() => activePolicy.value !== "Random");
 
-interface CacheWay {
+interface CacheLineRow {
+  setIndex: number;
+  wayIndex: number;
+  subrowIndex: number;
   valid: boolean;
   dirty: boolean;
   tag: number;
   isPhantom: boolean;
   orderValue: number | null;
   words: number[];
-}
-interface CacheSet {
-  setIndex: number;
-  ways: CacheWay[];
 }
 interface CacheLevelInfo {
   associativity: number;
@@ -48,127 +45,50 @@ interface CacheLevelInfo {
 }
 
 const levelInfo = ref<CacheLevelInfo | null>(null);
-const MAX_CACHED_SETS = 4000;
+const MAX_CACHED_LINES = 4000;
 
 const ROW_HEIGHT = 26;
+const WINDOW_ROWS = 1000;
+const RECENTER_MARGIN_ROWS = 25;
 const WORDS_PER_SUBROW = 8;
-const containerRef = ref<HTMLDivElement | null>(null);
-const scrollTop = ref(0);
-const viewportHeight = ref(0);
 
-// A line can hold far more words than fit in a readable row, so each way is drawn as several rows of 8 words instead of one wide row.
-const subRowsPerLine = computed(() => Math.max(1, Math.ceil((levelInfo.value?.wordsPerLine ?? 1) / WORDS_PER_SUBROW)));
+const linesPerWay = computed(() => Math.max(1, Math.ceil((levelInfo.value?.wordsPerLine ?? 1) / WORDS_PER_SUBROW)));
+const linesPerSet = computed(() => linesPerWay.value * Math.max(1, levelInfo.value?.associativity ?? 1));
+const totalLines = computed(() => linesPerSet.value * Math.max(1, levelInfo.value?.numSets ?? 1));
 
-// A short line does not need all 8 columns, but a wrapped line still shows a full row of 8.
 const visibleWordColumns = computed(() => Math.min(WORDS_PER_SUBROW, levelInfo.value?.wordsPerLine ?? WORDS_PER_SUBROW));
-const showOffsetColumn = computed(() => subRowsPerLine.value > 1);
+const showOffsetColumn = computed(() => linesPerWay.value > 1);
 
-// Every set has the same height, since associativity and block size stay fixed within a level.
-const setBlockHeight = computed(() => Math.max(1, levelInfo.value?.associativity ?? 1) * subRowsPerLine.value * ROW_HEIGHT);
+const lines = reactive(new Map<number, CacheLineRow>());
 
-// The number of sets can be far too large to scroll all at once, so only a smaller window is shown and quietly slid as the user scrolls.
-const MAX_WINDOW_HEIGHT_PX = 520_000;
-const windowSets = computed(() => {
-  const capped = Math.max(100, Math.floor(MAX_WINDOW_HEIGHT_PX / setBlockHeight.value));
-  return Math.min(capped, levelInfo.value?.numSets ?? capped);
-});
-const RECENTER_MARGIN_FRACTION = 0.025;
-const recenterMarginSets = computed(() => Math.max(5, Math.floor(windowSets.value * RECENTER_MARGIN_FRACTION)));
-
-const baseSet = ref(0);
-
-// Sets are stored by their real index so cached sets stay valid even after the window moves.
-const sets = reactive(new Map<number, CacheSet>());
-
-const range = computed(() => computeVirtualRange(scrollTop.value, viewportHeight.value, setBlockHeight.value, windowSets.value));
-const visibleSetIndices = computed(() =>
-  Array.from({ length: Math.max(0, range.value.end - range.value.start) }, (_, i) => baseSet.value + range.value.start + i),
-);
-
-async function fetchVisibleWindow() {
+async function fetchPage(startLine: number, count: number) {
   if (levelIndex.value < 0 || !levelInfo.value) return;
-  const start = range.value.start;
-  const count = Math.max(0, range.value.end - start);
-  if (count === 0) return;
-  const startSet = baseSet.value + start;
   try {
-    const result = await invoke<CacheSet[]>("get_cache_sets", {
+    const result = await invoke<CacheLineRow[]>("get_cache_lines", {
       levelIndex: levelIndex.value,
       side: props.side,
-      startSet,
+      startLine,
       count,
     });
     const touched: number[] = [];
-    result.forEach((set) => {
-      sets.set(set.setIndex, set);
-      touched.push(set.setIndex);
+    result.forEach((row, i) => {
+      const lineIndex = startLine + i;
+      lines.set(lineIndex, row);
+      touched.push(lineIndex);
     });
-    touchAndPrune(sets, touched, MAX_CACHED_SETS);
+    touchAndPrune(lines, touched, MAX_CACHED_LINES);
   } catch (error) {
-    console.error("Failed to fetch cache sets:", error);
+    console.error("Failed to fetch cache lines:", error);
   }
 }
 
-// Stops moving the scroll position ourselves from triggering our own scroll handling again.
-let ignoreNextScrollEvent = false;
-
-function setContainerScrollTop(value: number) {
-  scrollTop.value = value;
-  if (containerRef.value) {
-    ignoreNextScrollEvent = true;
-    containerRef.value.scrollTop = value;
-  }
-}
-
-// Moves the window so the set at the top of the screen ends up roughly in the middle.
-function recenterOn(topAbsoluteSet: number) {
-  const newBaseSet = Math.max(0, topAbsoluteSet - Math.floor(windowSets.value / 2));
-  const deltaSets = newBaseSet - baseSet.value;
-  if (deltaSets === 0) return;
-  baseSet.value = newBaseSet;
-  setContainerScrollTop(scrollTop.value - deltaSets * setBlockHeight.value);
-}
-
-function maybeRecenter() {
-  const nearTop = range.value.start < recenterMarginSets.value && baseSet.value > 0;
-  const nearBottom = range.value.end > windowSets.value - recenterMarginSets.value;
-  if (!nearTop && !nearBottom) return;
-  const topAbsoluteSet = baseSet.value + Math.floor(scrollTop.value / setBlockHeight.value);
-  recenterOn(topAbsoluteSet);
-}
-
-// Snaps the scroll position back to a whole pixel once scrolling stops, to stop flickering gaps between cells.
-let scrollEndTimeout: ReturnType<typeof setTimeout> | null = null;
-
-function snapScrollToWholePixel() {
-  if (!containerRef.value) return;
-  const current = containerRef.value.scrollTop;
-  const floored = Math.floor(current);
-  if (current !== floored) setContainerScrollTop(floored);
-}
-
-function onScroll(event: Event) {
-  if (ignoreNextScrollEvent) {
-    ignoreNextScrollEvent = false;
-    return;
-  }
-  scrollTop.value = (event.target as HTMLDivElement).scrollTop;
-  maybeRecenter();
-  fetchVisibleWindow();
-
-  if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
-  scrollEndTimeout = setTimeout(snapScrollToWholePixel, 100);
-}
-
-// Jumps straight to a set, centering it in the window.
-function jumpToSet(targetSet: number) {
-  const maxSet = Math.max(0, (levelInfo.value?.numSets ?? 1) - 1);
-  const clamped = Math.max(0, Math.min(targetSet, maxSet));
-  const newBaseSet = Math.max(0, clamped - Math.floor(windowSets.value / 2));
-  baseSet.value = newBaseSet;
-  setContainerScrollTop((clamped - newBaseSet) * setBlockHeight.value);
-  fetchVisibleWindow();
-}
+const win = useVirtualizedWindow({
+  rowHeight: ROW_HEIGHT,
+  windowRows: WINDOW_ROWS,
+  recenterMarginRows: RECENTER_MARGIN_ROWS,
+  totalRows: () => totalLines.value,
+  fetchPage,
+});
 
 const setInput = ref("");
 const setInputInvalid = ref(false);
@@ -180,14 +100,12 @@ function jumpToInputSet() {
     return;
   }
   setInputInvalid.value = false;
-  jumpToSet(Number(trimmed));
+  win.jumpTo(Number(trimmed) * linesPerSet.value);
 }
 
-// A word is always 4 bytes, so a word column's byte offset is always its index times 4.
 const WORD_SIZE = 4;
 const wordsPerGroup = computed(() => (hierarchyStore.isa === "RV32I" ? 1 : 2));
 
-// Words and the Tag are always padded to 8 hex digits, addresses are left unpadded.
 function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
@@ -203,33 +121,20 @@ function hexTag(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(tagDigits.value, "0")}`;
 }
 
-// Works out which byte offset a given column represents within a row of 8 words.
 function offsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * WORD_SIZE).toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
 const lineOffsetDigits = computed(() => Math.max(1, Math.ceil(Math.log2(Math.max(1, levelInfo.value?.blockSize ?? 1)) / 4)));
 
-// The starting byte of this row within the whole line.
-function subRowOffsetLabel(subRow: number): string {
-  return `0x${(subRow * WORDS_PER_SUBROW * WORD_SIZE).toString(16).toUpperCase().padStart(lineOffsetDigits.value, "0")}`;
+function subRowOffsetLabel(subrowIndex: number): string {
+  return `0x${(subrowIndex * WORDS_PER_SUBROW * WORD_SIZE).toString(16).toUpperCase().padStart(lineOffsetDigits.value, "0")}`;
 }
 
-function wordAt(way: CacheWay, subRow: number, column: number): number {
-  return way.words[subRow * WORDS_PER_SUBROW + column] ?? 0;
-}
-
-// A short line does not fill every one of the 8 word columns, so this tells which ones have no real data to show.
-function wordExistsAt(subRow: number, column: number): boolean {
-  return subRow * WORDS_PER_SUBROW + column < (levelInfo.value?.wordsPerLine ?? 0);
-}
-
-// Marks where a new group of words starts, for a border only.
 function isGroupStart(wordIndex: number): boolean {
   return wordsPerGroup.value > 1 && wordIndex > 0 && wordIndex % wordsPerGroup.value === 0;
 }
 
-// The header and every set block share the same column layout.
 const columnsStyle = computed(() => {
   const orderTrack = showOrderColumn.value ? "2.5rem " : "";
   const offsetTrack = showOffsetColumn.value ? "4rem " : "";
@@ -247,12 +152,6 @@ const setGridStyle = computed(() => ({
   gridAutoRows: `${ROW_HEIGHT}px`,
 }));
 
-// Every way takes up the same number of rows, whether it holds real data or not.
-function wayRowStart(wayIndex: number): number {
-  return 1 + wayIndex * subRowsPerLine.value;
-}
-
-// The Tag, Offset, and word columns shift one column to the left when the order column is hidden.
 const colTag = computed(() => (showOrderColumn.value ? 5 : 4));
 const colOffset = computed(() => colTag.value + 1);
 const colFirstWord = computed(() => (showOffsetColumn.value ? colOffset.value + 1 : colTag.value + 1));
@@ -261,16 +160,50 @@ const dashColumns = computed(() => {
   const count = (showOffsetColumn.value ? 1 : 0) + visibleWordColumns.value;
   return Array.from({ length: count }, (_, i) => start + i);
 });
-// The order column's own dash filler cell, only present when it's shown.
 const orderDashColumn = computed(() => (showOrderColumn.value ? [4] : []));
 
-// Resets the window back to the top of the level.
-function resetWindow() {
-  baseSet.value = 0;
-  sets.clear();
-  scrollTop.value = 0;
-  if (containerRef.value) containerRef.value.scrollTop = 0;
+interface LineEntry {
+  lineIndex: number;
+  line: CacheLineRow | undefined;
 }
+interface WayGroup {
+  wayIndex: number;
+  rowStart: number;
+  entries: LineEntry[];
+}
+interface SetGroup {
+  setIndex: number;
+  offsetInWindow: number;
+  totalRows: number;
+  ways: WayGroup[];
+}
+
+const visibleGroups = computed<SetGroup[]>(() => {
+  const groups: SetGroup[] = [];
+  win.visibleIndices.value.forEach((lineIndex, i) => {
+    const setIndex = Math.floor(lineIndex / linesPerSet.value);
+    const withinSet = lineIndex % linesPerSet.value;
+    const wayIndex = Math.floor(withinSet / linesPerWay.value);
+    const entry: LineEntry = { lineIndex, line: lines.get(lineIndex) };
+
+    let setGroup = groups[groups.length - 1];
+    if (!setGroup || setGroup.setIndex !== setIndex) {
+      setGroup = { setIndex, offsetInWindow: i, totalRows: 0, ways: [] };
+      groups.push(setGroup);
+    }
+    let wayGroup = setGroup.ways[setGroup.ways.length - 1];
+    if (!wayGroup || wayGroup.wayIndex !== wayIndex) {
+      wayGroup = { wayIndex, rowStart: setGroup.totalRows + 1, entries: [] };
+      setGroup.ways.push(wayGroup);
+    }
+    wayGroup.entries.push(entry);
+    setGroup.totalRows += 1;
+  });
+  return groups;
+});
+
+let unlisten: (() => void) | null = null;
+let disposed = false;
 
 async function loadLevelInfo() {
   if (levelIndex.value < 0) {
@@ -279,18 +212,15 @@ async function loadLevelInfo() {
   }
   try {
     levelInfo.value = await invoke<CacheLevelInfo>("get_cache_level_info", { levelIndex: levelIndex.value, side: props.side });
-    resetWindow();
-    // Waits one tick so the page can catch up before measuring its height.
+    lines.clear();
+    win.resetWindow();
     await nextTick();
-    if (containerRef.value) viewportHeight.value = containerRef.value.clientHeight;
-    await fetchVisibleWindow();
+    win.measureViewport();
+    await fetchPage(0, Math.max(0, win.range.value.end - win.range.value.start));
   } catch (error) {
     console.error("Failed to fetch cache level info:", error);
   }
 }
-
-let unlisten: (() => void) | null = null;
-let disposed = false;
 
 onMounted(async () => {
   await loadLevelInfo();
@@ -298,8 +228,7 @@ onMounted(async () => {
   const stopListening = await listen<Record<string, unknown>>("sim:event", (event) => {
     if (event.payload.kind !== "cache_access") return;
     if (event.payload.levelIndex !== levelIndex.value) return;
-    // Only the visible sets could have changed, the level's own settings never change during a run.
-    fetchVisibleWindow();
+    fetchPage(win.baseIndex.value + win.range.value.start, Math.max(0, win.range.value.end - win.range.value.start));
   });
   if (disposed) stopListening();
   else unlisten = stopListening;
@@ -308,7 +237,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   disposed = true;
   unlisten?.();
-  if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
 });
 
 watch(() => [props.levelId, props.side], loadLevelInfo);
@@ -346,57 +274,57 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
               :class="{ 'simulation-cache-group-start': isGroupStart(wi - 1) }"
             >{{ offsetLabel(wi - 1) }}</span>
           </div>
-          <div class="simulation-cache-body" ref="containerRef" @scroll="onScroll">
-            <div class="simulation-cache-spacer" :style="{ height: `${range.totalHeight}px`, position: 'relative' }">
+          <div class="simulation-cache-body" :ref="(el) => (win.containerRef.value = el as HTMLDivElement | null)" @scroll="win.onScroll">
+            <div class="simulation-cache-spacer" :style="{ height: `${win.range.value.totalHeight}px`, position: 'relative' }">
               <div
-                v-for="(setIndex, i) in visibleSetIndices"
-                :key="setIndex"
+                v-for="group in visibleGroups"
+                :key="group.setIndex"
                 class="simulation-cache-set-block"
-                :style="{ position: 'absolute', top: `${(range.start + i) * setBlockHeight}px`, height: `${setBlockHeight}px`, ...setGridStyle }"
+                :style="{
+                  position: 'absolute',
+                  top: `${(win.range.value.start + group.offsetInWindow) * ROW_HEIGHT}px`,
+                  height: `${group.totalRows * ROW_HEIGHT}px`,
+                  ...setGridStyle,
+                }"
               >
-                <template v-if="sets.get(setIndex)">
-                  <!-- The set number spans the whole block and every other cell gets its own column and row since each way now covers several rows. -->
-                  <span
-                    class="simulation-cache-cell simulation-cache-set-index"
-                    :style="{ gridColumn: 1, gridRow: `1 / span ${sets.get(setIndex)!.ways.length * subRowsPerLine}` }"
-                  >{{ setIndex }}</span>
-                  <template v-for="(way, wi) in sets.get(setIndex)!.ways" :key="wi">
-                    <!-- A real line is one that an actual access put there. -->
-                    <template v-if="way.valid && !way.isPhantom">
-                      <span class="simulation-cache-cell" :style="{ gridColumn: 2, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">1</span>
-                      <span class="simulation-cache-cell" :style="{ gridColumn: 3, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">{{ way.dirty ? "1" : "0" }}</span>
-                      <span v-if="showOrderColumn" class="simulation-cache-cell" :style="{ gridColumn: 4, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">{{ way.orderValue }}</span>
-                      <span class="simulation-cache-cell simulation-cache-cell-word" :style="{ gridColumn: colTag, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">{{ hexTag(way.tag) }}</span>
-                      <template v-for="sr in subRowsPerLine" :key="sr">
-                        <span v-if="showOffsetColumn" class="simulation-cache-cell">{{ subRowOffsetLabel(sr - 1) }}</span>
-                        <span
-                          v-for="wj in visibleWordColumns"
-                          :key="wj"
-                          class="simulation-cache-cell simulation-cache-cell-word"
-                          :class="{ 'simulation-cache-group-start': isGroupStart(wj - 1), 'simulation-cache-cell-empty': !wordExistsAt(sr - 1, wj - 1) }"
-                        >{{ wordExistsAt(sr - 1, wj - 1) ? hexWord(wordAt(way, sr - 1, wj - 1)) : "-" }}</span>
-                      </template>
-                    </template>
-                    <!-- A phantom line was marked dirty from the start but never actually accessed, so its tag and data are never shown. -->
-                    <template v-else-if="way.valid">
-                      <span class="simulation-cache-cell" :style="{ gridColumn: 2, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">1</span>
-                      <span class="simulation-cache-cell" :style="{ gridColumn: 3, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">1</span>
+                <span
+                  class="simulation-cache-cell simulation-cache-set-index"
+                  :style="{ gridColumn: 1, gridRow: `1 / span ${group.totalRows}` }"
+                >{{ group.setIndex }}</span>
+                <template v-for="wayGroup in group.ways" :key="wayGroup.wayIndex">
+                  <template v-if="wayGroup.entries[0].line?.valid && !wayGroup.entries[0].line?.isPhantom">
+                    <span class="simulation-cache-cell" :style="{ gridColumn: 2, gridRow: `${wayGroup.rowStart} / span ${wayGroup.entries.length}` }">1</span>
+                    <span class="simulation-cache-cell" :style="{ gridColumn: 3, gridRow: `${wayGroup.rowStart} / span ${wayGroup.entries.length}` }">{{ wayGroup.entries[0].line!.dirty ? "1" : "0" }}</span>
+                    <span v-if="showOrderColumn" class="simulation-cache-cell" :style="{ gridColumn: 4, gridRow: `${wayGroup.rowStart} / span ${wayGroup.entries.length}` }">{{ wayGroup.entries[0].line!.orderValue }}</span>
+                    <span class="simulation-cache-cell simulation-cache-cell-word" :style="{ gridColumn: colTag, gridRow: `${wayGroup.rowStart} / span ${wayGroup.entries.length}` }">{{ hexTag(wayGroup.entries[0].line!.tag) }}</span>
+                    <template v-for="entry in wayGroup.entries" :key="entry.lineIndex">
+                      <span v-if="showOffsetColumn" class="simulation-cache-cell">{{ subRowOffsetLabel(entry.line!.subrowIndex) }}</span>
                       <span
-                        v-for="col in [...orderDashColumn, colTag, ...dashColumns]"
-                        :key="col"
-                        class="simulation-cache-cell simulation-cache-cell-empty"
-                        :style="{ gridColumn: col, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }"
-                      >-</span>
+                        v-for="wj in visibleWordColumns"
+                        :key="wj"
+                        class="simulation-cache-cell simulation-cache-cell-word"
+                        :class="{ 'simulation-cache-group-start': isGroupStart(wj - 1), 'simulation-cache-cell-empty': wj - 1 >= entry.line!.words.length }"
+                      >{{ wj - 1 < entry.line!.words.length ? hexWord(entry.line!.words[wj - 1]) : "-" }}</span>
                     </template>
-                    <template v-else>
-                      <span class="simulation-cache-cell" :style="{ gridColumn: 2, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }">0</span>
-                      <span
-                        v-for="col in [3, ...orderDashColumn, colTag, ...dashColumns]"
-                        :key="col"
-                        class="simulation-cache-cell simulation-cache-cell-empty"
-                        :style="{ gridColumn: col, gridRow: `${wayRowStart(wi)} / span ${subRowsPerLine}` }"
-                      >-</span>
-                    </template>
+                  </template>
+                  <template v-else-if="wayGroup.entries[0].line?.valid">
+                    <span class="simulation-cache-cell" :style="{ gridColumn: 2, gridRow: `${wayGroup.rowStart} / span ${wayGroup.entries.length}` }">1</span>
+                    <span class="simulation-cache-cell" :style="{ gridColumn: 3, gridRow: `${wayGroup.rowStart} / span ${wayGroup.entries.length}` }">1</span>
+                    <span
+                      v-for="col in [...orderDashColumn, colTag, ...dashColumns]"
+                      :key="col"
+                      class="simulation-cache-cell simulation-cache-cell-empty"
+                      :style="{ gridColumn: col, gridRow: `${wayGroup.rowStart} / span ${wayGroup.entries.length}` }"
+                    >-</span>
+                  </template>
+                  <template v-else-if="wayGroup.entries[0].line">
+                    <span class="simulation-cache-cell" :style="{ gridColumn: 2, gridRow: `${wayGroup.rowStart} / span ${wayGroup.entries.length}` }">0</span>
+                    <span
+                      v-for="col in [3, ...orderDashColumn, colTag, ...dashColumns]"
+                      :key="col"
+                      class="simulation-cache-cell simulation-cache-cell-empty"
+                      :style="{ gridColumn: col, gridRow: `${wayGroup.rowStart} / span ${wayGroup.entries.length}` }"
+                    >-</span>
                   </template>
                 </template>
               </div>
@@ -409,14 +337,6 @@ watch(() => [props.levelId, props.side], loadLevelInfo);
 </template>
 
 <style scoped>
-/* .simulation-cache-outer handles horizontal scrolling only. Vertical
-   scrolling is handled separately by .simulation-cache-body below, on
-   purpose. We used to have one scroll area with a header that stayed stuck
-   to the top while scrolling, but with a grid this tall (many sets), that
-   caused a visible flicker as the browser kept recalculating the header's
-   position. Keeping the header out of the scrolling area entirely avoids
-   that problem completely. RamView.vue has the exact same setup for the
-   exact same reason. */
 .simulation-cache-level-view {
   display: flex;
   flex-direction: column;

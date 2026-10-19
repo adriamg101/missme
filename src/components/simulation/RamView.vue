@@ -16,9 +16,9 @@ const ROW_HEIGHT = 26;
 const MAX_CACHED_BLOCKS = 4000;
 
 // Shows only a smaller window of rows and quietly slides it as the user scrolls, so it never has to draw the whole address space at once.
-const WINDOW_ROWS = 20_000;
+const WINDOW_ROWS = 1000;
 // Repositions the window before the user reaches its edge, so it is never seen happening.
-const RECENTER_MARGIN_ROWS = 500;
+const RECENTER_MARGIN_ROWS = 25;
 const totalBlocks = WINDOW_ROWS;
 
 function absoluteRow(address: number): number {

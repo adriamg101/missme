@@ -3,7 +3,8 @@
 use serde::Serialize;
 
 use crate::models::simulation::memory::hierarchy::{
-    CacheLevelInfo, CacheSetSnapshot, CacheSide, FrameContentSnapshot, RamBlockSnapshot, TlbInfo, TlbSetSnapshot,
+    CacheLevelInfo, CacheLineRowSnapshot, CacheSetSnapshot, CacheSide, FrameContentSnapshot, FrameLineRowSnapshot, RamBlockSnapshot, TlbInfo,
+    TlbSetSnapshot,
 };
 use crate::models::simulation::memory::page_table::PageTableEntrySnapshot;
 use crate::models::simulation::RegisterId;
@@ -80,6 +81,31 @@ pub fn get_cache_sets(
     cache_sets(&state, level_index, side, start_set, count)
 }
 
+fn cache_lines(state: &SessionState, level_index: usize, side: String, start_line: u64, count: u32) -> Result<Vec<CacheLineRowSnapshot>, String> {
+    const MAX_COUNT: u32 = 512;
+    if count > MAX_COUNT {
+        return Err(format!("count {count} exceeds the maximum of {MAX_COUNT}"));
+    }
+    let cache_side = parse_cache_side(&side)?;
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no active simulation session")?;
+    session
+        .memory()
+        .cache_lines(level_index, cache_side, start_line, count)
+        .ok_or_else(|| format!("level {level_index} has no {side} cache"))
+}
+
+#[tauri::command]
+pub fn get_cache_lines(
+    state: tauri::State<SessionState>,
+    level_index: usize,
+    side: String,
+    start_line: u64,
+    count: u32,
+) -> Result<Vec<CacheLineRowSnapshot>, String> {
+    cache_lines(&state, level_index, side, start_line, count)
+}
+
 fn snapshot_ram_blocks(state: &SessionState, start_address: u64, count: u32) -> Result<Vec<RamBlockSnapshot>, String> {
     const MAX_COUNT: u32 = 512;
     if count > MAX_COUNT {
@@ -134,6 +160,21 @@ fn frame_snapshots(state: &SessionState, start_frame: u64, count: u32) -> Result
 #[tauri::command]
 pub fn get_frames(state: tauri::State<SessionState>, start_frame: u64, count: u32) -> Result<Vec<FrameContentSnapshot>, String> {
     frame_snapshots(&state, start_frame, count)
+}
+
+fn frame_lines(state: &SessionState, start_line: u64, count: u32) -> Result<Vec<FrameLineRowSnapshot>, String> {
+    const MAX_COUNT: u32 = 512;
+    if count > MAX_COUNT {
+        return Err(format!("count {count} exceeds the maximum of {MAX_COUNT}"));
+    }
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or("no active simulation session")?;
+    Ok(session.memory().frame_lines(start_line, count))
+}
+
+#[tauri::command]
+pub fn get_frame_lines(state: tauri::State<SessionState>, start_line: u64, count: u32) -> Result<Vec<FrameLineRowSnapshot>, String> {
+    frame_lines(&state, start_line, count)
 }
 
 fn page_table_entries(state: &SessionState, level: u8, parent_key: Option<u64>, start_index: u64, count: u64) -> Result<Vec<PageTableEntrySnapshot>, String> {
@@ -323,6 +364,63 @@ mod tests {
         assert_eq!(sets[9].set_index, 500_009);
     }
 
+    #[test]
+    fn cache_lines_errors_with_no_active_session() {
+        let state = SessionState::default();
+        let result = cache_lines(&state, 0, "unified".to_string(), 0, 10);
+        assert_eq!(result.unwrap_err(), "no active simulation session");
+    }
+
+    #[test]
+    fn cache_lines_rejects_a_count_over_the_max() {
+        let state = SessionState::default();
+        let result = cache_lines(&state, 0, "unified".to_string(), 0, 513);
+        assert!(result.unwrap_err().contains("exceeds the maximum"));
+    }
+
+    fn oversized_associativity_hierarchy_config() -> HierarchyConfig {
+        HierarchyConfig {
+            isa: Base::Rv32i,
+            vm_enabled: false,
+            page_size: 4096,
+            hierarchy: vec![Level {
+                id: "l1".into(),
+                harvard: false,
+                unified: Some(CacheEntry {
+                    exp: 1,
+                    config: CacheConfig {
+                        block_size: 4,
+                        associativity: 10_000,
+                        replacement: ReplacementPolicy::Lru,
+                        write_policy: WritePolicy::WriteBack,
+                        write_allocate: true,
+                        hit_time: 1,
+                        dirty_percent: 0,
+                    },
+                }),
+                i: None,
+                d: None,
+                inclusion: InclusionPolicy::Nine,
+                bus_width: 32,
+            }],
+            tlb: TlbConfig { page_walk_start: "RAM".into(), entries: 4, associativity: 4, replacement: TlbReplacementPolicy::Lru, latency: 1 },
+            ram: RamConfig { latency: 100, size: 1024, dirty_percent: 0, page_table_levels: 1, frame_allocation: FrameAllocationPolicy::Sequential, frames: 4 },
+            disk: DiskConfig { latency: 10000 },
+            seed: None,
+        }
+    }
+
+    #[test]
+    fn cache_lines_bounds_a_single_oversized_set_even_though_cache_sets_could_not() {
+        let state = SessionState::default();
+        let session = build_session(Base::Rv32i, empty_codegen(), oversized_associativity_hierarchy_config(), 64, 64, vec![]);
+        *state.session.lock().unwrap() = Some(session);
+
+        let lines = cache_lines(&state, 0, "unified".to_string(), 0, 512).unwrap();
+        assert_eq!(lines.len(), 512);
+        assert!(lines.iter().all(|l| l.set_index == 0));
+    }
+
     fn vm_hierarchy_config() -> HierarchyConfig {
         let mut cfg = empty_hierarchy_config();
         cfg.vm_enabled = true;
@@ -363,6 +461,30 @@ mod tests {
         let snaps = frame_snapshots(&state, 0, 4).unwrap();
         assert_eq!(snaps.len(), 4); // ram.frames is 4
         assert!(snaps.iter().all(|s| !s.valid));
+    }
+
+    #[test]
+    fn frame_lines_errors_with_no_active_session() {
+        let state = SessionState::default();
+        assert_eq!(frame_lines(&state, 0, 4).unwrap_err(), "no active simulation session");
+    }
+
+    #[test]
+    fn frame_lines_rejects_a_count_over_the_max() {
+        let state = SessionState::default();
+        let session = build_session(Base::Rv32i, empty_codegen(), vm_hierarchy_config(), 64, 64, vec![]);
+        *state.session.lock().unwrap() = Some(session);
+        assert!(frame_lines(&state, 0, 513).unwrap_err().contains("exceeds the maximum"));
+    }
+
+    #[test]
+    fn frame_lines_reports_one_row_per_frame_when_the_page_fits_in_8_words() {
+        let state = SessionState::default();
+        let session = build_session(Base::Rv32i, empty_codegen(), vm_hierarchy_config(), 64, 64, vec![]);
+        *state.session.lock().unwrap() = Some(session);
+        let lines = frame_lines(&state, 0, 4).unwrap();
+        assert_eq!(lines.len(), 4); // ram.frames is 4, page_size 4 fits in one row
+        assert!(lines.iter().all(|l| !l.valid));
     }
 
     #[test]

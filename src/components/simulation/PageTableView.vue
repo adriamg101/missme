@@ -22,8 +22,8 @@ interface NavStep {
 }
 
 const ROW_HEIGHT = 26;
-const WINDOW_ROWS = 20_000;
-const RECENTER_MARGIN_ROWS = 500;
+const WINDOW_ROWS = 1000;
+const RECENTER_MARGIN_ROWS = 25;
 
 // Level 0 is the leaf, matching how the backend counts levels.
 const levelBits = ref<number[]>([]);

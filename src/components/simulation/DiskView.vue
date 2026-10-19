@@ -13,8 +13,8 @@ const compileConfigStore = useCompileConfigStore();
 // The disk scrolls in fixed size blocks just like RAM, but each page spans several of them.
 const BLOCK_SIZE = 32;
 const ROW_HEIGHT = 26;
-const WINDOW_ROWS = 20_000;
-const RECENTER_MARGIN_ROWS = 500;
+const WINDOW_ROWS = 1000;
+const RECENTER_MARGIN_ROWS = 25;
 const MAX_CACHED_PAGES = 4000;
 const gridColumnsStyle = computed(() => {
   const addressTrack = `minmax(calc(${addressDigits.value + 2}ch + 0.6rem), auto)`;
