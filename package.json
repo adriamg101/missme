@@ -1,24 +1,40 @@
 {
   "name": "missme",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "A memory hierarchy simulator for RISC-V, with configurable caches, virtual memory, and step-by-step execution.",
+  "author": "Adrià Martínez Gallifa <adriamartinezgallifa@gmail.com> (https://github.com/adriamg101)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adriamg101/missme.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run"
   },
   "dependencies": {
-    "vue": "^3.5.13",
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-opener": "^2",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/vue": "^8.1.0",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.11",
+    "jsdom": "^30.0.1",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
-    "vue-tsc": "^2.1.10",
-    "@tauri-apps/cli": "^2"
+    "vitest": "^4.1.11",
+    "vue-tsc": "^2.1.10"
   }
 }

@@ -1,0 +1,135 @@
+@import url('https://fonts.googleapis.com/css?family=IBM%20Plex%20Mono:700|IBM%20Plex%20Mono:400');
+
+:root[data-theme="light"] {
+  --text: #22170c;
+  --background: #f8efe7;
+  --primary: #5a3313;
+  --secondary: #c98a4f;
+  --accent: #bb6616;
+  --shadow: 0 1px 2px rgba(34, 23, 12, 0.06), 0 4px 12px rgba(34, 23, 12, 0.10);
+  /* Hierarchy diagram box colors (OKLCH): each box supplies its own --box-hue
+     and --box-chroma inline; these tokens are the shared, theme-aware
+     lightness values every box's border/fill/text is built from. */
+  --diagram-lightness-border: 0.5;
+  --diagram-lightness-fill: 0.95;
+  --diagram-lightness-text: 0.32;
+  /* Access-state overlay: hit/miss replaces the border+glow temporarily.
+     Doesn't touch the box's own type color, so it combines freely. */
+  --diagram-hit-color: oklch(0.5 0.17 145);
+  --diagram-miss-color: oklch(0.52 0.19 25);
+}
+
+:root[data-theme="dark"] {
+  --text: #f3e8dd;
+  --background: #180f07;
+  --primary: #e6b98e;
+  --secondary: #b8763a;
+  --accent: #e99444;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(233, 148, 68, 0.08);
+  --diagram-lightness-border: 0.72;
+  --diagram-lightness-fill: 0.22;
+  --diagram-lightness-text: 0.85;
+  --diagram-hit-color: oklch(0.78 0.17 145);
+  --diagram-miss-color: oklch(0.75 0.19 25);
+}
+
+:root {
+  /* How long a light or dark theme switch takes to fade across the whole app. Kept as one shared value so every element settles at the same time. */
+  --theme-transition-duration: 0.5s;
+  /* Shared control-size scale, used by src/components/ui/* so every input,
+     select, stepper and icon button comes from the same set of sizes. */
+  --control-height-sm: 1.25rem;
+  --control-height-md: 1.5rem;
+  --control-height-lg: 2rem;
+  --control-font-sm: 0.75rem;
+  --control-font-md: 0.875rem;
+  --control-font-lg: 1rem;
+  --control-padding-sm: 0.25rem 0.4rem;
+  --control-padding-md: 0.4rem 0.6rem;
+  --control-padding-lg: 0.6rem 0.9rem;
+  /* Same in both themes — only the lightness tokens above differ. */
+  --diagram-fill-chroma-mult: 0.28;
+  --diagram-text-chroma-mult: 0.9;
+  /* A dimmer version of --accent, so the scrollbar thumb doesn't stand out as much as the accent color does elsewhere. */
+  --scrollbar-thumb: color-mix(in srgb, var(--accent), black 30%);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 400;
+}
+
+* {
+  transition:
+    background-color var(--theme-transition-duration) ease,
+    border-color var(--theme-transition-duration) ease,
+    color var(--theme-transition-duration) ease,
+    fill var(--theme-transition-duration) ease,
+    stroke var(--theme-transition-duration) ease,
+    box-shadow var(--theme-transition-duration) ease;
+}
+
+h1, h2, h3, h4, h5 {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 700;
+}
+
+html {font-size: 100%;} /* 16px */
+
+h1 {font-size: 4.210rem; /* 67.36px */}
+
+h2 {font-size: 3.158rem; /* 50.56px */}
+
+h3 {font-size: 2.369rem; /* 37.92px */}
+
+h4 {font-size: 1.777rem; /* 28.48px */}
+
+h5 {font-size: 1.333rem; /* 21.28px */}
+
+small {font-size: 0.750rem; /* 12px */}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--scrollbar-thumb), transparent 35%);
+  border-radius: 1e3px;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb);
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}

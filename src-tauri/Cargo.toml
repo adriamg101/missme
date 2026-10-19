@@ -1,8 +1,11 @@
 [package]
 name = "missme"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "1.0.0"
+description = "A memory hierarchy simulator for RISC-V, with configurable caches, virtual memory, and step-by-step execution."
+authors = ["Adrià Martínez Gallifa <adriamartinezgallifa@gmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/adriamg101/missme"
+homepage = "https://github.com/adriamg101/missme"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -20,6 +23,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[dev-dependencies]
+tempfile = "3"
