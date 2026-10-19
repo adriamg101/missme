@@ -1,4 +1,4 @@
-# <img src="src-tauri/icons/128x128.png" width="36" height="36" alt="missme logo" align="center" /> *missme*
+# *missme*
 
 [![License](https://img.shields.io/github/license/adriamg101/missme)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/adriamg101/missme)](https://github.com/adriamg101/missme/releases)
