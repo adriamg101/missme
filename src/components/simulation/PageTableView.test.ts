@@ -79,8 +79,8 @@ describe("PageTableView", () => {
     const { container } = render(PageTableView);
     await flush();
     // The root (non-leaf) level's PPN column must be a dash.
-    const row = container.querySelector(".simulation-page-table-row")!;
-    expect(row.querySelectorAll(".simulation-page-table-cell-empty").length).toBeGreaterThan(0);
+    const grid = container.querySelector(".simulation-page-table-grid")!;
+    expect(grid.querySelectorAll(".simulation-page-table-cell-empty").length).toBeGreaterThan(0);
   });
 
   it("has no back button while viewing the root", async () => {

@@ -68,10 +68,20 @@ function hexIndex(index: number): string {
   return `0x${(index >>> 0).toString(16).toUpperCase().padStart(indexDigits.value, "0")}`;
 }
 
+// The floor has to fit the header label too, not just the hex value: if the
+// label ("Index", "PPN") is wider than the value, this column would
+// otherwise need to stretch wider on the header's row than it does on the
+// data rows. The track count also has to match how many cells a row
+// actually renders (3 for a leaf table, 4 for one with a child-table
+// column), since the header and every data row are now cells of one shared
+// grid: a mismatched count would make the grid's auto-placement drift the
+// cells of one kind into the columns of another after a few rows.
 const gridColumnsStyle = computed(() => {
-  const indexTrack = `minmax(calc(${indexDigits.value + 2}ch + 0.6rem), auto)`;
-  const ppnTrack = `minmax(calc(${ppnDigits.value + 2}ch + 0.6rem), auto)`;
-  return `${indexTrack} ${ppnTrack} 2.5rem 2.5rem`;
+  const indexWidth = Math.max(indexDigits.value + 2, "Index".length);
+  const ppnWidth = Math.max(ppnDigits.value + 2, "PPN".length);
+  const indexTrack = `minmax(calc(${indexWidth}ch + 0.6rem), auto)`;
+  const ppnTrack = `minmax(calc(${ppnWidth}ch + 0.6rem), auto)`;
+  return isLeaf.value ? `${indexTrack} ${ppnTrack} 2.5rem` : `${indexTrack} ${ppnTrack} 2.5rem 2.5rem`;
 });
 
 async function fetchPage(startIndex: number, count: number) {
@@ -97,6 +107,17 @@ const win = useVirtualizedWindow({
   totalRows: () => entryCount.value,
   fetchPage,
 });
+
+// Keeps the virtual scroll height correct without rendering every row: one
+// spacer above the visible window for the rows scrolled past, one below for
+// the rows not reached yet. Each spans that many 26px grid rows rather than
+// being given an explicit pixel height, because grid-auto-rows below fixes
+// every implicit row (including a spacer's) at 26px regardless of its own
+// height - a lone spacer row would otherwise always take up a full 26px,
+// showing as a gap even when it should be 0.
+const virtualTotalRows = computed(() => Math.min(WINDOW_ROWS, entryCount.value));
+const leadingSpacerRows = computed(() => win.range.value.start);
+const trailingSpacerRows = computed(() => Math.max(0, virtualTotalRows.value - win.range.value.end));
 
 async function refreshCurrentTable() {
   entries.clear();
@@ -187,20 +208,16 @@ onBeforeUnmount(() => {
       <div class="simulation-page-table-title">Level {{ currentStep?.level ?? "" }}</div>
       <div class="simulation-page-table-toolbar-right"></div>
     </div>
-    <div class="simulation-page-table-header" :style="{ gridTemplateColumns: gridColumnsStyle }">
-      <span class="simulation-page-table-cell simulation-page-table-cell-header">Index</span>
-      <span class="simulation-page-table-cell simulation-page-table-cell-header">PPN</span>
-      <span class="simulation-page-table-cell simulation-page-table-cell-header">P</span>
-      <span v-if="!isLeaf" class="simulation-page-table-cell simulation-page-table-cell-header"></span>
-    </div>
     <div class="simulation-page-table-body" :ref="(el) => (win.containerRef.value = el as HTMLDivElement | null)" @scroll="win.onScroll">
-      <div class="simulation-page-table-spacer" :style="{ height: `${win.range.value.totalHeight}px`, position: 'relative' }">
-        <div
-          v-for="(index, i) in win.visibleIndices.value"
-          :key="index"
-          class="simulation-page-table-row"
-          :style="{ position: 'absolute', top: `${(win.range.value.start + i) * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px`, gridTemplateColumns: gridColumnsStyle }"
-        >
+      <div class="simulation-page-table-grid" :style="{ gridTemplateColumns: gridColumnsStyle }">
+        <span class="simulation-page-table-cell simulation-page-table-cell-header">Index</span>
+        <span class="simulation-page-table-cell simulation-page-table-cell-header">PPN</span>
+        <span class="simulation-page-table-cell simulation-page-table-cell-header">P</span>
+        <span v-if="!isLeaf" class="simulation-page-table-cell simulation-page-table-cell-header"></span>
+
+        <div v-if="leadingSpacerRows > 0" class="simulation-page-table-spacer" :style="{ gridRow: `span ${leadingSpacerRows}` }"></div>
+
+        <template v-for="index in win.visibleIndices.value" :key="index">
           <template v-if="entries.get(index)">
             <span class="simulation-page-table-cell">{{ hexIndex(entries.get(index)!.index) }}</span>
             <span v-if="isLeaf" class="simulation-page-table-cell">{{ hexWord(entries.get(index)!.pointsToOrPpn) }}</span>
@@ -220,7 +237,9 @@ onBeforeUnmount(() => {
             <span class="simulation-page-table-cell simulation-page-table-cell-empty">-</span>
             <span v-if="!isLeaf" class="simulation-page-table-cell"></span>
           </template>
-        </div>
+        </template>
+
+        <div v-if="trailingSpacerRows > 0" class="simulation-page-table-spacer" :style="{ gridRow: `span ${trailingSpacerRows}` }"></div>
       </div>
     </div>
   </div>
@@ -293,29 +312,33 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: border-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
-.simulation-page-table-header,
-.simulation-page-table-row {
+/* Header and data cells are items of this one grid, in document order, so
+   there is only ever one set of column tracks to size: the header cannot
+   drift from the rows below it because there is no longer a second grid
+   that could size its columns differently. */
+.simulation-page-table-grid {
   display: grid;
+  grid-auto-rows: 26px;
   width: fit-content;
   margin: 0 auto;
   transition: none;
 }
-.simulation-page-table-row {
-  /* The row is absolutely positioned (see the template's :style), so
-     "margin: 0 auto" alone can't center it - it also needs both left and
-     right anchored to the spacer for the auto margins to have any span
-     to distribute across. */
-  left: 0;
-  right: 0;
+.simulation-page-table-spacer {
+  grid-column: 1 / -1;
 }
-.simulation-page-table-header {
-  flex: 0 0 auto;
+.simulation-page-table-cell-header {
+  /* Sticky, not a separate element outside the scroll area: it stays part
+     of the same grid (so its columns can never diverge from the rows'),
+     while still staying pinned to the top as the body scrolls. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
   background: var(--background);
-  box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.4);
-  transition: background-color var(--theme-transition-duration) ease;
-}
-.simulation-page-table-header .simulation-page-table-cell {
   border-top: 1px solid var(--secondary);
+  box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  font-weight: 600;
+  opacity: 0.75;
+  transition: background-color var(--theme-transition-duration) ease;
 }
 .simulation-page-table-cell {
   display: flex;
@@ -332,10 +355,6 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   transition: border-color var(--theme-transition-duration) ease;
 }
-.simulation-page-table-cell-header {
-  font-weight: 600;
-  opacity: 0.75;
-}
 .simulation-page-table-cell-empty {
   color: var(--text-muted, var(--text));
   opacity: 0.4;
@@ -346,6 +365,10 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Always reserve the scrollbar's width, even when the table is short
+     enough not to need one, so the grid doesn't shift sideways the
+     moment one appears or disappears. */
+  scrollbar-gutter: stable;
   transition: none;
 }
 </style>
