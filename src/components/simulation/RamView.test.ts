@@ -173,7 +173,7 @@ describe("RamView", () => {
     invokeMock.mockClear();
 
     // Scroll to near the bottom of the visible window.
-    scrollEl.scrollTop = 20_000 * 26 - 100;
+    scrollEl.scrollTop = 1000 * 26 - 100;
     await fireEvent.scroll(scrollEl);
     await Promise.resolve();
     await Promise.resolve();
@@ -193,7 +193,7 @@ describe("RamView", () => {
     // This triggers a recenter, which sets the scroll position in code. In
     // a real browser, setting the scroll position like that fires its own
     // scroll event.
-    scrollEl.scrollTop = 20_000 * 26 - 100;
+    scrollEl.scrollTop = 1000 * 26 - 100;
     await fireEvent.scroll(scrollEl);
     await Promise.resolve();
     await Promise.resolve();
@@ -225,12 +225,12 @@ describe("RamView", () => {
       // A small, realistic scroll move from the centered starting position.
       // It's not near either edge of the window, so it won't also trigger
       // a recenter, which would move the scroll position itself.
-      scrollEl.scrollTop = 260000.6;
+      scrollEl.scrollTop = 13000.6;
       await fireEvent.scroll(scrollEl);
-      expect(scrollEl.scrollTop).toBe(260000.6);
+      expect(scrollEl.scrollTop).toBe(13000.6);
 
       await vi.advanceTimersByTimeAsync(100);
-      expect(scrollEl.scrollTop).toBe(260000);
+      expect(scrollEl.scrollTop).toBe(13000);
     } finally {
       vi.useRealTimers();
     }
@@ -259,5 +259,26 @@ describe("RamView", () => {
     await Promise.resolve();
 
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("RamView — address digit width", () => {
+  it("pads the address column to 8 hex digits on RV32I", async () => {
+    mockWordAtRequestedAddress(0x1);
+    const { container } = render(RamView);
+    await Promise.resolve();
+    await Promise.resolve();
+    const address = container.querySelector(".simulation-ram-address") as HTMLElement;
+    expect(address.textContent).toMatch(/^0x[0-9A-F]{8}$/);
+  });
+
+  it("pads the address column to 16 hex digits on RV64I", async () => {
+    useHierarchyConfigStore().isa = "RV64I";
+    mockWordAtRequestedAddress(0x1);
+    const { container } = render(RamView);
+    await Promise.resolve();
+    await Promise.resolve();
+    const address = container.querySelector(".simulation-ram-address") as HTMLElement;
+    expect(address.textContent).toMatch(/^0x[0-9A-F]{16}$/);
   });
 });

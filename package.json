@@ -1,7 +1,14 @@
 {
   "name": "missme",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "A memory hierarchy simulator for RISC-V, with configurable caches, virtual memory, and step-by-step execution.",
+  "author": "Adrià Martínez Gallifa <adriamartinezgallifa@gmail.com> (https://github.com/adriamg101)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adriamg101/missme.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

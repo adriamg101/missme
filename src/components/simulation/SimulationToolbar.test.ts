@@ -64,15 +64,15 @@ describe("SimulationToolbar", () => {
     expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 100 });
   });
 
-  it("the fast end of the slider (position 0) maps to the minimum delay", async () => {
+  it("the low end of the slider (position 0) maps to the maximum delay, the slowest speed", async () => {
     render(SimulationToolbar);
     await fireEvent.update(screen.getByLabelText("Delay (ms)"), "0");
-    expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 10 });
+    expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 1000 });
   });
 
-  it("the slow end of the slider (position 100) maps to the maximum delay", async () => {
+  it("the high end of the slider (position 100) maps to the minimum delay, the fastest speed", async () => {
     render(SimulationToolbar);
     await fireEvent.update(screen.getByLabelText("Delay (ms)"), "100");
-    expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 1000 });
+    expect(invokeMock).toHaveBeenCalledWith("set_speed", { ms: 10 });
   });
 });

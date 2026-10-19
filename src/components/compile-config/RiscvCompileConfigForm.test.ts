@@ -13,11 +13,12 @@ describe("RiscvCompileConfigForm", () => {
     expect(screen.getByText("Memory map")).toBeInTheDocument();
   });
 
-  it("shows .text as a read-only field matching the store's fixed textBase", () => {
+  it("shows .text prefilled from the store's textBase and updates the store when edited", async () => {
     render(RiscvCompileConfigForm);
     const textInput = screen.getByLabelText(".text base address");
     expect(textInput).toHaveValue("00400000");
-    expect(textInput).toHaveAttribute("readonly");
+    await fireEvent.update(textInput, "00800000");
+    expect(useCompileConfigStore().textBase).toBe(0x00800000);
   });
 
   it("shows .data prefilled from the store and updates the store when edited", async () => {

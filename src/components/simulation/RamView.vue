@@ -16,9 +16,9 @@ const ROW_HEIGHT = 26;
 const MAX_CACHED_BLOCKS = 4000;
 
 // Shows only a smaller window of rows and quietly slides it as the user scrolls, so it never has to draw the whole address space at once.
-const WINDOW_ROWS = 20_000;
+const WINDOW_ROWS = 1000;
 // Repositions the window before the user reaches its edge, so it is never seen happening.
-const RECENTER_MARGIN_ROWS = 500;
+const RECENTER_MARGIN_ROWS = 25;
 const totalBlocks = WINDOW_ROWS;
 
 function absoluteRow(address: number): number {
@@ -153,11 +153,13 @@ function jumpToInputAddress() {
   jumpToAddress(parseInt(trimmed, 16));
 }
 
+const addressBits = computed(() => (store.isa === "RV32I" ? 32 : 64));
+const addressDigits = computed(() => Math.max(1, Math.ceil(addressBits.value / 4)));
+
 function hex(value: number): string {
-  return (value >>> 0).toString(16);
+  return (value >>> 0).toString(16).toUpperCase().padStart(addressDigits.value, "0");
 }
 
-// A word is always padded to 8 hex digits, a block address is left unpadded.
 function hexWord(value: number): string {
   return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
 }
@@ -176,10 +178,11 @@ function isGroupStart(wordIndex: number): boolean {
 }
 
 const wordsPerBlock = computed(() => RAM_BLOCK_SIZE / 4);
+const addressTrack = computed(() => `minmax(calc(${addressDigits.value + 2}ch + 0.6rem), auto)`);
 const rowGridStyle = computed(() => ({
   display: "grid" as const,
   height: `${ROW_HEIGHT}px`,
-  gridTemplateColumns: `8rem repeat(${wordsPerBlock.value}, minmax(calc(10ch + 0.6rem), auto))`,
+  gridTemplateColumns: `${addressTrack.value} repeat(${wordsPerBlock.value}, minmax(calc(10ch + 0.6rem), auto))`,
 }));
 
 let unlisten: (() => void) | null = null;

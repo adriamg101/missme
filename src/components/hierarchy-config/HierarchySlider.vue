@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="hierarchy-slider">
-    <span class="hierarchy-slider-title">Number of entries (tags)</span>
+    <span class="hierarchy-slider-title">Number of index bits</span>
     <div
       ref="axisEl"
       class="hierarchy-slider-axis"

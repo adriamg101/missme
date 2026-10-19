@@ -20,7 +20,13 @@ function fromHex(value: string): number {
   return Math.min(parseInt(value, 16), U32_MAX);
 }
 
-const textBaseHex = computed(() => toHex8(store.textBase));
+const textBaseHex = computed({
+  get: () => toHex8(store.textBase),
+  set: (value: string) => {
+    if (value === "") return;
+    store.setTextBase(fromHex(value));
+  },
+});
 
 const dataBaseHex = computed({
   get: () => toHex8(store.dataBase),
@@ -33,7 +39,10 @@ const dataBaseHex = computed({
 
 // These are only warnings, they never stop the user from typing an invalid value.
 const textGap = computed(() => store.lastCompiledTextSize ?? MIN_TEXT_GAP);
-const overlapsText = computed(() => store.dataBase < store.textBase + textGap.value);
+const dataGap = computed(() => store.lastCompiledDataSize ?? MIN_TEXT_GAP);
+const overlapsText = computed(
+  () => store.dataBase < store.textBase + textGap.value && store.textBase < store.dataBase + dataGap.value,
+);
 
 // RAM's real capacity comes from frames and page size when virtual memory is on, and from the plain size otherwise.
 const ramCapacity = computed(() =>
@@ -50,7 +59,7 @@ const exceedsRam = computed(
   <div class="riscv-compile-config-form">
     <span class="riscv-compile-config-form-title">Memory map</span>
     <div class="riscv-compile-config-form-row">
-      <HexField label=".text" aria-label=".text base address" :model-value="textBaseHex" readonly />
+      <HexField label=".text" aria-label=".text base address" v-model="textBaseHex" />
       <span class="riscv-compile-config-form-divider">|</span>
       <HexField label=".data" aria-label=".data base address" v-model="dataBaseHex" />
     </div>

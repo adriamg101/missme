@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import PageTableView from "./PageTableView.vue";
+import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 
 interface PteRow {
   level: number;
@@ -25,20 +26,29 @@ interface PteRow {
 // `levelBits` index 0 = leaf. `rows` maps a level number to that whole
 // level's real entries (across every branch); the mock filters them by
 // parentKey/range itself, the same way the real backend does.
+function touchedRows(levelBits: number[], rows: Record<number, PteRow[]>, level: number, parentKey: number | null | undefined) {
+  const ownBits = levelBits[level - 1] ?? 0;
+  return (rows[level] ?? [])
+    .filter((r) => (parentKey === null || parentKey === undefined ? true : r.key >> ownBits === parentKey))
+    .slice()
+    .sort((a, b) => a.index - b.index);
+}
+
 function mockPageTable(levelBits: number[], rows: Record<number, PteRow[]>) {
   invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
     if (cmd === "get_page_table_levels") return Promise.resolve(levelBits.length);
     if (cmd === "get_page_table_level_bits") return Promise.resolve(levelBits);
+    if (cmd === "get_page_table_entry_count") {
+      const level = args.level as number;
+      const parentKey = args.parentKey as number | null;
+      return Promise.resolve(touchedRows(levelBits, rows, level, parentKey).length);
+    }
     if (cmd === "get_page_table_entries") {
       const level = args.level as number;
       const parentKey = args.parentKey as number | null;
       const startIndex = args.startIndex as number;
       const count = args.count as number;
-      const ownBits = levelBits[level - 1] ?? 0;
-      const matches = (rows[level] ?? []).filter((r) => {
-        const belongsToParent = parentKey === null || parentKey === undefined ? true : r.key >> ownBits === parentKey;
-        return belongsToParent && r.index >= startIndex && r.index < startIndex + count;
-      });
+      const matches = touchedRows(levelBits, rows, level, parentKey).slice(startIndex, startIndex + count);
       return Promise.resolve(matches);
     }
     return Promise.resolve(undefined);
@@ -69,8 +79,8 @@ describe("PageTableView", () => {
     const { container } = render(PageTableView);
     await flush();
     // The root (non-leaf) level's PPN column must be a dash.
-    const row = container.querySelector(".simulation-page-table-row")!;
-    expect(row.querySelectorAll(".simulation-page-table-cell-empty").length).toBeGreaterThan(0);
+    const grid = container.querySelector(".simulation-page-table-grid")!;
+    expect(grid.querySelectorAll(".simulation-page-table-cell-empty").length).toBeGreaterThan(0);
   });
 
   it("has no back button while viewing the root", async () => {
@@ -94,7 +104,7 @@ describe("PageTableView", () => {
     await flush();
 
     expect(await screen.findByText("Level 1")).toBeTruthy();
-    expect(await screen.findByText("0x00000007")).toBeTruthy(); // the leaf's real PPN
+    expect(await screen.findByText("0x7")).toBeTruthy(); // the leaf's real PPN
     expect(screen.queryByTitle("Back to parent table")).toBeTruthy();
   });
 
@@ -134,5 +144,17 @@ describe("PageTableView", () => {
     await flush();
 
     expect(invokeMock).toHaveBeenCalledWith("get_page_table_entries", expect.anything());
+  });
+});
+
+describe("PageTableView — wide Index and PPN digit width", () => {
+  it("still shows the full Index and PPN values, not truncated, when a level or RAM needs more than 8 hex digits", async () => {
+    useHierarchyConfigStore().ram.frames = 2 ** 40;
+    mockPageTable([40], { 1: [{ level: 1, index: 0, key: 0, pointsToOrPpn: 0, present: true }] });
+    render(PageTableView);
+    await flush();
+
+    // 40 index bits round up to 10 hex digits; 2^40 frames need 10 PPN digits too.
+    expect((await screen.findAllByText("0x0000000000")).length).toBeGreaterThan(0);
   });
 });

@@ -26,6 +26,8 @@ pub enum TlbReplacementPolicy {
     Fifo,
     #[serde(rename = "Random")]
     Random,
+    #[serde(rename = "LFU")]
+    Lfu,
     #[serde(rename = "PLRU")]
     Plru,
 }
@@ -235,6 +237,7 @@ mod tests {
         assert_eq!(serde_json::to_value(TlbReplacementPolicy::Lru).unwrap(), "LRU");
         assert_eq!(serde_json::to_value(TlbReplacementPolicy::Fifo).unwrap(), "FIFO");
         assert_eq!(serde_json::to_value(TlbReplacementPolicy::Random).unwrap(), "Random");
+        assert_eq!(serde_json::to_value(TlbReplacementPolicy::Lfu).unwrap(), "LFU");
         assert_eq!(serde_json::to_value(TlbReplacementPolicy::Plru).unwrap(), "PLRU");
     }
 

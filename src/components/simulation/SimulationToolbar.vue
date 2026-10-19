@@ -22,12 +22,12 @@ const LOG_RATIO = Math.log(MAX_MS / MIN_MS);
 
 function msToSlider(ms: number): number {
   const clamped = Math.min(MAX_MS, Math.max(MIN_MS, ms));
-  return Math.round((SLIDER_MAX * Math.log(clamped / MIN_MS)) / LOG_RATIO);
+  return Math.round(SLIDER_MAX - (SLIDER_MAX * Math.log(clamped / MIN_MS)) / LOG_RATIO);
 }
 
 function sliderToMs(position: number): number {
   const clamped = Math.min(SLIDER_MAX, Math.max(0, position));
-  return Math.round(MIN_MS * Math.exp((clamped / SLIDER_MAX) * LOG_RATIO));
+  return Math.round(MIN_MS * Math.exp(((SLIDER_MAX - clamped) / SLIDER_MAX) * LOG_RATIO));
 }
 
 const speedSlider = computed({

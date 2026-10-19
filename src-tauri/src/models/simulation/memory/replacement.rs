@@ -70,6 +70,7 @@ impl From<super::config::TlbReplacementPolicy> for Policy {
             Lru | Plru => Policy::Lru,
             Fifo => Policy::Fifo,
             Random => Policy::Random,
+            Lfu => Policy::Lfu,
         }
     }
 }
@@ -157,5 +158,6 @@ mod tests {
         assert_eq!(Policy::from(TlbReplacementPolicy::Lru), Policy::Lru);
         assert_eq!(Policy::from(TlbReplacementPolicy::Fifo), Policy::Fifo);
         assert_eq!(Policy::from(TlbReplacementPolicy::Random), Policy::Random);
+        assert_eq!(Policy::from(TlbReplacementPolicy::Lfu), Policy::Lfu);
     }
 }

@@ -18,6 +18,7 @@ interface BucketSnapshot {
   hits: number;
   misses: number;
   cycles: number;
+  mpki: number;
 }
 interface StatsSnapshot {
   instructionsCompleted: number;
@@ -166,7 +167,7 @@ onBeforeUnmount(() => {
         <StatsGrid>
           <IntegerStat label="Instructions executed" :value="stats.instructionsCompleted" />
           <IntegerStat label="Total memory accesses" :value="stats.totalMemoryAccesses" />
-          <DecimalStat label="AMAT" :value="stats.amat" :decimals="2" />
+          <DecimalStat label="AMAT (cycles)" :value="stats.amat" :decimals="2" />
           <DecimalStat label="CPI" :value="stats.cpi" :decimals="2" />
           <IntegerStat label="Total cycles" :value="stats.totalCycles" />
         </StatsGrid>
@@ -179,6 +180,7 @@ onBeforeUnmount(() => {
         <PercentStat label="Hit rate" :value="localRate(bucketFor('tlb'), 'hits')" />
         <PercentStat label="Miss rate" :value="localRate(bucketFor('tlb'), 'misses')" />
         <IntegerStat label="Cycles consumed" :value="bucketFor('tlb')?.cycles ?? 0" />
+        <DecimalStat label="MPKI" :value="bucketFor('tlb')?.mpki ?? 0" :decimals="2" />
         <PercentStat label="% of cycles" :value="cycleShare(bucketFor('tlb'))" />
       </StatsGrid>
 
@@ -197,6 +199,7 @@ onBeforeUnmount(() => {
           :value="hitLatencyFor(activeTab.levelIndex!, activeTab.chain === 'i' ? 'instruction' : activeTab.chain === 'd' ? 'data' : 'unified')"
         />
         <IntegerStat label="Cycles consumed" :value="activeCacheBucket?.cycles ?? 0" />
+        <DecimalStat label="MPKI" :value="activeCacheBucket?.mpki ?? 0" :decimals="2" />
         <PercentStat label="% of cycles" :value="cycleShare(activeCacheBucket)" />
       </StatsGrid>
 
@@ -208,6 +211,7 @@ onBeforeUnmount(() => {
         <PercentStat label="Page hit rate" :value="localRate(bucketFor('ram'), 'hits')" />
         <PercentStat label="Page fault rate" :value="localRate(bucketFor('ram'), 'misses')" />
         <IntegerStat label="Cycles consumed" :value="bucketFor('ram')?.cycles ?? 0" />
+        <DecimalStat label="MPKI" :value="bucketFor('ram')?.mpki ?? 0" :decimals="2" />
         <PercentStat label="% of cycles" :value="cycleShare(bucketFor('ram'))" />
       </StatsGrid>
       <StatsGrid v-else-if="activeTab?.kind === 'ram'">

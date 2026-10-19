@@ -56,7 +56,7 @@ describe("DiskView", () => {
     const addressCell = container.querySelector(".simulation-disk-address");
     expect(addressCell?.textContent).toBe("0x00000000"); // the block's own address, shown like RamView's Address column
     const pageCell = container.querySelector(".simulation-disk-vpn");
-    expect(pageCell?.textContent).toBe("0x00000000"); // VPN 0, since pageSize (32) == BLOCK_SIZE here
+    expect(pageCell?.textContent).toBe("0x0000000"); // VPN 0, since pageSize (32) == BLOCK_SIZE here
   });
 
   it("groups consecutive blocks from the same page under one Page cell", async () => {
@@ -73,7 +73,7 @@ describe("DiskView", () => {
     // for VPN 0's own cell rather than asserting how many Page cells exist
     // in total.
     const pageCells = Array.from(container.querySelectorAll(".simulation-disk-vpn"));
-    const vpn0Cell = pageCells.find((c) => c.textContent === "0x00000000");
+    const vpn0Cell = pageCells.find((c) => c.textContent === "0x0000000");
     expect(vpn0Cell).toBeTruthy();
     expect((vpn0Cell as HTMLElement).style.gridRow).toBe("1 / span 2");
   });
@@ -163,5 +163,21 @@ describe("DiskView", () => {
     const args = call![1] as { startVpn: number; count: number };
     expect(args.startVpn).toBeLessThanOrEqual(1000);
     expect(args.startVpn + args.count).toBeGreaterThan(1000);
+  });
+});
+
+describe("DiskView — RV64I digit width", () => {
+  it("still shows the full RV64I address and VPN values, not truncated, when they need more than 8 hex digits", async () => {
+    const store = useHierarchyConfigStore();
+    store.isa = "RV64I";
+    store.pageSize = 32;
+    mockDisk([{ address: 0, words: [0], populated: true, dirty: false }]);
+    render(DiskView);
+    await flush();
+
+    // 64-bit address, 5 offset bits (32-byte page) leaves 59 VPN bits, 15 hex
+    // digits; the block address itself needs all 16 hex digits.
+    expect(await screen.findByText("0x0000000000000000")).toBeTruthy();
+    expect(await screen.findByText("0x000000000000000")).toBeTruthy();
   });
 });

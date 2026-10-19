@@ -33,14 +33,16 @@ pub(super) fn build(program: &Program, config: &CodegenConfig) -> Result<LayoutR
     let mut instructions = Vec::new();
     let mut errors = Vec::new();
     let mut patches: Vec<(usize, String, PatchWidth)> = Vec::new();
+    let mut data_directive_position: Option<(usize, usize)> = None;
 
     for node in &program.nodes {
         match node {
             Node::Directive { name, .. } if name == ".text" => {
                 section = Section::Text;
             }
-            Node::Directive { name, .. } if name == ".data" || name == ".bss" => {
+            Node::Directive { name, line, column, .. } if name == ".data" || name == ".bss" => {
                 section = Section::Data;
+                data_directive_position.get_or_insert((*line, *column));
             }
             Node::Directive { name, .. } if name == ".global" || name == ".globl" => {}
             Node::Label { name, .. } => {
@@ -134,6 +136,21 @@ pub(super) fn build(program: &Program, config: &CodegenConfig) -> Result<LayoutR
 
     if !errors.is_empty() {
         return Err(errors);
+    }
+
+    let text_occupies = text_cursor > config.text_base;
+    let data_occupies = data_cursor > config.data_base;
+    let overlaps = text_occupies && data_occupies && config.text_base < data_cursor && config.data_base < text_cursor;
+    if overlaps {
+        let (line, column) = data_directive_position.unwrap_or((1, 1));
+        return Err(vec![CodegenError::new(
+            line,
+            column,
+            format!(
+                "code collides with data: .text occupies 0x{:X} to 0x{:X}, but .data occupies 0x{:X} to 0x{:X}",
+                config.text_base, text_cursor, config.data_base, data_cursor
+            ),
+        )]);
     }
 
     for (offset, label, width) in patches {

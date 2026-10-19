@@ -46,14 +46,22 @@ function selectBase(base: "RV32I" | "RV64I") {
   riscvBase.value = base;
 }
 
-// D extends F in the real spec, so D can never be on without F.
+// D extends F and Q extends D in the real spec, so each can never be on without the one it extends.
 function toggleExtension(extension: RiscvExtension) {
   if (riscvExtensions.value.has(extension)) {
     riscvExtensions.value.delete(extension);
-    if (extension === "F") riscvExtensions.value.delete("D");
+    if (extension === "D") riscvExtensions.value.delete("Q");
+    if (extension === "F") {
+      riscvExtensions.value.delete("D");
+      riscvExtensions.value.delete("Q");
+    }
   } else {
     riscvExtensions.value.add(extension);
     if (extension === "D") riscvExtensions.value.add("F");
+    if (extension === "Q") {
+      riscvExtensions.value.add("D");
+      riscvExtensions.value.add("F");
+    }
   }
 }
 
@@ -66,15 +74,21 @@ function handleDocumentClick(event: MouseEvent) {
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 const gutterRef = ref<HTMLDivElement | null>(null);
+const gutterLinesRef = ref<HTMLDivElement | null>(null);
+const codeScrollRef = ref<HTMLDivElement | null>(null);
 
 const lineCount = computed(() => code.value.split("\n").length);
 
-const scrollTop = ref(0);
+const codeWidthCss = computed(() => {
+  const longest = code.value.split("\n").reduce((max, line) => Math.max(max, line.length), 0);
+  return `max(calc(${longest + 1}ch + 1rem), 100%)`;
+});
+
+const codeHeightCss = computed(() => `calc(${lineCount.value} * 1.5em + 1rem)`);
 
 function syncScroll() {
-  if (textareaRef.value && gutterRef.value) {
-    gutterRef.value.scrollTop = textareaRef.value.scrollTop;
-    scrollTop.value = textareaRef.value.scrollTop;
+  if (gutterLinesRef.value && codeScrollRef.value) {
+    gutterLinesRef.value.style.transform = `translateY(-${codeScrollRef.value.scrollTop}px)`;
   }
 }
 
@@ -96,7 +110,7 @@ function measureLineHeight() {
 const currentLineHighlightStyle = computed(() => {
   if (simulationStore.currentLine === null) return { display: "none" };
   const top =
-    (simulationStore.currentLine - 1) * lineHeightPx.value - scrollTop.value + TEXTAREA_TOP_PADDING_PX;
+    (simulationStore.currentLine - 1) * lineHeightPx.value + TEXTAREA_TOP_PADDING_PX;
   return {
     position: "absolute" as const,
     left: "0",
@@ -118,6 +132,9 @@ function toggleBreakpoint(line: number) {
     breakpoints.value.delete(line);
   } else {
     breakpoints.value.add(line);
+  }
+  if (simulationStore.isActive) {
+    invoke("set_breakpoints", { breakpoints: Array.from(breakpoints.value) });
   }
 }
 
@@ -412,33 +429,38 @@ defineExpose({ selectedLanguage });
       :class="{ 'editor-body-drag-over': isDragOver }"
     >
       <div class="editor-gutter" ref="gutterRef">
-        <div
-          v-for="n in lineCount"
-          :key="n"
-          class="editor-gutter-line"
-          :class="{ 'editor-gutter-line-current': simulationStore.currentLine === n }"
-          @click="toggleBreakpoint(n)"
-        >
-          <span v-if="breakpoints.has(n)" class="editor-breakpoint-dot"></span>
-          <span v-if="simulationStore.currentLine === n" class="editor-current-line-arrow">▶</span>
-          {{ n }}
+        <div class="editor-gutter-lines" ref="gutterLinesRef">
+          <div
+            v-for="n in lineCount"
+            :key="n"
+            class="editor-gutter-line"
+            :class="{ 'editor-gutter-line-current': simulationStore.currentLine === n }"
+            @click="toggleBreakpoint(n)"
+          >
+            <span v-if="breakpoints.has(n)" class="editor-breakpoint-dot"></span>
+            <span v-if="simulationStore.currentLine === n" class="editor-current-line-arrow">▶</span>
+            {{ n }}
+          </div>
         </div>
       </div>
-      <div
-        class="editor-current-line-highlight"
-        :style="currentLineHighlightStyle"
-        ref="currentLineHighlightRef"
-      ></div>
-      <textarea
-        ref="textareaRef"
-        v-model="code"
-        class="editor-textarea"
-        spellcheck="false"
-        autocomplete="off"
-        autocapitalize="off"
-        wrap="off"
-        @scroll="syncScroll"
-      ></textarea>
+      <div class="editor-code-scroll" ref="codeScrollRef" @scroll="syncScroll">
+        <div class="editor-code" :style="{ width: codeWidthCss, height: codeHeightCss }">
+          <div
+            class="editor-current-line-highlight"
+            :style="currentLineHighlightStyle"
+            ref="currentLineHighlightRef"
+          ></div>
+          <textarea
+            ref="textareaRef"
+            v-model="code"
+            class="editor-textarea"
+            spellcheck="false"
+            autocomplete="off"
+            autocapitalize="off"
+            wrap="off"
+          ></textarea>
+        </div>
+      </div>
     </div>
 
     <ErrorPanel :count="errorCount" :output="errorOutput" />
@@ -553,7 +575,6 @@ defineExpose({ selectedLanguage });
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
-  overflow: hidden;
 }
 
 .editor-body-drag-over {
@@ -609,8 +630,25 @@ defineExpose({ selectedLanguage });
   border-top: 1px solid var(--secondary);
 }
 
-.editor-textarea {
+.editor-code-scroll {
   flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.editor-code {
+  position: relative;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.85rem;
+}
+
+.editor-textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
   resize: none;
   border: none;
   outline: none;
@@ -621,7 +659,6 @@ defineExpose({ selectedLanguage });
   line-height: 1.5;
   padding: 0.5rem;
   white-space: pre;
-  overflow: auto;
 }
 
 </style>

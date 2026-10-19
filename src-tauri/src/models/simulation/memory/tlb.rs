@@ -10,6 +10,7 @@ struct TlbEntry {
     ppn: u64,
     last_used: u64,
     inserted_at: u64,
+    frequency: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -22,7 +23,7 @@ pub struct TlbEntrySnapshot {
 }
 
 /// A store just for VPN to PPN translations, simpler than the cache since a translation is either known or it is not.
-/// Simulates LRU, FIFO, and Random eviction, never LFU, and PLRU stays decorative and behaves like LRU.
+/// Simulates LRU, FIFO, Random, and LFU eviction, PLRU stays decorative and behaves like LRU.
 pub struct Tlb {
     num_sets: u64,
     associativity: usize,
@@ -54,6 +55,7 @@ impl Tlb {
         let entries = self.sets.get_mut(&set_index)?;
         let entry = entries.iter_mut().find(|e| e.vpn == vpn)?;
         entry.last_used = tick;
+        entry.frequency += 1;
         Some(entry.ppn)
     }
 
@@ -73,12 +75,12 @@ impl Tlb {
         if entries.len() >= associativity {
             let candidates: Vec<replacement::Candidate> = entries
                 .iter()
-                .map(|e| replacement::Candidate { last_used: e.last_used, inserted_at: e.inserted_at, frequency: 0 })
+                .map(|e| replacement::Candidate { last_used: e.last_used, inserted_at: e.inserted_at, frequency: e.frequency })
                 .collect();
             let victim = replacement::pick_victim(policy, &candidates, seed, &[10, set_index, tick]);
             entries.remove(victim);
         }
-        entries.push(TlbEntry { vpn, ppn, last_used: tick, inserted_at: tick });
+        entries.push(TlbEntry { vpn, ppn, last_used: tick, inserted_at: tick, frequency: 1 });
     }
 
     /// Removes any entry for this vpn, doing nothing if there is none.
@@ -102,10 +104,10 @@ impl Tlb {
         let empty: Vec<TlbEntry> = Vec::new();
         let entries = self.sets.get(&set_index).unwrap_or(&empty);
         let order_of = match self.policy {
+            replacement::Policy::Lfu => entries.iter().map(|e| Some(e.frequency)).collect(),
             replacement::Policy::Random => vec![None; entries.len()],
             replacement::Policy::Fifo => replacement::rank_by_key(entries, |e| e.inserted_at),
-            // Lfu is never selected for a TLB, this case only exists to keep the match complete.
-            replacement::Policy::Lru | replacement::Policy::Lfu => replacement::rank_by_key(entries, |e| e.last_used),
+            replacement::Policy::Lru => replacement::rank_by_key(entries, |e| e.last_used),
         };
         (0..self.associativity)
             .map(|way| match entries.get(way) {
@@ -266,5 +268,40 @@ mod tests {
         let snap = tlb.snapshot_set(0);
         assert!(snap[0].valid);
         assert_eq!(snap[0].order_value, None);
+    }
+
+    #[test]
+    fn lfu_evicts_the_least_frequently_used_entry() {
+        let mut tlb = Tlb::with_policy_and_seed(2, 2, replacement::Policy::Lfu, 0);
+        tlb.insert(0, 10);
+        tlb.insert(2, 20);
+        tlb.lookup(0);
+        tlb.lookup(0);
+
+        tlb.insert(4, 40);
+
+        assert_eq!(tlb.lookup(0), Some(10));
+        assert_eq!(tlb.lookup(2), None);
+        assert_eq!(tlb.lookup(4), Some(40));
+    }
+
+    #[test]
+    fn lfu_breaks_a_frequency_tie_by_the_smallest_last_used() {
+        let mut tlb = Tlb::with_policy_and_seed(2, 2, replacement::Policy::Lfu, 0);
+        tlb.insert(0, 10);
+        tlb.insert(2, 20);
+
+        tlb.insert(4, 40);
+
+        assert_eq!(tlb.lookup(0), None, "a frequency tie breaks toward the least recently used entry");
+        assert_eq!(tlb.lookup(2), Some(20));
+        assert_eq!(tlb.lookup(4), Some(40));
+    }
+
+    #[test]
+    fn snapshot_set_reports_frequency_as_the_order_value_under_lfu() {
+        let mut tlb = Tlb::with_policy_and_seed(1, 1, replacement::Policy::Lfu, 0);
+        tlb.insert(0, 10);
+        assert_eq!(tlb.snapshot_set(0)[0].order_value, Some(1));
     }
 }

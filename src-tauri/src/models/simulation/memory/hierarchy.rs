@@ -86,6 +86,20 @@ pub struct CacheSetSnapshot {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CacheLineRowSnapshot {
+    pub set_index: u64,
+    pub way_index: u64,
+    pub subrow_index: u64,
+    pub valid: bool,
+    pub dirty: bool,
+    pub tag: u64,
+    pub is_phantom: bool,
+    pub order_value: Option<u64>,
+    pub words: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RamBlockSnapshot {
     pub address: u64,
     pub words: Vec<u32>,
@@ -117,6 +131,18 @@ pub struct FrameContentSnapshot {
     pub words: Vec<u32>,
     /// One flag per word telling whether it was ever really written.
     /// A false one just defaults to zero and should be shown as empty, not as real data.
+    pub populated: Vec<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameLineRowSnapshot {
+    pub frame: u64,
+    pub subrow_index: u64,
+    pub vpn: Option<u64>,
+    pub valid: bool,
+    pub dirty: bool,
+    pub words: Vec<u32>,
     pub populated: Vec<bool>,
 }
 
@@ -358,6 +384,48 @@ impl MemoryHierarchySimulator {
                 .map(|set_index| CacheSetSnapshot { set_index, ways: self.cache_set_ways(level_index, side, set_index, &info) })
                 .collect(),
         )
+    }
+
+    fn cache_lines_per_way(info: &CacheLevelInfo) -> u64 {
+        ((info.words_per_line as u64) + 7) / 8
+    }
+
+    pub fn cache_lines(&self, level_index: usize, side: CacheSide, start_line: u64, count: u32) -> Option<Vec<CacheLineRowSnapshot>> {
+        let info = self.cache_level_info(level_index, side)?;
+        let lines_per_way = Self::cache_lines_per_way(&info).max(1);
+        let lines_per_set = lines_per_way * info.associativity.max(1) as u64;
+        let total_lines = lines_per_set * info.num_sets;
+        let end = start_line.saturating_add(count as u64).min(total_lines);
+
+        let mut current: Option<(u64, Vec<CacheWaySnapshot>)> = None;
+        let mut result = Vec::new();
+        for line_index in start_line.min(total_lines)..end {
+            let set_index = line_index / lines_per_set;
+            let remainder = line_index % lines_per_set;
+            let way_index = remainder / lines_per_way;
+            let subrow_index = remainder % lines_per_way;
+
+            if current.as_ref().map(|(set, _)| *set) != Some(set_index) {
+                current = Some((set_index, self.cache_set_ways(level_index, side, set_index, &info)));
+            }
+            let way = &current.as_ref().unwrap().1[way_index as usize];
+            let start_word = (subrow_index * 8) as usize;
+            let end_word = (start_word + 8).min(way.words.len());
+            let words = way.words.get(start_word..end_word).unwrap_or(&[]).to_vec();
+
+            result.push(CacheLineRowSnapshot {
+                set_index,
+                way_index,
+                subrow_index,
+                valid: way.valid,
+                dirty: way.dirty,
+                tag: way.tag,
+                is_phantom: way.is_phantom,
+                order_value: way.order_value,
+                words,
+            });
+        }
+        Some(result)
     }
 
     pub fn ram_blocks(&self, start_address: u64, count: u32) -> Vec<RamBlockSnapshot> {
@@ -745,8 +813,50 @@ impl MemoryHierarchySimulator {
             .collect()
     }
 
+    fn frame_lines_per_frame(&self) -> u64 {
+        let words_per_frame = ((self.config.page_size / 4).max(1)) as u64;
+        (words_per_frame + 7) / 8
+    }
+
+    pub fn frame_lines(&self, start_line: u64, count: u32) -> Vec<FrameLineRowSnapshot> {
+        let lines_per_frame = self.frame_lines_per_frame().max(1);
+        let total_lines = lines_per_frame * self.frames.num_frames();
+        let end = start_line.saturating_add(count as u64).min(total_lines);
+
+        let mut current: Option<(u64, FrameContentSnapshot)> = None;
+        let mut result = Vec::new();
+        for line_index in start_line.min(total_lines)..end {
+            let frame = line_index / lines_per_frame;
+            let subrow_index = line_index % lines_per_frame;
+
+            if current.as_ref().map(|(f, _)| *f) != Some(frame) {
+                current = Some((frame, self.frame_snapshots(frame, 1).into_iter().next().unwrap()));
+            }
+            let snapshot = &current.as_ref().unwrap().1;
+            let start_word = (subrow_index * 8) as usize;
+            let end_word = (start_word + 8).min(snapshot.words.len());
+            let words = snapshot.words.get(start_word..end_word).unwrap_or(&[]).to_vec();
+            let populated = snapshot.populated.get(start_word..end_word).unwrap_or(&[]).to_vec();
+
+            result.push(FrameLineRowSnapshot {
+                frame,
+                subrow_index,
+                vpn: snapshot.vpn,
+                valid: snapshot.valid,
+                dirty: snapshot.dirty,
+                words,
+                populated,
+            });
+        }
+        result
+    }
+
     pub fn page_table_entries_under(&self, level: u8, parent_key: Option<u64>, start_index: u64, count: u64) -> Vec<super::page_table::PageTableEntrySnapshot> {
         self.page_table.entries_under(level, parent_key, start_index, count)
+    }
+
+    pub fn page_table_entries_under_count(&self, level: u8, parent_key: Option<u64>) -> u64 {
+        self.page_table.entries_under_count(level, parent_key)
     }
 
     pub fn page_table_levels(&self) -> u8 {
@@ -1259,6 +1369,61 @@ mod tests {
     }
 
     #[test]
+    fn cache_lines_splits_a_wide_line_into_8_word_subrows_per_way() {
+        let cfg = CacheConfig { block_size: 64, associativity: 2, ..cache_config() };
+        let mut mem = sim(one_level_config_with(false, cfg));
+        mem.begin_access(store(0x10000000, vec![0xAA; 64]));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let info = mem.cache_level_info(0, CacheSide::Unified).unwrap();
+        assert_eq!(info.associativity, 2);
+        assert_eq!(info.num_sets, 1);
+
+        let lines = mem.cache_lines(0, CacheSide::Unified, 0, 4).unwrap();
+        assert_eq!(lines.len(), 4);
+        assert_eq!((lines[0].set_index, lines[0].way_index, lines[0].subrow_index), (0, 0, 0));
+        assert_eq!((lines[1].set_index, lines[1].way_index, lines[1].subrow_index), (0, 0, 1));
+        assert_eq!((lines[2].set_index, lines[2].way_index, lines[2].subrow_index), (0, 1, 0));
+        assert_eq!((lines[3].set_index, lines[3].way_index, lines[3].subrow_index), (0, 1, 1));
+        assert!(lines[0].valid);
+        assert!(lines[1].valid);
+        assert!(!lines[2].valid);
+        assert!(!lines[3].valid);
+        assert_eq!(lines[0].words, vec![0xAAAAAAAAu32; 8]);
+        assert_eq!(lines[1].words, vec![0xAAAAAAAAu32; 8]);
+        assert_eq!(lines[2].words, Vec::<u32>::new());
+    }
+
+    #[test]
+    fn cache_lines_bounds_a_single_oversized_set_to_the_requested_count() {
+        let cfg = CacheConfig { block_size: 4, associativity: 1000, ..cache_config() };
+        let mem = sim(one_level_config_with(false, cfg));
+
+        let info = mem.cache_level_info(0, CacheSide::Unified).unwrap();
+        assert_eq!(info.associativity, 1000);
+        assert_eq!(info.num_sets, 1);
+
+        let lines = mem.cache_lines(0, CacheSide::Unified, 0, 512).unwrap();
+        assert_eq!(lines.len(), 512);
+        assert!(lines.iter().all(|l| l.set_index == 0));
+        assert_eq!(lines[0].way_index, 0);
+        assert_eq!(lines[511].way_index, 511);
+    }
+
+    #[test]
+    fn cache_lines_pages_across_a_set_boundary() {
+        let mem = sim(one_level_config(false));
+        let lines = mem.cache_lines(0, CacheSide::Unified, 1, 2).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].set_index, 1);
+        assert_eq!(lines[0].way_index, 0);
+        assert_eq!(lines[0].subrow_index, 0);
+    }
+
+    #[test]
     fn ram_blocks_does_not_reveal_a_dirty_seeded_block_that_was_never_really_accessed() {
         let mut cfg = one_level_config(false);
         cfg.ram.dirty_percent = 100;
@@ -1344,6 +1509,54 @@ mod tests {
         cfg.ram.frames = 3;
         let mem = sim(cfg);
         assert_eq!(mem.frames.num_frames(), 3);
+    }
+
+    #[test]
+    fn frame_lines_splits_a_wide_page_into_8_word_subrows() {
+        let mut cfg = vm_config(1);
+        cfg.page_size = 64;
+        cfg.ram.frames = 2;
+        let mut mem = sim(cfg);
+        mem.begin_access(store(0, vec![0xAA; 64]));
+        while !mem.is_access_finished() {
+            mem.step();
+        }
+        mem.take_result();
+
+        let lines = mem.frame_lines(0, 4);
+        assert_eq!(lines.len(), 4);
+        assert_eq!((lines[0].frame, lines[0].subrow_index), (0, 0));
+        assert_eq!((lines[1].frame, lines[1].subrow_index), (0, 1));
+        assert_eq!((lines[2].frame, lines[2].subrow_index), (1, 0));
+        assert_eq!((lines[3].frame, lines[3].subrow_index), (1, 1));
+        assert!(lines[0].valid);
+        assert!(lines[1].valid);
+        assert!(!lines[2].valid);
+        assert_eq!(lines[0].words, vec![0xAAAAAAAAu32; 8]);
+    }
+
+    #[test]
+    fn frame_lines_bounds_a_single_oversized_page_to_the_requested_count() {
+        let mut cfg = vm_config(1);
+        cfg.page_size = 4096;
+        cfg.ram.frames = 1;
+        let mem = sim(cfg);
+
+        let lines = mem.frame_lines(0, 100);
+        assert_eq!(lines.len(), 100);
+        assert!(lines.iter().all(|l| l.frame == 0));
+    }
+
+    #[test]
+    fn frame_lines_pages_across_a_frame_boundary() {
+        let mut cfg = vm_config(1);
+        cfg.ram.frames = 2;
+        let mem = sim(cfg);
+
+        let lines = mem.frame_lines(0, 2);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].frame, 0);
+        assert_eq!(lines[1].frame, 1);
     }
 
     #[test]

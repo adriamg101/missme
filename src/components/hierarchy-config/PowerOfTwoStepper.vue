@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { sizeLabel } from "../../lib/hierarchy/derive";
+import { ref, watch } from "vue";
+import { sizeLabel, parseSizeInput, roundToPowerOfTwo } from "../../lib/hierarchy/derive";
 
-// A number field for choosing powers of two, changed only with the plus and minus buttons so it always stays a power of two.
 const props = withDefaults(
   defineProps<{
     modelValue: number;
@@ -16,8 +15,20 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ "update:modelValue": [value: number] }>();
 
-// Values here are always exact powers of two, so the exponent is always a whole number.
-const display = computed(() => sizeLabel(Math.log2(props.modelValue)));
+function display(value: number): string {
+  return sizeLabel(Math.log2(value));
+}
+
+const draft = ref(display(props.modelValue));
+const isInvalid = ref(false);
+let invalidTimeout: ReturnType<typeof setTimeout> | null = null;
+
+watch(
+  () => props.modelValue,
+  (value) => {
+    draft.value = display(value);
+  },
+);
 
 function clamp(value: number): number {
   let result = value;
@@ -37,6 +48,26 @@ function decrement() {
   if (next === props.modelValue) return;
   emit("update:modelValue", next);
 }
+
+function flashInvalid() {
+  isInvalid.value = true;
+  if (invalidTimeout) clearTimeout(invalidTimeout);
+  invalidTimeout = setTimeout(() => {
+    isInvalid.value = false;
+  }, 400);
+}
+
+function onBlur() {
+  const parsed = parseSizeInput(draft.value);
+  if (parsed === null) {
+    flashInvalid();
+    draft.value = display(props.modelValue);
+    return;
+  }
+  const rounded = clamp(roundToPowerOfTwo(parsed));
+  draft.value = display(rounded);
+  if (rounded !== props.modelValue) emit("update:modelValue", rounded);
+}
 </script>
 
 <template>
@@ -44,7 +75,15 @@ function decrement() {
     <span v-if="label" class="power-of-two-stepper-label">{{ label }}</span>
     <div class="power-of-two-stepper" :class="`size-${size}`">
       <button type="button" class="power-of-two-stepper-button" aria-label="Decrement" @click="decrement">−</button>
-      <input type="text" readonly role="spinbutton" :aria-label="ariaLabel" :value="display" />
+      <input
+        type="text"
+        role="spinbutton"
+        class="power-of-two-stepper-input"
+        :class="{ 'power-of-two-stepper-input-invalid': isInvalid }"
+        :aria-label="ariaLabel"
+        v-model="draft"
+        @blur="onBlur"
+      />
       <button type="button" class="power-of-two-stepper-button" aria-label="Increment" @click="increment">+</button>
     </div>
   </div>
@@ -94,7 +133,7 @@ function decrement() {
   outline-offset: -2px;
 }
 
-.power-of-two-stepper input {
+.power-of-two-stepper-input {
   width: 100%;
   min-width: 0;
   border: none;
@@ -104,28 +143,32 @@ function decrement() {
   color: var(--text);
   font: inherit;
   text-align: center;
-  cursor: default;
   transition: border-color var(--theme-transition-duration) ease, background-color var(--theme-transition-duration) ease, color var(--theme-transition-duration) ease;
 }
 
-.power-of-two-stepper input:focus-visible {
+.power-of-two-stepper-input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
-.power-of-two-stepper.size-sm input {
+.power-of-two-stepper-input-invalid {
+  border-color: var(--diagram-miss-color);
+  background: color-mix(in srgb, var(--diagram-miss-color), transparent 85%);
+}
+
+.power-of-two-stepper.size-sm .power-of-two-stepper-input {
   min-height: var(--control-height-sm);
   padding: var(--control-padding-sm);
   font-size: var(--control-font-sm);
 }
 
-.power-of-two-stepper.size-md input {
+.power-of-two-stepper.size-md .power-of-two-stepper-input {
   min-height: var(--control-height-md);
   padding: var(--control-padding-md);
   font-size: var(--control-font-md);
 }
 
-.power-of-two-stepper.size-lg input {
+.power-of-two-stepper.size-lg .power-of-two-stepper-input {
   min-height: var(--control-height-lg);
   padding: var(--control-padding-lg);
   font-size: var(--control-font-lg);

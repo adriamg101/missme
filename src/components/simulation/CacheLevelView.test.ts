@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import { render, screen, fireEvent } from "@testing-library/vue";
+import { render, screen, fireEvent, within } from "@testing-library/vue";
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
@@ -33,6 +33,17 @@ interface CacheSet {
   setIndex: number;
   ways: CacheWay[];
 }
+interface CacheLineRow {
+  setIndex: number;
+  wayIndex: number;
+  subrowIndex: number;
+  valid: boolean;
+  dirty: boolean;
+  tag: number;
+  isPhantom: boolean;
+  orderValue: number | null;
+  words: number[];
+}
 
 function seedOneLevel() {
   const store = useHierarchyConfigStore();
@@ -48,17 +59,40 @@ function seedOneLevel() {
   return store;
 }
 
-// get_cache_level_info only returns metadata, while get_cache_sets fetches
-// pages of the actual set data. This fakes both, and answers get_cache_sets
-// by slicing out the requested [startSet, startSet+count) range from the
-// given full `allSets` array, the same way the real backend would.
+function linesPerWayFor(info: CacheLevelInfo): number {
+  return Math.max(1, Math.ceil(info.wordsPerLine / 8));
+}
+function linesPerSetFor(info: CacheLevelInfo): number {
+  return linesPerWayFor(info) * Math.max(1, info.associativity);
+}
+
+// get_cache_level_info only returns metadata, while get_cache_lines fetches
+// pages of the actual line data. This fakes both, flattening the given
+// `allSets` fixture into (set, way, subrow) rows the same way the real
+// backend does, and answers get_cache_lines by slicing out the requested
+// [startLine, startLine+count) range from that flattening.
 function mockCacheLevel(info: CacheLevelInfo, allSets: CacheSet[]) {
+  const perWay = linesPerWayFor(info);
+  const perSet = linesPerSetFor(info);
+  const bySetIndex = new Map(allSets.map((s) => [s.setIndex, s]));
   invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
     if (cmd === "get_cache_level_info") return Promise.resolve(info);
-    if (cmd === "get_cache_sets") {
-      const startSet = args.startSet as number;
+    if (cmd === "get_cache_lines") {
+      const startLine = args.startLine as number;
       const count = args.count as number;
-      return Promise.resolve(allSets.filter((s) => s.setIndex >= startSet && s.setIndex < startSet + count));
+      const totalLines = perSet * info.numSets;
+      const end = Math.min(startLine + count, totalLines);
+      const rows: CacheLineRow[] = [];
+      for (let lineIndex = startLine; lineIndex < end; lineIndex++) {
+        const setIndex = Math.floor(lineIndex / perSet);
+        const withinSet = lineIndex % perSet;
+        const wayIndex = Math.floor(withinSet / perWay);
+        const subrowIndex = withinSet % perWay;
+        const way = bySetIndex.get(setIndex)?.ways[wayIndex] ?? { valid: false, dirty: false, tag: 0, isPhantom: false, orderValue: null, words: [] };
+        const words = way.valid && !way.isPhantom ? way.words.slice(subrowIndex * 8, subrowIndex * 8 + 8) : [];
+        rows.push({ setIndex, wayIndex, subrowIndex, valid: way.valid, dirty: way.dirty, tag: way.tag, isPhantom: way.isPhantom, orderValue: way.orderValue, words });
+      }
+      return Promise.resolve(rows);
     }
     return Promise.resolve(undefined);
   });
@@ -101,14 +135,14 @@ beforeEach(() => {
 });
 
 describe("CacheLevelView", () => {
-  it("fetches level info then the visible window of sets on mount", async () => {
+  it("fetches level info then the visible window of lines on mount", async () => {
     seedOneLevel();
     render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await flush();
     expect(invokeMock).toHaveBeenCalledWith("get_cache_level_info", { levelIndex: 0, side: "unified" });
     expect(invokeMock).toHaveBeenCalledWith(
-      "get_cache_sets",
-      expect.objectContaining({ levelIndex: 0, side: "unified", startSet: 0 }),
+      "get_cache_lines",
+      expect.objectContaining({ levelIndex: 0, side: "unified", startLine: 0 }),
     );
     expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
     // The tag is padded with zeros to 8 hex digits, same as the words.
@@ -124,7 +158,7 @@ describe("CacheLevelView", () => {
     capturedHandler!({ payload: { kind: "cache_access", levelIndex: 0, outcome: "hit", sourceLine: 1 } });
     await flush();
 
-    expect(invokeMock).toHaveBeenCalledWith("get_cache_sets", expect.objectContaining({ levelIndex: 0, side: "unified" }));
+    expect(invokeMock).toHaveBeenCalledWith("get_cache_lines", expect.objectContaining({ levelIndex: 0, side: "unified" }));
     expect(invokeMock).not.toHaveBeenCalledWith("get_cache_level_info", expect.anything());
   });
 
@@ -191,12 +225,13 @@ describe("CacheLevelView — empty and dirty-seeded ways", () => {
     expect(screen.queryByText("0x00000ABC")).toBeNull();
     const rowCells = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell");
     // rowCells[0] is the Set index cell; the phantom way's own cells follow:
-    // V, then D, then dashes for LRU/Tag/Offset/words - every remaining
-    // column in the block, none left blank.
+    // V, then D, then dashes for LRU/Tag/words - every remaining
+    // column in the block, none left blank. wordsPerLine is 1 here, so
+    // there is only 1 word column and no Offset column.
     expect(rowCells[1]?.textContent).toBe("1"); // V
     expect(rowCells[2]?.textContent).toBe("1"); // D
     const dashes = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell-empty");
-    expect(dashes.length).toBe(11); // LRU, Tag, Offset, and 8 word columns
+    expect(dashes.length).toBe(3); // LRU, Tag, and 1 word column
     expect(Array.from(dashes).every((cell) => cell.textContent === "-")).toBe(true);
   });
 });
@@ -264,14 +299,21 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
     const info: CacheLevelInfo = { associativity: 1, blockSize: 4, numSets: 5_000_000, wordsPerLine: 1 };
     invokeMock.mockImplementation((cmd: string, args: Record<string, unknown>) => {
       if (cmd === "get_cache_level_info") return Promise.resolve(info);
-      if (cmd === "get_cache_sets") {
-        const startSet = args.startSet as number;
+      if (cmd === "get_cache_lines") {
+        const startLine = args.startLine as number;
         const count = args.count as number;
-        const sets: CacheSet[] = Array.from({ length: count }, (_, i) => ({
-          setIndex: startSet + i,
-          ways: [{ valid: true, dirty: false, tag: startSet + i, isPhantom: false, orderValue: 0, words: [startSet + i] }],
+        const rows: CacheLineRow[] = Array.from({ length: count }, (_, i) => ({
+          setIndex: startLine + i,
+          wayIndex: 0,
+          subrowIndex: 0,
+          valid: true,
+          dirty: false,
+          tag: startLine + i,
+          isPhantom: false,
+          orderValue: 0,
+          words: [startLine + i],
         }));
-        return Promise.resolve(sets);
+        return Promise.resolve(rows);
       }
       return Promise.resolve(undefined);
     });
@@ -279,9 +321,9 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
     const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await flush();
 
-    // No request should ever ask for anywhere near the full 5,000,000 sets.
+    // No request should ever ask for anywhere near the full 5,000,000 lines.
     for (const call of invokeMock.mock.calls) {
-      if (call[0] === "get_cache_sets") {
+      if (call[0] === "get_cache_lines") {
         expect((call[1] as { count: number }).count).toBeLessThan(1000);
       }
     }
@@ -289,14 +331,33 @@ describe("CacheLevelView — windowed scrolling over large levels", () => {
     invokeMock.mockClear();
     const scrollEl = container.querySelector(".simulation-cache-body") as HTMLDivElement;
     // Scroll to near the bottom of the visible window to force it to reload around a new position.
-    scrollEl.scrollTop = 520_000 - 100;
+    scrollEl.scrollTop = 1000 * 26 - 100;
     await fireEvent.scroll(scrollEl);
     await flush();
 
-    const [, args] = invokeMock.mock.calls.find((call) => call[0] === "get_cache_sets") as [string, { startSet: number }];
+    const [, args] = invokeMock.mock.calls.find((call) => call[0] === "get_cache_lines") as [string, { startLine: number }];
     // The new position is well past the initial window, which shows that
     // scrolling isn't limited to whatever the first window happened to cover.
-    expect(args.startSet).toBeGreaterThan(1000);
+    expect(args.startLine).toBeGreaterThan(100);
+  });
+
+  it("never requests more than one call's cap even when a single set alone has thousands of lines", async () => {
+    seedOneLevel();
+    const info: CacheLevelInfo = { associativity: 10_000, blockSize: 4, numSets: 1, wordsPerLine: 1 };
+    const set: CacheSet = {
+      setIndex: 0,
+      ways: Array.from({ length: 10_000 }, (_, i) => ({ valid: true, dirty: false, tag: i, isPhantom: false, orderValue: i, words: [i] })),
+    };
+    mockCacheLevel(info, [set]);
+
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    for (const call of invokeMock.mock.calls) {
+      if (call[0] === "get_cache_lines") {
+        expect((call[1] as { count: number }).count).toBeLessThanOrEqual(512);
+      }
+    }
   });
 });
 
@@ -311,24 +372,24 @@ describe("CacheLevelView — wide lines split into 8-word sub-rows", () => {
     await flush();
 
     expect(await screen.findByText("Offset")).toBeTruthy();
-    expect(await screen.findByText("0x0000")).toBeTruthy(); // first sub-row's offset
-    expect(await screen.findByText("0x0020")).toBeTruthy(); // second sub-row's offset (8 words * 4 bytes)
+    const body = within(container.querySelector(".simulation-cache-body")!);
+    expect(await body.findByText("0x00")).toBeTruthy(); // first sub-row's offset, 2 digits for a 64-byte (6-bit) line
+    expect(await body.findByText("0x20")).toBeTruthy(); // second sub-row's offset (8 words * 4 bytes)
     // Only 8 word-header columns ever show, never one per real word.
     const headerWordCells = container.querySelectorAll(".simulation-cache-grid-header .simulation-cache-cell-word");
     expect(headerWordCells.length).toBe(8);
   });
 
-  it("shows a dash instead of a made-up word for a column past the line's real word count", async () => {
+  it("shows a dash instead of a made-up word for a column past the line's real word count in the last sub-row", async () => {
     seedOneLevel();
     mockCacheLevel(
-      { associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1 },
-      [{ setIndex: 0, ways: [{ valid: true, dirty: false, tag: 1, isPhantom: false, orderValue: 0, words: [0xdeadbeef] }] }],
+      { associativity: 1, blockSize: 36, numSets: 1, wordsPerLine: 9 },
+      [{ setIndex: 0, ways: [{ valid: true, dirty: false, tag: 1, isPhantom: false, orderValue: 0, words: Array.from({ length: 9 }, (_, i) => i) }] }],
     );
     const { container } = render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
     await flush();
 
-    expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
-    // 7 of the 8 word columns in this single sub-row have no real data.
+    // 9 words wrap into 2 sub-rows of 8, so the second sub-row has 1 real word and 7 empty columns.
     const dashes = container.querySelectorAll(".simulation-cache-set-block .simulation-cache-cell-empty");
     expect(dashes.length).toBe(7);
   });
@@ -373,6 +434,36 @@ describe("CacheLevelView — replacement policy column", () => {
     // Real data must still show normally, just with no order column.
     expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
     const headerCells = container.querySelectorAll(".simulation-cache-grid-header .simulation-cache-cell");
-    expect(headerCells.length).toBe(13); // Set, V, D, Tag, Offset, 8 words - one fewer than the default 14
+    expect(headerCells.length).toBe(5); // Set, V, D, Tag, 1 word - wordsPerLine is 1, so no Offset column
+  });
+});
+
+describe("CacheLevelView — Tag digit width", () => {
+  it("subtracts both offset and index bits from the address when sizing the Tag, not just the offset", async () => {
+    seedOneLevel();
+    mockCacheLevel({ associativity: 1, blockSize: 4, numSets: 1024, wordsPerLine: 1 }, [
+      { setIndex: 0, ways: [{ valid: true, dirty: false, tag: 5, isPhantom: false, orderValue: 0, words: [0] }] },
+    ]);
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    // 32-bit address, 2 offset bits (blockSize 4), 10 index bits (numSets 1024)
+    // leaves 20 tag bits, which round up to 5 hex digits, not 8.
+    expect(await screen.findByText("0x00005")).toBeTruthy();
+    expect(screen.queryByText("0x00000005")).toBeNull();
+  });
+
+  it("still shows the full RV64I Tag value, not truncated, when it needs more than 8 hex digits", async () => {
+    useHierarchyConfigStore().isa = "RV64I";
+    seedOneLevel();
+    mockCacheLevel({ associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1 }, [
+      { setIndex: 0, ways: [{ valid: true, dirty: false, tag: 5, isPhantom: false, orderValue: 0, words: [0] }] },
+    ]);
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    // 64-bit address, 2 offset bits, 0 index bits (numSets 1) leaves 62 tag
+    // bits, 16 hex digits, 18 characters with the "0x" prefix.
+    expect(await screen.findByText("0x0000000000000005")).toBeTruthy();
   });
 });

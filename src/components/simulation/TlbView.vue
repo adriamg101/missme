@@ -29,12 +29,14 @@ const orderColumnLabel = computed(() => (hierarchyStore.tlb.replacement === "FIF
 const showOrderColumn = computed(() => hierarchyStore.tlb.replacement !== "Random");
 const gridColumnsStyle = computed(() => {
   const orderTrack = showOrderColumn.value ? "2.5rem " : "";
-  return `4rem 2.5rem ${orderTrack}calc(10ch + 0.6rem) calc(10ch + 0.6rem)`;
+  const vpnTrack = `minmax(calc(${vpnDigits.value + 2}ch + 0.6rem), auto)`;
+  const ppnTrack = `minmax(calc(${ppnDigits.value + 2}ch + 0.6rem), auto)`;
+  return `4rem 2.5rem ${orderTrack}${vpnTrack} ${ppnTrack}`;
 });
 const MAX_CACHED_SETS = 4000;
 const ROW_HEIGHT = 26;
-const WINDOW_SETS = 20_000;
-const RECENTER_MARGIN_SETS = 500;
+const WINDOW_SETS = 1000;
+const RECENTER_MARGIN_SETS = 25;
 
 const setBlockHeight = computed(() => Math.max(1, info.value?.associativity ?? 1) * ROW_HEIGHT);
 const sets = reactive(new Map<number, TlbSet>());
@@ -76,8 +78,23 @@ async function loadInfo() {
   }
 }
 
-function hexWord(value: number): string {
-  return `0x${(value >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+function hexDigitsForBits(bits: number): number {
+  return Math.max(1, Math.ceil(bits / 4));
+}
+const addressBits = computed(() => (hierarchyStore.isa === "RV32I" ? 32 : 64));
+const vpnDigits = computed(() => {
+  const pageSize = Math.max(1, hierarchyStore.pageSize);
+  return hexDigitsForBits(addressBits.value - Math.log2(pageSize));
+});
+const ppnDigits = computed(() => {
+  const numFrames = Math.max(1, hierarchyStore.ram.frames);
+  return hexDigitsForBits(Math.log2(numFrames));
+});
+function hexVpn(value: number): string {
+  return `0x${(value >>> 0).toString(16).toUpperCase().padStart(vpnDigits.value, "0")}`;
+}
+function hexPpn(value: number): string {
+  return `0x${(value >>> 0).toString(16).toUpperCase().padStart(ppnDigits.value, "0")}`;
 }
 
 let unlisten: (() => void) | null = null;
@@ -134,8 +151,8 @@ watch(
                     <template v-if="entry.valid">
                       <span class="simulation-tlb-cell">1</span>
                       <span v-if="showOrderColumn" class="simulation-tlb-cell">{{ entry.orderValue }}</span>
-                      <span class="simulation-tlb-cell">{{ hexWord(entry.vpn) }}</span>
-                      <span class="simulation-tlb-cell">{{ hexWord(entry.ppn) }}</span>
+                      <span class="simulation-tlb-cell">{{ hexVpn(entry.vpn) }}</span>
+                      <span class="simulation-tlb-cell">{{ hexPpn(entry.ppn) }}</span>
                     </template>
                     <template v-else>
                       <span v-for="n in (showOrderColumn ? 4 : 3)" :key="n" class="simulation-tlb-cell simulation-tlb-cell-empty">-</span>

@@ -118,6 +118,18 @@ pub fn stop_simulation(state: tauri::State<SessionState>) -> Result<(), String> 
     Ok(())
 }
 
+fn update_breakpoints(state: &SessionState, breakpoints: Vec<usize>) -> Result<(), String> {
+    let mut guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_mut().ok_or("no active simulation session")?;
+    session.set_breakpoints(breakpoints.into_iter().collect());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_breakpoints(state: tauri::State<SessionState>, breakpoints: Vec<usize>) -> Result<(), String> {
+    update_breakpoints(&state, breakpoints)
+}
+
 /// Decides whether the stepping loop should check for a breakpoint on this step.
 /// Skipped only while the current line still matches the line the session resumed on, so a multi step instruction or several instructions sharing one line are not paused on again mid way.
 fn should_check_breakpoint(skip_while_line: Option<usize>, current_line: Option<usize>) -> bool {
@@ -165,7 +177,7 @@ fn run_auto_step_loop(app: tauri::AppHandle, my_generation: u64, skip_breakpoint
         if session.is_finished() {
             state.running.store(false, Ordering::SeqCst);
             drop(guard);
-            let _ = app.emit("sim:event", SimEvent::SimulationPaused { reason: "end".to_string() });
+            let _ = app.emit("sim:event", SimEvent::SimulationPaused { reason: "end".to_string(), source_line: None });
             return;
         }
 
@@ -179,7 +191,7 @@ fn run_auto_step_loop(app: tauri::AppHandle, my_generation: u64, skip_breakpoint
         if should_check_breakpoint(skip_while_line, current_line) && session.is_at_breakpoint() {
             state.running.store(false, Ordering::SeqCst);
             drop(guard);
-            let _ = app.emit("sim:event", SimEvent::SimulationPaused { reason: "breakpoint".to_string() });
+            let _ = app.emit("sim:event", SimEvent::SimulationPaused { reason: "breakpoint".to_string(), source_line: current_line });
             return;
         }
 
@@ -253,7 +265,7 @@ pub fn step_action(app: tauri::AppHandle, state: tauri::State<SessionState>) -> 
             let _ = app.emit("sim:event", SimEvent::InstructionComplete { pc, source_line: action.source_line });
         }
         if finished {
-            let _ = app.emit("sim:event", SimEvent::SimulationPaused { reason: "end".to_string() });
+            let _ = app.emit("sim:event", SimEvent::SimulationPaused { reason: "end".to_string(), source_line: None });
         }
     }
     Ok(())
@@ -282,7 +294,7 @@ pub fn step_instruction(app: tauri::AppHandle, state: tauri::State<SessionState>
         }
     }
     if !actions.is_empty() && finished {
-        let _ = app.emit("sim:event", SimEvent::SimulationPaused { reason: "end".to_string() });
+        let _ = app.emit("sim:event", SimEvent::SimulationPaused { reason: "end".to_string(), source_line: None });
     }
     Ok(())
 }
@@ -304,7 +316,7 @@ pub enum SimEvent {
     TlbAccess { outcome: String, address: u64, access_kind: String, source_line: usize },
     NoOp { source_line: usize },
     InstructionComplete { pc: u64, source_line: usize },
-    SimulationPaused { reason: String },
+    SimulationPaused { reason: String, source_line: Option<usize> },
 }
 
 fn outcome_str(outcome: LevelOutcome) -> String {
@@ -820,6 +832,7 @@ mod tests {
         assert!(require_active_session(&state).is_ok());
     }
 
+
     // Manually stepping to the end of a program.
 
     #[test]
@@ -855,7 +868,7 @@ mod tests {
         assert!(session.is_finished(), "the session must report finished immediately after the step that completed it");
 
         // The event the command is expected to send as a result.
-        let expected_event = SimEvent::SimulationPaused { reason: "end".to_string() };
+        let expected_event = SimEvent::SimulationPaused { reason: "end".to_string(), source_line: None };
         let json = serde_json::to_value(&expected_event).unwrap();
         assert_eq!(json["kind"], "simulation_paused");
         assert_eq!(json["reason"], "end");

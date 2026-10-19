@@ -143,8 +143,7 @@ impl PageTable {
 
     /// Returns one table's worth of entries, sorted by index. This is the root table if no parent key is given, otherwise the table it points to.
     /// Only entries within the requested range are returned, the same paging convention other views use.
-    pub fn entries_under(&self, level: u8, parent_key: Option<u64>, start_index: u64, count: u64) -> Vec<PageTableEntrySnapshot> {
-        let end = start_index.saturating_add(count);
+    fn touched_rows_under(&self, level: u8, parent_key: Option<u64>) -> Vec<PageTableEntrySnapshot> {
         let mask = self.mask_for_level(level);
         let own_bits = self.level_bits.get(level.saturating_sub(1) as usize).copied().unwrap_or(0);
         let mut rows: Vec<PageTableEntrySnapshot> = self
@@ -154,17 +153,26 @@ impl PageTable {
                 if *l != level {
                     return false;
                 }
-                let belongs_to_parent = match parent_key {
-                    None => true, // the root level has exactly one table
+                match parent_key {
+                    None => true,
                     Some(parent) => key >> own_bits == parent,
-                };
-                let index = key & mask;
-                belongs_to_parent && index >= start_index && index < end
+                }
             })
             .map(|((l, key), e)| PageTableEntrySnapshot { level: *l, index: key & mask, key: *key, points_to_or_ppn: e.points_to_or_ppn, present: e.present })
             .collect();
         rows.sort_by_key(|r| r.index);
         rows
+    }
+
+    pub fn entries_under(&self, level: u8, parent_key: Option<u64>, start_index: u64, count: u64) -> Vec<PageTableEntrySnapshot> {
+        let rows = self.touched_rows_under(level, parent_key);
+        let start = (start_index as usize).min(rows.len());
+        let end = (start_index.saturating_add(count) as usize).min(rows.len());
+        rows[start..end].to_vec()
+    }
+
+    pub fn entries_under_count(&self, level: u8, parent_key: Option<u64>) -> u64 {
+        self.touched_rows_under(level, parent_key).len() as u64
     }
 
     pub fn entry_count_for_level(&self, level: u8) -> usize {
@@ -294,14 +302,16 @@ mod tests {
     }
 
     #[test]
-    fn entries_under_only_returns_entries_whose_display_index_falls_in_the_requested_range() {
+    fn entries_under_pages_by_position_among_the_touched_entries_not_by_their_real_index() {
         let mut table = PageTable::with_level_bits(vec![4, 4], 1);
         table.set_leaf_present(0, 10);
         table.set_leaf_present(5, 50);
         table.set_leaf_present(9, 90);
 
-        let window = table.entries_under(1, Some(0), 0, 6); // indices [0, 6)
-        assert_eq!(window.iter().map(|r| r.index).collect::<Vec<_>>(), vec![0, 5]);
+        let first_two = table.entries_under(1, Some(0), 0, 2);
+        assert_eq!(first_two.iter().map(|r| r.index).collect::<Vec<_>>(), vec![0, 5]);
+        let last_one = table.entries_under(1, Some(0), 2, 2);
+        assert_eq!(last_one.iter().map(|r| r.index).collect::<Vec<_>>(), vec![9]);
     }
 
     #[test]

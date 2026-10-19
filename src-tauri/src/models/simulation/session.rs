@@ -85,6 +85,10 @@ impl SimulationSession {
         }
     }
 
+    pub fn set_breakpoints(&mut self, breakpoints: HashSet<usize>) {
+        self.breakpoints = breakpoints;
+    }
+
     /// The source line of the instruction about to run.
     /// Exposed so the caller can remember where the simulation paused and decide when to check breakpoints again after resuming.
     pub fn current_source_line(&self) -> Option<usize> {

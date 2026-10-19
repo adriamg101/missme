@@ -1,8 +1,11 @@
 [package]
 name = "missme"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "1.0.0"
+description = "A memory hierarchy simulator for RISC-V, with configurable caches, virtual memory, and step-by-step execution."
+authors = ["Adrià Martínez Gallifa <adriamartinezgallifa@gmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/adriamg101/missme"
+homepage = "https://github.com/adriamg101/missme"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

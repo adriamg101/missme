@@ -44,6 +44,28 @@ export function sizeLabel(exp: number): string {
   return unit ? `${value} ${unit}` : `${value}`;
 }
 
+const SIZE_INPUT_UNIT_LETTERS = SIZE_UNITS.slice(1);
+
+export function parseSizeInput(text: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)\s*([a-zA-Z])?$/.exec(text.trim());
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return null;
+  const letter = match[2];
+  if (!letter) return amount;
+  const unitIndex = SIZE_INPUT_UNIT_LETTERS.indexOf(letter.toUpperCase());
+  if (unitIndex === -1) return null;
+  return amount * 1024 ** (unitIndex + 1);
+}
+
+export function roundToPowerOfTwo(n: number): number {
+  const rounded = Math.max(1, Math.round(n));
+  if (rounded <= 1) return 1;
+  const highestBit = Math.floor(Math.log2(rounded));
+  const secondBit = (rounded >> (highestBit - 1)) & 1;
+  return secondBit === 0 ? 2 ** highestBit : 2 ** (highestBit + 1);
+}
+
 export interface OccupiedSpan {
   levelIndex: number;
   from: number;

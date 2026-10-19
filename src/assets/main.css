@@ -50,6 +50,8 @@
   /* Same in both themes — only the lightness tokens above differ. */
   --diagram-fill-chroma-mult: 0.28;
   --diagram-text-chroma-mult: 0.9;
+  /* A dimmer version of --accent, so the scrollbar thumb doesn't stand out as much as the accent color does elsewhere. */
+  --scrollbar-thumb: color-mix(in srgb, var(--accent), black 30%);
 }
 
 *, *::before, *::after {
@@ -97,6 +99,30 @@ h4 {font-size: 1.777rem; /* 28.48px */}
 h5 {font-size: 1.333rem; /* 21.28px */}
 
 small {font-size: 0.750rem; /* 12px */}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--scrollbar-thumb), transparent 35%);
+  border-radius: 1e3px;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb);
+}
 
 input[type="number"] {
   -moz-appearance: textfield;

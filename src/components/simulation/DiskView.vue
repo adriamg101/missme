@@ -13,10 +13,14 @@ const compileConfigStore = useCompileConfigStore();
 // The disk scrolls in fixed size blocks just like RAM, but each page spans several of them.
 const BLOCK_SIZE = 32;
 const ROW_HEIGHT = 26;
-const WINDOW_ROWS = 20_000;
-const RECENTER_MARGIN_ROWS = 500;
+const WINDOW_ROWS = 1000;
+const RECENTER_MARGIN_ROWS = 25;
 const MAX_CACHED_PAGES = 4000;
-const gridColumnsStyle = "8rem 8rem repeat(8, minmax(calc(10ch + 0.6rem), auto))";
+const gridColumnsStyle = computed(() => {
+  const addressTrack = `minmax(calc(${addressDigits.value + 2}ch + 0.6rem), auto)`;
+  const vpnTrack = `minmax(calc(${vpnDigits.value + 2}ch + 0.6rem), auto)`;
+  return `${vpnTrack} ${addressTrack} repeat(8, minmax(calc(10ch + 0.6rem), auto))`;
+});
 
 interface DiskPage {
   address: number; // This actually holds the swap page number, not a byte address.
@@ -104,12 +108,19 @@ function blockView(blockIndex: number): BlockView {
   return { page, words };
 }
 
+const addressBits = computed(() => (store.isa === "RV32I" ? 32 : 64));
+const addressDigits = computed(() => Math.max(1, Math.ceil(addressBits.value / 4)));
+const vpnDigits = computed(() => {
+  const pageSize = Math.max(1, store.pageSize);
+  return Math.max(1, Math.ceil((addressBits.value - Math.log2(pageSize)) / 4));
+});
+
 function hexAddress(address: number): string {
-  return `0x${(address >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+  return `0x${(address >>> 0).toString(16).toUpperCase().padStart(addressDigits.value, "0")}`;
 }
 
 function hexPage(vpn: number): string {
-  return `0x${(vpn >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+  return `0x${(vpn >>> 0).toString(16).toUpperCase().padStart(vpnDigits.value, "0")}`;
 }
 
 function hexWord(value: number): string {

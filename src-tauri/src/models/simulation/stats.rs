@@ -80,8 +80,11 @@ impl StatsAccumulator {
         let memory_cycles = self.total_cycles.saturating_sub(self.instructions_completed);
         let amat = if total_memory_accesses > 0 { memory_cycles as f64 / total_memory_accesses as f64 } else { 0.0 };
         let cpi = if self.instructions_completed > 0 { self.total_cycles as f64 / self.instructions_completed as f64 } else { 0.0 };
-
-        let mut buckets: Vec<BucketSnapshot> = self.per_bucket.iter().map(|(bucket, stats)| bucket_snapshot(*bucket, stats)).collect();
+        let mut buckets: Vec<BucketSnapshot> = self
+            .per_bucket
+            .iter()
+            .map(|(bucket, stats)| bucket_snapshot(*bucket, stats, self.instructions_completed))
+            .collect();
         buckets.sort_by_key(bucket_sort_key);
 
         StatsSnapshot {
@@ -107,7 +110,7 @@ fn bucket_sort_key(snapshot: &BucketSnapshot) -> (u8, usize, u8) {
     }
 }
 
-fn bucket_snapshot(bucket: Bucket, stats: &BucketStats) -> BucketSnapshot {
+fn bucket_snapshot(bucket: Bucket, stats: &BucketStats, instructions_completed: u64) -> BucketSnapshot {
     let (bucket_kind, level_index, side) = match bucket {
         Bucket::Tlb => ("tlb", None, None),
         Bucket::Cache { level_index, side } => {
@@ -129,6 +132,7 @@ fn bucket_snapshot(bucket: Bucket, stats: &BucketStats) -> BucketSnapshot {
         hits: stats.hits,
         misses: stats.misses,
         cycles: stats.cycles,
+        mpki: if instructions_completed > 0 { stats.misses as f64 / instructions_completed as f64 * 1000.0 } else { 0.0 },
     }
 }
 
@@ -142,6 +146,7 @@ pub struct BucketSnapshot {
     pub hits: u64,
     pub misses: u64,
     pub cycles: u64,
+    pub mpki: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -260,5 +265,26 @@ mod tests {
         let snap = acc.snapshot();
         // 8 memory cycles + 2 execute cycles = 10 total, over 2 instructions.
         assert_eq!(snap.cpi, 5.0);
+    }
+
+    #[test]
+    fn mpki_divides_total_misses_by_instructions_completed_times_a_thousand() {
+        let mut acc = StatsAccumulator::new();
+        acc.record_outcome(Bucket::Tlb, LevelOutcome::Miss);
+        acc.record_outcome(Bucket::Ram, LevelOutcome::Miss);
+        acc.record_outcome(Bucket::Ram, LevelOutcome::Hit);
+        acc.record_instruction_complete();
+        acc.record_instruction_complete();
+        let snap = acc.snapshot();
+        let ram = snap.buckets.iter().find(|b| b.bucket_kind == "ram").unwrap();
+        assert_eq!(ram.mpki, 500.0);
+    }
+
+    #[test]
+    fn mpki_is_zero_with_no_instructions_completed() {
+        let mut acc = StatsAccumulator::new();
+        acc.record_outcome(Bucket::Tlb, LevelOutcome::Miss);
+        let snap = acc.snapshot();
+        assert_eq!(snap.buckets[0].mpki, 0.0);
     }
 }

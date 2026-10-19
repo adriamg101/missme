@@ -57,8 +57,8 @@ describe("TlbView", () => {
     render(TlbView);
     await flush();
     expect(invokeMock).toHaveBeenCalledWith("get_tlb_info", {});
-    expect(await screen.findByText("0x00000005")).toBeTruthy();
-    expect(await screen.findByText("0x00000009")).toBeTruthy();
+    expect(await screen.findByText("0x00005")).toBeTruthy();
+    expect(await screen.findByText("0x9")).toBeTruthy();
   });
 
   it("shows a dash for an invalid way", async () => {
@@ -116,7 +116,7 @@ describe("TlbView — replacement policy column", () => {
 
     expect(screen.queryByText("LRU")).toBeNull();
     expect(screen.queryByText("FIFO")).toBeNull();
-    expect(await screen.findByText("0x00000001")).toBeTruthy();
+    expect(await screen.findByText("0x00001")).toBeTruthy();
     const headerCells = container.querySelectorAll(".simulation-tlb-grid-header .simulation-tlb-cell");
     expect(headerCells.length).toBe(4); // Set, V, VPN, PPN - one fewer than the default 5
   });
