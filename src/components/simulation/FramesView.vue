@@ -36,7 +36,8 @@ const showOffsetColumn = computed(() => subRowsPerFrame.value > 1);
 
 const gridColumnsStyle = computed(() => {
   const offsetTrack = showOffsetColumn.value ? "4rem " : "";
-  return `4rem calc(10ch + 0.6rem) 2.5rem 2.5rem ${offsetTrack}repeat(${visibleWordColumns.value}, minmax(calc(10ch + 0.6rem), auto))`;
+  const vpnTrack = `minmax(calc(${vpnDigits.value + 2}ch + 0.6rem), auto)`;
+  return `4rem ${vpnTrack} 2.5rem 2.5rem ${offsetTrack}repeat(${visibleWordColumns.value}, minmax(calc(10ch + 0.6rem), auto))`;
 });
 
 async function fetchPage(startFrame: number, count: number) {

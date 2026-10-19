@@ -29,7 +29,9 @@ const orderColumnLabel = computed(() => (hierarchyStore.tlb.replacement === "FIF
 const showOrderColumn = computed(() => hierarchyStore.tlb.replacement !== "Random");
 const gridColumnsStyle = computed(() => {
   const orderTrack = showOrderColumn.value ? "2.5rem " : "";
-  return `4rem 2.5rem ${orderTrack}calc(10ch + 0.6rem) calc(10ch + 0.6rem)`;
+  const vpnTrack = `minmax(calc(${vpnDigits.value + 2}ch + 0.6rem), auto)`;
+  const ppnTrack = `minmax(calc(${ppnDigits.value + 2}ch + 0.6rem), auto)`;
+  return `4rem 2.5rem ${orderTrack}${vpnTrack} ${ppnTrack}`;
 });
 const MAX_CACHED_SETS = 4000;
 const ROW_HEIGHT = 26;

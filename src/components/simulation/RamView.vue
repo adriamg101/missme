@@ -178,10 +178,11 @@ function isGroupStart(wordIndex: number): boolean {
 }
 
 const wordsPerBlock = computed(() => RAM_BLOCK_SIZE / 4);
+const addressTrack = computed(() => `minmax(calc(${addressDigits.value + 2}ch + 0.6rem), auto)`);
 const rowGridStyle = computed(() => ({
   display: "grid" as const,
   height: `${ROW_HEIGHT}px`,
-  gridTemplateColumns: `8rem repeat(${wordsPerBlock.value}, minmax(calc(10ch + 0.6rem), auto))`,
+  gridTemplateColumns: `${addressTrack.value} repeat(${wordsPerBlock.value}, minmax(calc(10ch + 0.6rem), auto))`,
 }));
 
 let unlisten: (() => void) | null = null;

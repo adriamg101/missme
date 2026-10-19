@@ -392,4 +392,18 @@ describe("CacheLevelView — Tag digit width", () => {
     expect(await screen.findByText("0x00005")).toBeTruthy();
     expect(screen.queryByText("0x00000005")).toBeNull();
   });
+
+  it("still shows the full RV64I Tag value, not truncated, when it needs more than 8 hex digits", async () => {
+    useHierarchyConfigStore().isa = "RV64I";
+    seedOneLevel();
+    mockCacheLevel({ associativity: 1, blockSize: 4, numSets: 1, wordsPerLine: 1 }, [
+      { setIndex: 0, ways: [{ valid: true, dirty: false, tag: 5, isPhantom: false, orderValue: 0, words: [0] }] },
+    ]);
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    // 64-bit address, 2 offset bits, 0 index bits (numSets 1) leaves 62 tag
+    // bits, 16 hex digits, 18 characters with the "0x" prefix.
+    expect(await screen.findByText("0x0000000000000005")).toBeTruthy();
+  });
 });

@@ -61,12 +61,18 @@ function hexWord(value: number): string {
 
 const indexDigits = computed(() => {
   const level = currentStep.value?.level ?? 1;
-  const bits = levelBits.value[level - 1] ?? 0;
+  const bits = (levelBits.value ?? [])[level - 1] ?? 0;
   return Math.max(1, Math.ceil(bits / 4));
 });
 function hexIndex(index: number): string {
   return `0x${(index >>> 0).toString(16).toUpperCase().padStart(indexDigits.value, "0")}`;
 }
+
+const gridColumnsStyle = computed(() => {
+  const indexTrack = `minmax(calc(${indexDigits.value + 2}ch + 0.6rem), auto)`;
+  const ppnTrack = `minmax(calc(${ppnDigits.value + 2}ch + 0.6rem), auto)`;
+  return `${indexTrack} ${ppnTrack} 2.5rem 2.5rem`;
+});
 
 async function fetchPage(startIndex: number, count: number) {
   const step = currentStep.value;
@@ -181,7 +187,7 @@ onBeforeUnmount(() => {
       <div class="simulation-page-table-title">Level {{ currentStep?.level ?? "" }}</div>
       <div class="simulation-page-table-toolbar-right"></div>
     </div>
-    <div class="simulation-page-table-header">
+    <div class="simulation-page-table-header" :style="{ gridTemplateColumns: gridColumnsStyle }">
       <span class="simulation-page-table-cell simulation-page-table-cell-header">Index</span>
       <span class="simulation-page-table-cell simulation-page-table-cell-header">PPN</span>
       <span class="simulation-page-table-cell simulation-page-table-cell-header">P</span>
@@ -193,7 +199,7 @@ onBeforeUnmount(() => {
           v-for="(index, i) in win.visibleIndices.value"
           :key="index"
           class="simulation-page-table-row"
-          :style="{ position: 'absolute', top: `${(win.range.value.start + i) * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }"
+          :style="{ position: 'absolute', top: `${(win.range.value.start + i) * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px`, gridTemplateColumns: gridColumnsStyle }"
         >
           <template v-if="entries.get(index)">
             <span class="simulation-page-table-cell">{{ hexIndex(entries.get(index)!.index) }}</span>
@@ -290,7 +296,6 @@ onBeforeUnmount(() => {
 .simulation-page-table-header,
 .simulation-page-table-row {
   display: grid;
-  grid-template-columns: 8rem calc(10ch + 0.6rem) 2.5rem 2.5rem;
   width: fit-content;
   margin: 0 auto;
   transition: none;

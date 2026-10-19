@@ -233,7 +233,8 @@ function isGroupStart(wordIndex: number): boolean {
 const columnsStyle = computed(() => {
   const orderTrack = showOrderColumn.value ? "2.5rem " : "";
   const offsetTrack = showOffsetColumn.value ? "4rem " : "";
-  return `4rem 2.5rem 2.5rem ${orderTrack}calc(10ch + 0.6rem) ${offsetTrack}repeat(${visibleWordColumns.value}, minmax(calc(10ch + 0.6rem), auto))`;
+  const tagTrack = `minmax(calc(${tagDigits.value + 2}ch + 0.6rem), auto)`;
+  return `4rem 2.5rem 2.5rem ${orderTrack}${tagTrack} ${offsetTrack}repeat(${visibleWordColumns.value}, minmax(calc(10ch + 0.6rem), auto))`;
 });
 const headerGridStyle = computed(() => ({
   display: "grid" as const,

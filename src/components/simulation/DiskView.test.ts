@@ -165,3 +165,19 @@ describe("DiskView", () => {
     expect(args.startVpn + args.count).toBeGreaterThan(1000);
   });
 });
+
+describe("DiskView — RV64I digit width", () => {
+  it("still shows the full RV64I address and VPN values, not truncated, when they need more than 8 hex digits", async () => {
+    const store = useHierarchyConfigStore();
+    store.isa = "RV64I";
+    store.pageSize = 32;
+    mockDisk([{ address: 0, words: [0], populated: true, dirty: false }]);
+    render(DiskView);
+    await flush();
+
+    // 64-bit address, 5 offset bits (32-byte page) leaves 59 VPN bits, 15 hex
+    // digits; the block address itself needs all 16 hex digits.
+    expect(await screen.findByText("0x0000000000000000")).toBeTruthy();
+    expect(await screen.findByText("0x000000000000000")).toBeTruthy();
+  });
+});

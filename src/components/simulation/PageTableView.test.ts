@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import PageTableView from "./PageTableView.vue";
+import { useHierarchyConfigStore } from "../../stores/hierarchyConfig";
 
 interface PteRow {
   level: number;
@@ -143,5 +144,17 @@ describe("PageTableView", () => {
     await flush();
 
     expect(invokeMock).toHaveBeenCalledWith("get_page_table_entries", expect.anything());
+  });
+});
+
+describe("PageTableView — wide Index and PPN digit width", () => {
+  it("still shows the full Index and PPN values, not truncated, when a level or RAM needs more than 8 hex digits", async () => {
+    useHierarchyConfigStore().ram.frames = 2 ** 40;
+    mockPageTable([40], { 1: [{ level: 1, index: 0, key: 0, pointsToOrPpn: 0, present: true }] });
+    render(PageTableView);
+    await flush();
+
+    // 40 index bits round up to 10 hex digits; 2^40 frames need 10 PPN digits too.
+    expect((await screen.findAllByText("0x0000000000")).length).toBeGreaterThan(0);
   });
 });

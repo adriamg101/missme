@@ -16,7 +16,11 @@ const ROW_HEIGHT = 26;
 const WINDOW_ROWS = 20_000;
 const RECENTER_MARGIN_ROWS = 500;
 const MAX_CACHED_PAGES = 4000;
-const gridColumnsStyle = "8rem 8rem repeat(8, minmax(calc(10ch + 0.6rem), auto))";
+const gridColumnsStyle = computed(() => {
+  const addressTrack = `minmax(calc(${addressDigits.value + 2}ch + 0.6rem), auto)`;
+  const vpnTrack = `minmax(calc(${vpnDigits.value + 2}ch + 0.6rem), auto)`;
+  return `${vpnTrack} ${addressTrack} repeat(8, minmax(calc(10ch + 0.6rem), auto))`;
+});
 
 interface DiskPage {
   address: number; // This actually holds the swap page number, not a byte address.
