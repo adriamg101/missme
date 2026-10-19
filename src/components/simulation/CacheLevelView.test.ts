@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import { render, screen, fireEvent } from "@testing-library/vue";
+import { render, screen, fireEvent, within } from "@testing-library/vue";
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
@@ -312,8 +312,9 @@ describe("CacheLevelView — wide lines split into 8-word sub-rows", () => {
     await flush();
 
     expect(await screen.findByText("Offset")).toBeTruthy();
-    expect(await screen.findByText("0x0000")).toBeTruthy(); // first sub-row's offset
-    expect(await screen.findByText("0x0020")).toBeTruthy(); // second sub-row's offset (8 words * 4 bytes)
+    const body = within(container.querySelector(".simulation-cache-body")!);
+    expect(await body.findByText("0x00")).toBeTruthy(); // first sub-row's offset, 2 digits for a 64-byte (6-bit) line
+    expect(await body.findByText("0x20")).toBeTruthy(); // second sub-row's offset (8 words * 4 bytes)
     // Only 8 word-header columns ever show, never one per real word.
     const headerWordCells = container.querySelectorAll(".simulation-cache-grid-header .simulation-cache-cell-word");
     expect(headerWordCells.length).toBe(8);
@@ -374,5 +375,21 @@ describe("CacheLevelView — replacement policy column", () => {
     expect(await screen.findByText("0xDEADBEEF")).toBeTruthy();
     const headerCells = container.querySelectorAll(".simulation-cache-grid-header .simulation-cache-cell");
     expect(headerCells.length).toBe(5); // Set, V, D, Tag, 1 word - wordsPerLine is 1, so no Offset column
+  });
+});
+
+describe("CacheLevelView — Tag digit width", () => {
+  it("subtracts both offset and index bits from the address when sizing the Tag, not just the offset", async () => {
+    seedOneLevel();
+    mockCacheLevel({ associativity: 1, blockSize: 4, numSets: 1024, wordsPerLine: 1 }, [
+      { setIndex: 0, ways: [{ valid: true, dirty: false, tag: 5, isPhantom: false, orderValue: 0, words: [0] }] },
+    ]);
+    render(CacheLevelView, { props: { levelId: "l1", side: "unified" } });
+    await flush();
+
+    // 32-bit address, 2 offset bits (blockSize 4), 10 index bits (numSets 1024)
+    // leaves 20 tag bits, which round up to 5 hex digits, not 8.
+    expect(await screen.findByText("0x00005")).toBeTruthy();
+    expect(screen.queryByText("0x00000005")).toBeNull();
   });
 });

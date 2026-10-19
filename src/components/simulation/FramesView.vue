@@ -79,8 +79,10 @@ function columnOffsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * 4).toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
+const pageOffsetDigits = computed(() => Math.max(1, Math.ceil(Math.log2(Math.max(1, store.pageSize)) / 4)));
+
 function subRowOffsetLabel(subRow: number): string {
-  return `0x${(subRow * WORDS_PER_SUBROW * 4).toString(16).toUpperCase().padStart(4, "0")}`;
+  return `0x${(subRow * WORDS_PER_SUBROW * 4).toString(16).toUpperCase().padStart(pageOffsetDigits.value, "0")}`;
 }
 
 function wordAt(frame: Frame, subRow: number, column: number): number {

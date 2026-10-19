@@ -261,3 +261,24 @@ describe("RamView", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
+
+describe("RamView — address digit width", () => {
+  it("pads the address column to 8 hex digits on RV32I", async () => {
+    mockWordAtRequestedAddress(0x1);
+    const { container } = render(RamView);
+    await Promise.resolve();
+    await Promise.resolve();
+    const address = container.querySelector(".simulation-ram-address") as HTMLElement;
+    expect(address.textContent).toMatch(/^0x[0-9A-F]{8}$/);
+  });
+
+  it("pads the address column to 16 hex digits on RV64I", async () => {
+    useHierarchyConfigStore().isa = "RV64I";
+    mockWordAtRequestedAddress(0x1);
+    const { container } = render(RamView);
+    await Promise.resolve();
+    await Promise.resolve();
+    const address = container.querySelector(".simulation-ram-address") as HTMLElement;
+    expect(address.textContent).toMatch(/^0x[0-9A-F]{16}$/);
+  });
+});

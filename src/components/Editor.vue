@@ -46,14 +46,22 @@ function selectBase(base: "RV32I" | "RV64I") {
   riscvBase.value = base;
 }
 
-// D extends F in the real spec, so D can never be on without F.
+// D extends F and Q extends D in the real spec, so each can never be on without the one it extends.
 function toggleExtension(extension: RiscvExtension) {
   if (riscvExtensions.value.has(extension)) {
     riscvExtensions.value.delete(extension);
-    if (extension === "F") riscvExtensions.value.delete("D");
+    if (extension === "D") riscvExtensions.value.delete("Q");
+    if (extension === "F") {
+      riscvExtensions.value.delete("D");
+      riscvExtensions.value.delete("Q");
+    }
   } else {
     riscvExtensions.value.add(extension);
     if (extension === "D") riscvExtensions.value.add("F");
+    if (extension === "Q") {
+      riscvExtensions.value.add("D");
+      riscvExtensions.value.add("F");
+    }
   }
 }
 

@@ -195,7 +195,8 @@ function hexWord(value: number): string {
 const addressBits = computed(() => (hierarchyStore.isa === "RV32I" ? 32 : 64));
 const tagDigits = computed(() => {
   const blockSize = Math.max(1, levelInfo.value?.blockSize ?? 1);
-  const tagBits = addressBits.value - Math.log2(blockSize);
+  const numSets = Math.max(1, levelInfo.value?.numSets ?? 1);
+  const tagBits = addressBits.value - Math.log2(blockSize) - Math.log2(numSets);
   return Math.max(1, Math.ceil(tagBits / 4));
 });
 function hexTag(value: number): string {
@@ -207,9 +208,11 @@ function offsetLabel(wordIndex: number): string {
   return `0x${(wordIndex * WORD_SIZE).toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
+const lineOffsetDigits = computed(() => Math.max(1, Math.ceil(Math.log2(Math.max(1, levelInfo.value?.blockSize ?? 1)) / 4)));
+
 // The starting byte of this row within the whole line.
 function subRowOffsetLabel(subRow: number): string {
-  return `0x${(subRow * WORDS_PER_SUBROW * WORD_SIZE).toString(16).toUpperCase().padStart(4, "0")}`;
+  return `0x${(subRow * WORDS_PER_SUBROW * WORD_SIZE).toString(16).toUpperCase().padStart(lineOffsetDigits.value, "0")}`;
 }
 
 function wordAt(way: CacheWay, subRow: number, column: number): number {

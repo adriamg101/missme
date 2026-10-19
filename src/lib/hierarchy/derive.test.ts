@@ -9,6 +9,8 @@ import {
   levelName,
   chainLabel,
   sizeLabel,
+  parseSizeInput,
+  roundToPowerOfTwo,
   occupiedSpans,
   isPositionInsertable,
   insertionIndex,
@@ -46,6 +48,56 @@ describe("sizeLabel", () => {
   it("formats non-boundary exponents within a unit", () => {
     expect(sizeLabel(13)).toBe("8 K");
     expect(sizeLabel(25)).toBe("32 M");
+  });
+});
+
+describe("parseSizeInput", () => {
+  it("parses a plain number with no unit suffix", () => {
+    expect(parseSizeInput("1024")).toBe(1024);
+  });
+
+  it("parses a unit letter, case-insensitively, with or without a space", () => {
+    expect(parseSizeInput("1K")).toBe(1024);
+    expect(parseSizeInput("1 K")).toBe(1024);
+    expect(parseSizeInput("1k")).toBe(1024);
+    expect(parseSizeInput("2M")).toBe(2 * 1024 ** 2);
+    expect(parseSizeInput("3G")).toBe(3 * 1024 ** 3);
+    expect(parseSizeInput("4T")).toBe(4 * 1024 ** 4);
+    expect(parseSizeInput("5P")).toBe(5 * 1024 ** 5);
+    expect(parseSizeInput("6E")).toBe(6 * 1024 ** 6);
+  });
+
+  it("returns null for an unrecognized unit letter", () => {
+    expect(parseSizeInput("8B")).toBeNull();
+    expect(parseSizeInput("8Z")).toBeNull();
+  });
+
+  it("returns null for text with no leading number", () => {
+    expect(parseSizeInput("K")).toBeNull();
+    expect(parseSizeInput("abc")).toBeNull();
+    expect(parseSizeInput("")).toBeNull();
+  });
+});
+
+describe("roundToPowerOfTwo", () => {
+  it("leaves an exact power of two unchanged", () => {
+    expect(roundToPowerOfTwo(1024)).toBe(1024);
+    expect(roundToPowerOfTwo(1)).toBe(1);
+  });
+
+  it("rounds down when the second-highest bit is 0", () => {
+    expect(roundToPowerOfTwo(1025)).toBe(1024);
+    expect(roundToPowerOfTwo(1151)).toBe(1024); // < 1.5 * 1024
+  });
+
+  it("rounds up to double when the second-highest bit is 1", () => {
+    expect(roundToPowerOfTwo(1023)).toBe(1024);
+    expect(roundToPowerOfTwo(1536)).toBe(2048); // 1.5 * 1024, second bit set
+  });
+
+  it("floors at 1 for zero or negative input", () => {
+    expect(roundToPowerOfTwo(0)).toBe(1);
+    expect(roundToPowerOfTwo(-5)).toBe(1);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import { render, screen } from "@testing-library/vue";
+import { render, screen, within } from "@testing-library/vue";
 
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
@@ -91,12 +91,13 @@ describe("FramesView", () => {
     mockFrames([
       { frame: 0, vpn: 1, valid: true, dirty: false, words: Array.from({ length: 16 }, (_, i) => i), populated: Array.from({ length: 16 }, () => true) },
     ]);
-    render(FramesView);
+    const { container } = render(FramesView);
     await flush();
 
     expect(await screen.findByText("Offset")).toBeTruthy();
-    expect(await screen.findByText("0x0000")).toBeTruthy(); // first sub-row's offset
-    expect(await screen.findByText("0x0020")).toBeTruthy(); // second sub-row's offset (8 words * 4 bytes)
+    const body = within(container.querySelector(".simulation-frames-body")!);
+    expect(await body.findByText("0x00")).toBeTruthy(); // first sub-row's offset, 2 digits for a 64-byte (6-bit) page
+    expect(await body.findByText("0x20")).toBeTruthy(); // second sub-row's offset (8 words * 4 bytes)
   });
 
   it("jumping to a frame number requests a window that includes that frame", async () => {
